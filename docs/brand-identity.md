@@ -1,12 +1,12 @@
-# Brand identity — draft proposal
+# Brand identity — approved
 
-**Needs owner approval.** These are starting ideas, not final design decisions or a technology choice.
+**Status: approved by the owner.** These colours, fonts, names, and UI directions are the agreed ChalanaMaya identity for the MVP.
 
 ## Principles
 
 Make ChalanaMaya feel like a warm working notebook: calm, readable, playful without clutter. Keep familiar actions easy to find, but create original wording, icons, and layouts. Do not reuse Excalidraw text or assets, its violet/purple accent (around #6965DB), or its Virgil/Excalifont fonts.
 
-## Proposed colours
+## Approved colours
 
 | Role | Light theme | Dark theme |
 | --- | --- | --- |
@@ -19,16 +19,16 @@ Make ChalanaMaya feel like a warm working notebook: calm, readable, playful with
 
 Use colour with labels and selected outlines, not as the only signal. Check text contrast, focus visibility, and colour-blind use before approval.
 
-## Proposed typography
+## Approved typography
 
-Use **Kalam** for hand-drawn canvas text, **Source Sans 3** for interface text and normal canvas text, and **IBM Plex Mono** for code text. These families use the SIL Open Font License; verify the exact distributed files and include their licence notices when fonts are added. Provide readable fallback fonts. No font assets are included yet.
+Use **Kalam** for hand-drawn canvas text, **Source Sans 3** for interface text and normal canvas text, and **IBM Plex Mono** for code text. These families use the SIL Open Font License; verify the exact distributed files and include their licence notices when fonts are added. Provide readable fallback fonts. The fonts ship via @fontsource packages; licence notices are in `public/licenses/`.
 
-## Proposed UI direction
+## Approved UI direction
 
 Try a compact vertical tool rail on the left, with a separate bottom zoom strip and a right-side properties panel. Use rounded rectangular tool buttons (8 px corners) inside a paper-like rail (12 px corners), rather than a row of pill buttons. Draw original single-line icons with gently uneven strokes, consistent weight, clear silhouettes, and visible focus rings. Pair icons with tooltips and accessible names.
 
-## Proposed names
+## Approved names
 
 Use “Pick” for selection, “Loop select” for lasso, “Box / Diamond / Oval” for shapes, “Connector” for arrows, “Path” for lines, and “Sketch pencil” for freehand. Use “Words”, “Picture”, “Note”, “Page frame”, and “Web card” for content tools. Use “Rubber”, “Spotlight”, “Grab canvas”, “Shape tidy”, and “Pour colour” for eraser, laser, pan, recognition, and fill. Call tool lock “Keep drawing” and zen mode “Quiet desk”.
 
-Keep standard action words such as Undo, Redo, Save, and Export. Help text should include common terms (for example, “Connector — arrow”) so new names do not hide familiar tools. All names remain proposals.
+Keep standard action words such as Undo, Redo, Save, and Export. Help text should include common terms (for example, “Connector — arrow”) so new names do not hide familiar tools. These names are approved.
