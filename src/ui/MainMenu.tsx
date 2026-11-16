@@ -62,15 +62,24 @@ export const MainMenu = () => {
     id: string;
     checked?: boolean;
     section?: string;
+    /** Changes the board; hidden in look-only mode. */
+    edits?: boolean;
   }[] = [
     {
       id: "open",
       label: "Open board or editable image…",
       icon: Icon.open,
       keys: "Mod+O",
+      edits: true,
       onClick: openFile,
     },
-    { id: "insert-picture", label: "Insert picture…", icon: Icon.image, onClick: insertPicture },
+    {
+      id: "insert-picture",
+      label: "Insert picture…",
+      icon: Icon.image,
+      edits: true,
+      onClick: insertPicture,
+    },
     { id: "save", label: "Save as .chalana", icon: Icon.save, keys: "Mod+S", onClick: saveFile },
     {
       id: "export",
@@ -109,6 +118,7 @@ export const MainMenu = () => {
       label: "Paste",
       icon: Icon.paste,
       keys: "Mod+V",
+      edits: true,
       onClick: () => void pasteWithApi(store),
     },
     {
@@ -168,9 +178,16 @@ export const MainMenu = () => {
       section: "Board",
       label: "Lock everything",
       icon: Icon.lock,
+      edits: true,
       onClick: () => lockAll(store),
     },
-    { id: "unlock-all", label: "Unlock all", icon: Icon.unlock, onClick: () => unlockAll(store) },
+    {
+      id: "unlock-all",
+      label: "Unlock all",
+      icon: Icon.unlock,
+      edits: true,
+      onClick: () => unlockAll(store),
+    },
     {
       id: "help",
       label: "Keyboard shortcuts",
@@ -182,13 +199,28 @@ export const MainMenu = () => {
       id: "clear",
       label: "Clear board…",
       icon: Icon.eraseAll,
+      edits: true,
       onClick: () => store.set({ dialog: { kind: "clear" } }),
     },
   ];
 
+  // in look-only mode drop board-changing entries, keeping their section breaks
+  let pendingSection: string | undefined;
+  const shown = viewMode
+    ? items.flatMap((it) => {
+        if (it.edits) {
+          pendingSection ??= it.section;
+          return [];
+        }
+        const section = it.section ?? pendingSection;
+        pendingSection = undefined;
+        return [{ ...it, section }];
+      })
+    : items;
+
   return (
     <div className="menu panel" role="menu" aria-label="Main menu" ref={ref}>
-      {items.map((it) => [
+      {shown.map((it) => [
         it.section ? <div key={`${it.id}-sep`} className="menu-sep" role="separator" /> : null,
         <button
           key={it.id}

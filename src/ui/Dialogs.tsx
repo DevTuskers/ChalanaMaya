@@ -143,7 +143,7 @@ const ExportDialog = ({
   const [busy, setBusy] = useState(false);
   const targets =
     onlySelected && selectedIds.size ? selectionTargets(elements, selectedIds) : elements;
-  const size = exportSize(targets, format === "png" ? scale : 1);
+  const size = exportSize(targets, scale);
 
   const doExport = async () => {
     setError(null);
@@ -263,29 +263,27 @@ const ExportDialog = ({
             the exported items. The file also gets larger.
           </p>
         ) : null}
-        {format === "png" ? (
-          <fieldset>
-            <legend>Scale</legend>
-            <div className="segmented" role="radiogroup" aria-label="Scale">
-              {[1, 2, 3].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  role="radio"
-                  aria-checked={scale === s}
-                  data-testid={`export-scale-${s}`}
-                  className={scale === s ? "is-active" : ""}
-                  onClick={() => setScale(s)}
-                >
-                  {s}×
-                </button>
-              ))}
-            </div>
-          </fieldset>
-        ) : null}
+        <fieldset>
+          <legend>Scale</legend>
+          <div className="segmented" role="radiogroup" aria-label="Scale">
+            {[1, 2, 3].map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={scale === s}
+                data-testid={`export-scale-${s}`}
+                className={scale === s ? "is-active" : ""}
+                onClick={() => setScale(s)}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <p className="dialog-note" aria-live="polite">
           {size
-            ? `Output: ${size.width} × ${size.height} ${format === "png" ? "px" : "units"}. Editor controls are never included.`
+            ? `Output: ${size.width} × ${size.height} px${format === "svg" ? " (SVG stays sharp at any size)" : ""}. Editor controls are never included.`
             : "The board is empty, so there is nothing to export."}
         </p>
         {error ? (
@@ -429,6 +427,7 @@ const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
   const prefs = useAppState((s) => s.prefs);
   const board = useAppState((s) => s.viewBackgroundColor);
   const theme = useAppState((s) => s.theme);
+  const viewMode = useAppState((s) => s.viewMode);
   const setPrefs = (patch: Partial<typeof prefs>) => store.set({ prefs: { ...prefs, ...patch } });
   return (
     <Modal title="Board settings" onClose={onClose} testId="settings-dialog">
@@ -447,6 +446,7 @@ const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
                 data-testid={`board-color-${c.label.toLowerCase()}`}
                 className={`swatch${board === c.id ? " is-active" : ""}`}
                 style={{ background: c[theme] }}
+                disabled={viewMode}
                 onClick={() => {
                   store.set({ viewBackgroundColor: c.id });
                   store.onSceneChange?.();
@@ -454,6 +454,9 @@ const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
               />
             ))}
           </div>
+          {viewMode ? (
+            <p className="dialog-note">Leave look-only mode to change the board colour.</p>
+          ) : null}
         </fieldset>
         <fieldset>
           <legend>Navigation</legend>

@@ -46,6 +46,13 @@ export const viewCenter = (store: Store) => ({
   y: store.viewSize.height / 2,
 });
 
+/** True (with a notice) when look-only mode is on; board-changing actions stop early. */
+export const blockedByViewMode = (store: Store) => {
+  if (!store.get().viewMode) return false;
+  store.toast("Look-only mode is on. Leave it to change the board.");
+  return true;
+};
+
 export const setTool = (store: Store, tool: ToolId) => {
   const s = store.get();
   if (s.viewMode && tool !== "hand" && tool !== "pick") {
@@ -65,10 +72,12 @@ export const setTool = (store: Store, tool: ToolId) => {
 };
 
 export const undo = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   if (!store.undo()) store.toast("Nothing to undo.");
 };
 
 export const redo = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   if (!store.redo()) store.toast("Nothing to redo.");
 };
 
@@ -77,12 +86,14 @@ export const selectAll = (store: Store) => {
 };
 
 export const deleteSelected = (store: Store) => {
+  if (store.get().viewMode) return;
   const { elements, selectedIds } = store.get();
   if (!selectedIds.size) return;
   store.commit(deleteElements(elements, selectedIds), { selectedIds: new Set() });
 };
 
 export const duplicateSelected = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   const { elements, selectedIds } = store.get();
   if (!selectedIds.size) return;
   const res = duplicateElements(elements, selectedIds);
@@ -91,6 +102,7 @@ export const duplicateSelected = (store: Store) => {
 
 /** Changes the current style and applies it to the matching selected elements. */
 export const applyStyle = (store: Store, patch: Partial<ItemStyle>) => {
+  if (store.get().viewMode) return;
   const { elements, currentStyle, editingTextId } = store.get();
   const selectedIds =
     store.get().selectedIds.size || !editingTextId
@@ -200,6 +212,7 @@ const pastePoint = (store: Store) =>
   screenToScene(store.lastPointer ?? viewCenter(store), store.get().viewport);
 
 export const insertText = (store: Store, text: string) => {
+  if (blockedByViewMode(store)) return;
   const p = pastePoint(store);
   const { currentStyle, elements } = store.get();
   const el = layoutText(createText(p.x, p.y, { ...currentStyle, textAlign: "left" }, text));
@@ -208,6 +221,7 @@ export const insertText = (store: Store, text: string) => {
 };
 
 export const insertImageBlob = async (store: Store, blob: Blob) => {
+  if (blockedByViewMode(store)) return;
   let dataURL: string;
   let size: { width: number; height: number };
   try {
@@ -224,6 +238,7 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
   const p = pastePoint(store);
   const fileId = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const el = createImage(p.x - w / 2, p.y - h / 2, w, h, fileId);
+  if (store.get().viewMode) return; // turned on while the picture was loading
   const { elements, files } = store.get();
   store.history.record(store.snapshot());
   store.set({
@@ -236,6 +251,7 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
 };
 
 export const pasteContent = async (store: Store, content: PasteContent) => {
+  if (blockedByViewMode(store)) return;
   switch (content.kind) {
     case "empty":
       store.toast("The clipboard is empty, so there is nothing to paste.");
@@ -278,9 +294,13 @@ export const pasteContent = async (store: Store, content: PasteContent) => {
   }
 };
 
-export const pasteWithApi = async (store: Store) => pasteContent(store, await readClipboardApi());
+export const pasteWithApi = async (store: Store) => {
+  if (blockedByViewMode(store)) return;
+  await pasteContent(store, await readClipboardApi());
+};
 
 export const clearCanvas = (store: Store) => {
+  if (blockedByViewMode(store)) return store.set({ dialog: null });
   // removes every element, including locked ones; undoable
   store.commit([], { selectedIds: new Set(), editingTextId: null, dialog: null });
   store.toast("The board was cleared. Undo brings it back.", "info");
@@ -300,7 +320,7 @@ const arrange = (
   extra: Partial<AppState> = {},
 ) => {
   const { elements, selectedIds } = store.get();
-  if (store.get().viewMode) return false;
+  if (blockedByViewMode(store)) return false;
   if (!selectedIds.size) {
     store.toast("Select something first.");
     return false;
@@ -339,9 +359,15 @@ export const flipSelected = (store: Store, axis: "horizontal" | "vertical") =>
 export const lockSelected = (store: Store) =>
   arrange(store, (els, ids) => setLocked(els, ids, true), "Already locked.", {
     selectedIds: new Set(),
-  }) && store.toast("Locked. Use “Unlock all” in the menu to edit it again.", "info", 3000);
+  }) &&
+  store.toast(
+    "Locked. Double-click it to unlock it, or use “Unlock all” in the menu.",
+    "info",
+    3000,
+  );
 
 export const lockAll = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   const next = setLocked(store.get().elements, "all", true);
   if (!next) return store.toast("Everything is already locked.");
   store.commit(next, { selectedIds: new Set() });
@@ -349,6 +375,7 @@ export const lockAll = (store: Store) => {
 };
 
 export const unlockAll = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   const { elements } = store.get();
   const ids = new Set(elements.filter((e) => e.locked).map((e) => e.id));
   const next = setLocked(elements, "all", false);
@@ -358,6 +385,7 @@ export const unlockAll = (store: Store) => {
 
 /** Unlocks one locked item (picked from the canvas context command). */
 export const unlockElement = (store: Store, id: string) => {
+  if (blockedByViewMode(store)) return;
   const next = setLocked(store.get().elements, new Set([id]), false);
   if (next) store.commit(next, { selectedIds: new Set([id]) });
 };
@@ -381,6 +409,7 @@ export const copyStyles = (store: Store) => {
 };
 
 export const pasteStyles = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   const { copiedStyle } = store.get();
   if (!copiedStyle) return store.toast("Copy a style first.");
   arrange(
@@ -391,6 +420,7 @@ export const pasteStyles = (store: Store) => {
 };
 
 export const setLink = (store: Store, id: string, raw: string): string | null => {
+  if (store.get().viewMode) return "Look-only mode is on. Leave it to change links.";
   const { elements } = store.get();
   if (!raw.trim()) {
     store.commit(elements.map((e) => (e.id === id ? { ...e, link: null } : e)));
@@ -424,6 +454,7 @@ export const followLink = (store: Store, link: string, win: Window | null) => {
 };
 
 export const deletePoint = (store: Store) => {
+  if (store.get().viewMode) return false;
   const { elements, editingPointsId, editingPointIndex } = store.get();
   const el = elements.find((e) => e.id === editingPointsId);
   if (!el || !isLinear(el) || editingPointIndex === null) return false;
@@ -456,6 +487,7 @@ export const resetImageCrop = (store: Store) =>
   );
 
 export const createFrameAroundSelection = (store: Store) => {
+  if (blockedByViewMode(store)) return;
   const { elements, selectedIds } = store.get();
   const items = elements.filter((e) => selectedIds.has(e.id) && e.type !== "frame");
   const b = getCommonBounds(items);
@@ -471,12 +503,14 @@ export const createFrameAroundSelection = (store: Store) => {
 };
 
 export const setFrameName = (store: Store, id: string, name: string) => {
+  if (blockedByViewMode(store)) return;
   const { elements } = store.get();
   store.commit(elements.map((e) => (e.id === id && e.type === "frame" ? { ...e, name } : e)));
 };
 
 /** Removes a frame but keeps everything that was inside it. */
 export const removeFrameKeepContents = (store: Store, id: string) => {
+  if (blockedByViewMode(store)) return;
   const { elements } = store.get();
   store.commit(
     elements

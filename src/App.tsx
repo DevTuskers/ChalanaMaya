@@ -33,6 +33,7 @@ import {
   setTool,
   undo,
   zoomBy,
+  blockedByViewMode,
 } from "./store/actions";
 import { DEFAULT_PREFERENCES, Store, initialState, type Preferences } from "./store/store";
 import { EmbedError, extractFromPng, extractFromSvg } from "./io/embed";
@@ -124,6 +125,19 @@ const Toasts = () => {
       {toasts.map((t) => (
         <div key={t.id} className={`toast toast-${t.tone}`} data-testid="toast">
           <span>{t.message}</span>
+          {t.action ? (
+            <button
+              type="button"
+              className="toast-action"
+              data-testid={t.action.testId}
+              onClick={() => {
+                store.dismissToast(t.id);
+                t.action!.run();
+              }}
+            >
+              {t.action.label}
+            </button>
+          ) : null}
           <button type="button" aria-label="Dismiss" onClick={() => store.dismissToast(t.id)}>
             ×
           </button>
@@ -194,8 +208,12 @@ export const App = () => {
       downloadBlob(new Blob([text], { type: "application/json" }), timestampName("chalana"), doc);
       store.toast("Saved a .chalana file to your downloads.", "success", 2500);
     };
-    const openFile = () => fileInput.current?.click();
-    const insertPicture = () => pictureInput.current?.click();
+    const openFile = () => {
+      if (!blockedByViewMode(store)) fileInput.current?.click();
+    };
+    const insertPicture = () => {
+      if (!blockedByViewMode(store)) pictureInput.current?.click();
+    };
     return { store, controller, saveFile, openFile, insertPicture };
   }, [store, controller]);
 
@@ -456,6 +474,7 @@ export const App = () => {
   }, [store, controller, services]);
 
   const applyOpened = (file: ChalanaFile) => {
+    if (blockedByViewMode(store)) return;
     const view = store.viewSize;
     store.history.record(store.snapshot());
     const b = getCommonBounds(file.elements);
@@ -476,7 +495,7 @@ export const App = () => {
   const onFileChosen = async (input: HTMLInputElement) => {
     const f = input.files?.[0];
     input.value = "";
-    if (!f) return;
+    if (!f || blockedByViewMode(store)) return;
     let parsed: ChalanaFile;
     try {
       const name = f.name.toLowerCase();

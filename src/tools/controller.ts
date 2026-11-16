@@ -31,7 +31,8 @@ import {
   snapAngle,
 } from "../scene/geometry";
 import type { Snapshot } from "../scene/history";
-import { elementAt, elementsInBox, hitElement } from "../scene/hit";
+import { elementAt, elementsInBox, hitElement, lockedElementAt } from "../scene/hit";
+import { unlockElement } from "../store/actions";
 import { bindingTargetAt, getBoundText } from "../scene/scene";
 import { layoutText } from "../scene/text";
 import {
@@ -209,9 +210,15 @@ export class Controller {
     return this.state.prefs.snapping && !input.altKey;
   }
 
+  /** The first corner of a new box snaps to nearby edges too (Alt skips it). */
+  private snapStart(input: PointerInput, p: Point): Point {
+    if (!this.snapOn(input)) return p;
+    return snapPoint(this.state.elements, p, new Set(), 6 / this.state.viewport.zoom).point;
+  }
+
   pointerDown(input: PointerInput) {
     if (this.state.editingTextId) this.finishTextEdit();
-    const p = this.toScene(input);
+    let p = this.toScene(input);
     const tool = this.state.tool;
     const { viewMode, prefs } = this.state;
     if (viewMode && input.button === 0 && !this.spaceHeld) {
@@ -240,7 +247,7 @@ export class Controller {
       case "rectangle":
       case "diamond":
       case "ellipse":
-        this.beginShape(tool, p);
+        this.beginShape(tool, this.snapStart(input, p));
         return;
       case "arrow":
         this.beginArrow(p);
@@ -258,6 +265,7 @@ export class Controller {
         this.placeNote(p);
         return;
       case "frame": {
+        p = this.snapStart(input, p);
         const before = this.store.snapshot();
         const count = this.state.elements.filter((e) => e.type === "frame").length;
         const el = createFrame(p.x, p.y, `Page ${count + 1}`);
@@ -525,6 +533,7 @@ export class Controller {
     const finished: LinearElement = { ...fromAbsolutePoints(el, fixed), closed };
     const elements = this.state.elements.map((e) => (e.id === it.id ? finished : e));
     this.store.set({ elements });
+    this.claimFrame(it.id);
     this.store.commitFrom(it.before, this.after(it.id));
   }
 
@@ -538,12 +547,22 @@ export class Controller {
   private textToolDown(p: Point) {
     const { elements } = this.state;
     const hit = elementAt(elements, p, this.tolerance());
+    const editsHit = hit && (hit.type === "text" || isTextContainer(hit) || hit.type === "arrow");
+    if (editsHit && this.textEditBlocked(hit)) return;
+    if (!hit) {
+      const locked = this.lockedUnder(p);
+      if (locked && (isTextContainer(locked) || locked.type === "text")) {
+        this.noticeLocked(locked);
+        return;
+      }
+    }
     if (hit && hit.type === "text") return this.startTextEdit(hit.id);
     if (hit && (isTextContainer(hit) || hit.type === "arrow")) return this.editContainerText(hit);
     this.createTextAt(p);
   }
 
   createTextAt(p: Point) {
+    if (this.state.viewMode) return;
     const style = this.state.currentStyle;
     const el = layoutText(createText(p.x, p.y - (style.fontSize * 1.3) / 2, style));
     const before = this.store.snapshot();
@@ -552,7 +571,37 @@ export class Controller {
     this.store.set({ editingTextId: el.id });
   }
 
+  /** Locked items (and labels of locked containers) and look-only mode refuse text editing. */
+  private textEditBlocked(el: SceneElement | undefined): boolean {
+    if (this.state.viewMode) return true;
+    if (!el) return false;
+    const container = el.type === "text" && el.containerId ? this.find(el.containerId) : undefined;
+    const locked = el.locked ? el : container?.locked ? container : null;
+    if (locked) {
+      this.noticeLocked(locked);
+      return true;
+    }
+    return false;
+  }
+
+  /** Tells the user an item is locked and offers to unlock just that item. */
+  private noticeLocked(el: SceneElement) {
+    for (const t of this.state.toasts)
+      if (t.action?.testId === "unlock-item") this.store.dismissToast(t.id);
+    this.store.toast("This item is locked, so it can't be edited.", "info", 5000, {
+      label: "Unlock it",
+      testId: "unlock-item",
+      run: () => unlockElement(this.store, el.id),
+    });
+  }
+
+  /** The locked item under the pointer when nothing editable sits above it. */
+  private lockedUnder(p: Point) {
+    return lockedElementAt(this.state.elements, p, this.tolerance());
+  }
+
   editContainerText(container: SceneElement) {
+    if (this.textEditBlocked(container)) return;
     const existing = getBoundText(this.state.elements, container.id);
     if (existing) return this.startTextEdit(existing.id);
     const c = getCenter(container);
@@ -568,6 +617,7 @@ export class Controller {
   }
 
   startTextEdit(id: string) {
+    if (this.textEditBlocked(this.find(id))) return;
     this.textSession = { id, before: this.store.snapshot(), isNew: false };
     this.store.set({ editingTextId: id, selectedIds: new Set() });
   }
@@ -619,6 +669,7 @@ export class Controller {
       }
       return;
     }
+    if (session?.isNew && !el.containerId) this.claimFrame(el.id);
     if (session) this.store.commitFrom(session.before);
     this.store.set({ editingTextId: null, ...done });
   }
@@ -850,6 +901,7 @@ export class Controller {
           return;
         }
         if (it.kind === "frame") this.store.updateElements(assignFrames(this.state.elements));
+        else this.claimFrame(it.id);
         this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
@@ -869,6 +921,7 @@ export class Controller {
           endBinding: target && !sameAsStart ? { elementId: target.id } : null,
         };
         this.store.updateElements(this.state.elements.map((e) => (e.id === it.id ? bound : e)));
+        this.claimFrame(it.id);
         this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
@@ -884,6 +937,7 @@ export class Controller {
             ),
           });
         }
+        this.claimFrame(it.id);
         this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
@@ -947,10 +1001,11 @@ export class Controller {
       this.finishPath(false);
       return;
     }
-    if (this.state.tool !== "pick") return;
+    if (this.state.tool !== "pick" || this.state.viewMode) return;
     const p = this.toScene(input);
     const { elements } = this.state;
     const hit = elementAt(elements, p, this.tolerance());
+    if (hit && this.textEditBlocked(hit)) return;
     if (hit?.type === "text") return this.startTextEdit(hit.id);
     if (hit && (isTextContainer(hit) || hit.type === "arrow")) return this.editContainerText(hit);
     if (hit?.type === "line") {
@@ -962,6 +1017,8 @@ export class Controller {
       return;
     }
     if (hit) return;
+    const locked = this.lockedUnder(p);
+    if (locked) return this.noticeLocked(locked);
     // double-clicking inside an unfilled shape still edits its label
     const container = bindingTargetAt(elements, p);
     if (container && isTextContainer(container) && !container.locked)
@@ -1018,6 +1075,11 @@ export class Controller {
 
   /** Natural pixel size of an image, when loaded. Set by the canvas. */
   naturalSize: (el: SceneElement) => { width: number; height: number } | null = () => null;
+
+  /** A new item drawn fully inside a page frame becomes part of it. */
+  private claimFrame(id: string) {
+    this.store.updateElements(assignFrames(this.state.elements, new Set([id])));
+  }
 
   private find(id: string) {
     return this.state.elements.find((e) => e.id === id);

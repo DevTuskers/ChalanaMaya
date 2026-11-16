@@ -19,6 +19,8 @@ export interface SvgExportOptions {
   /** Background colour, or null for transparent. */
   background: string | null;
   padding?: number;
+  /** Output size multiplier for width/height; the viewBox stays in board units. */
+  scale?: number;
   /** Extra markup placed first inside the svg (e.g. embedded scene metadata). */
   metadata?: string;
   /** @font-face rules (with data URLs) so text looks the same elsewhere. */
@@ -99,6 +101,9 @@ export const exportToSvg = (
   const padding = opts.padding ?? 24;
   const size = exportSize(elements, 1, padding);
   if (!size) throw new Error("There is nothing to export yet.");
+  const scale = opts.scale && opts.scale > 0 ? opts.scale : 1;
+  // same pixel size the export dialog reports
+  const out = exportSize(elements, scale, padding)!;
   const ox = -size.bounds.minX + padding;
   const oy = -size.bounds.minY + padding;
   const notes = new Set(elements.filter((e) => e.type === "note").map((e) => e.id));
@@ -113,7 +118,7 @@ export const exportToSvg = (
   const bg = opts.background ? `<rect width="100%" height="100%" fill="${opts.background}"/>` : "";
   const style = opts.fontCss ? `<defs><style>${opts.fontCss}</style></defs>` : "";
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}" height="${size.height}" viewBox="0 0 ${size.width} ${size.height}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${out.width}" height="${out.height}" viewBox="0 0 ${size.width} ${size.height}">` +
     (opts.metadata ?? "") +
     style +
     bg +

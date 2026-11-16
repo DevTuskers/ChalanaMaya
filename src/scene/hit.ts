@@ -1,5 +1,5 @@
 import { TRANSPARENT } from "./constants";
-import { hasPoints, isFillable, isLinear } from "./elements";
+import { hasPoints, isBoundText, isFillable, isLinear } from "./elements";
 import { routedPoints } from "./route";
 import {
   boundsContain,
@@ -116,6 +116,24 @@ export const elementAt = (elements: Elements, p: Point, tolerance: number): Scen
     const el = elements[i];
     if (!isSelectable(el)) continue;
     if (hitElement(el, p, tolerance, elements)) return el;
+  }
+  return null;
+};
+
+/**
+ * The locked item under `p`, if the topmost item there (counting the inside of
+ * unfilled shapes) is locked. Used to refuse edits on locked items.
+ */
+export const lockedElementAt = (
+  elements: Elements,
+  p: Point,
+  tolerance: number,
+): SceneElement | null => {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (isBoundText(el)) continue;
+    const solid = isFillable(el) ? ({ ...el, backgroundColor: "#000000" } as SceneElement) : el;
+    if (hitElement(solid, p, tolerance, elements)) return el.locked ? el : null;
   }
   return null;
 };

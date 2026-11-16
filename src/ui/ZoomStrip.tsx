@@ -11,8 +11,10 @@ export const ZoomStrip = () => {
   useAppState((s) => s.historyVersion);
   const hasSelection = useAppState((s) => s.selectedIds.size > 0);
   const empty = useAppState((s) => s.elements.length === 0);
-  const canUndo = store.history.canUndo;
-  const canRedo = store.history.canRedo;
+  const viewMode = useAppState((s) => s.viewMode);
+  const canUndo = store.history.canUndo && !viewMode;
+  const canRedo = store.history.canRedo && !viewMode;
+  const lookOnly = "Look-only mode is on";
   return (
     <div className="bottom-bar">
       <div className="strip panel" role="group" aria-label="History">
@@ -21,7 +23,7 @@ export const ZoomStrip = () => {
           shortcut={formatKeys("Mod+Z")}
           side="top"
           unavailable={!canUndo}
-          unavailableReason="Nothing to undo yet"
+          unavailableReason={viewMode ? lookOnly : "Nothing to undo yet"}
           data-testid="undo"
           onClick={() => undo(store)}
         >
@@ -32,7 +34,7 @@ export const ZoomStrip = () => {
           shortcut={formatKeys("Mod+Shift+Z")}
           side="top"
           unavailable={!canRedo}
-          unavailableReason="Nothing to redo"
+          unavailableReason={viewMode ? lookOnly : "Nothing to redo"}
           data-testid="redo"
           onClick={() => redo(store)}
         >

@@ -498,6 +498,15 @@ kbd {
   font-size: 18px;
   cursor: pointer;
 }
+.toast button.toast-action {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
 .storage-warning {
   position: absolute;
   right: 14px;

@@ -83,6 +83,7 @@ export const exportSvgText = async (r: ImageExportRequest): Promise<string> => {
   const usesText = r.elements.some((e) => e.type === "text" || e.type === "frame");
   return exportToSvg(r.elements, r.files, {
     theme: r.theme,
+    scale: r.scale,
     background: r.background ? resolveBoardColor(r.boardColor, r.theme) : null,
     metadata: r.embedScene ? svgMetadata(sceneJson(r)) : undefined,
     fontCss: usesText ? await brandFontCss() : undefined,
@@ -114,7 +115,7 @@ export const copyAs = async (
   try {
     if (!clipboard) throw new Error("no clipboard");
     if (kind === "svg") {
-      await clipboard.writeText(await exportSvgText({ ...r, embedScene: false }));
+      await clipboard.writeText(await exportSvgText({ ...r, embedScene: false, scale: 1 }));
     } else {
       if (typeof ClipboardItem === "undefined" || !clipboard.write)
         throw new Error("no image clipboard");

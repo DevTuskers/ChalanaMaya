@@ -48,6 +48,8 @@ export interface Toast {
   id: number;
   message: string;
   tone: "info" | "error" | "success";
+  /** Optional one-click command shown in the notice. */
+  action?: { label: string; testId?: string; run: () => void };
 }
 
 export interface AppState {
@@ -228,9 +230,9 @@ export class Store {
     return true;
   }
 
-  toast(message: string, tone: Toast["tone"] = "info", ms = 4200) {
+  toast(message: string, tone: Toast["tone"] = "info", ms = 4200, action?: Toast["action"]) {
     const id = ++this.toastId;
-    this.set({ toasts: [...this.state.toasts, { id, message, tone }] });
+    this.set({ toasts: [...this.state.toasts, { id, message, tone, action }] });
     if (typeof window !== "undefined") {
       window.setTimeout(() => this.dismissToast(id), ms);
     }

@@ -30,7 +30,7 @@ All features start as **planned**. Track implementation in issues using the feat
 
 ## Implementation status
 
-Phases P0 (MVP) and P1. Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0) and `e2e/p1.spec.ts` (P1). All P2 features remain **planned**.
+Phases P0 (MVP) and P1. Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0), `e2e/p1.spec.ts` (P1) and `e2e/revision.spec.ts` (P1 review fixes). All P2 features remain **planned**.
 
 | Area | P0 feature IDs (done) | P1 feature IDs (done) |
 | --- | --- | --- |
@@ -45,4 +45,6 @@ P1 notes: pictures are inserted from the main menu ("Insert picture…"), by pas
 
 Review round 2 fixes: style changes made while typing are part of the single text-edit undo step (VIEW-12 with STYLE-11/12/13 and DRAW-10); Ctrl/⌘ + wheel zoom is capped at 1.2× per event (VIEW-02); handle resizing follows the pointer delta (ARR-03); drags are cancelled on window blur and pointer cancel; dialogs return focus to the control that opened them; switching theme autosaves the board settings; an unreadable autosaved board is kept under `chalanamaya.board.unreadable` instead of being overwritten (FILE-01).
 
-Known limits: images are stored as data URLs inside the single localStorage entry, so a large photo can exceed the browser quota (the storage warning then appears); moving files to IndexedDB is left for a later phase. Right-aligned auto-width text grows leftwards from the click point by design.
+P1 review fixes: look-only mode (VIEW-07) now blocks every board-changing action at the shared action layer (undo, redo, clear, paste, lock/unlock all, insert picture, open, duplicate, delete, text edits) and hides or disables those controls in the menu, zoom strip and board settings; locked items (ARR-10) refuse text editing, and double-clicking one offers "Unlock it" for just that item; SVG export (FILE-04) applies the chosen scale to width/height while the viewBox stays in board units; items drawn inside a page frame join it (DRAW-13); the first corner of a new box or frame snaps too, and Alt skips snapping (VIEW-11).
+
+Known limits: images are stored as data URLs inside the single localStorage entry, so a large photo can exceed the browser quota (the storage warning then appears); moving files to IndexedDB is left for a later phase. Right-aligned auto-width text grows leftwards from the click point by design. Connector labels sit on a patch of the board colour, which also hides grid lines behind the label. Cross-hatch fills use the light-theme swatch colour, so they look pale in the dark theme.
