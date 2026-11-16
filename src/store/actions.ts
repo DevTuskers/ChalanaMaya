@@ -1,14 +1,34 @@
-import { createImage, createText, hasPoints, isFillable, isShape } from "../scene/elements";
+import { createFrame, createImage, createText, isLinear } from "../scene/elements";
 import { getCommonBounds } from "../scene/geometry";
 import {
   cloneElements,
   deleteElements,
   duplicateElements,
+  getBoundText,
   selectAll as selectAllIds,
   withBoundTexts,
 } from "../scene/scene";
 import { layoutText } from "../scene/text";
-import type { ItemStyle, SceneElement, TextElement } from "../scene/types";
+import type { ItemStyle, SceneElement, ShapeType } from "../scene/types";
+import {
+  alignElements,
+  assignFrames,
+  distributeElements,
+  extractStyle,
+  flipElements,
+  groupElements,
+  internalTarget,
+  normalizeLink,
+  pasteStyle,
+  removePoint,
+  reorder,
+  setLocked,
+  switchType,
+  ungroupElements,
+  type Align,
+  type ZOrder,
+} from "../scene/arrange";
+import { resetCrop } from "../scene/crop";
 import { clampZoom, fitBounds, screenToScene, zoomAt } from "../scene/viewport";
 import {
   blobToDataURL,
@@ -18,7 +38,7 @@ import {
   type PasteContent,
 } from "../io/clipboard";
 import { serializeClipboard } from "../io/serialize";
-import type { Store, ToolId } from "./store";
+import type { AppState, Store, ToolId } from "./store";
 
 export const viewCenter = (store: Store) => ({
   x: store.viewSize.width / 2,
@@ -68,34 +88,15 @@ export const applyStyle = (store: Store, patch: Partial<ItemStyle>) => {
     store.set({ currentStyle: nextStyle });
     return;
   }
-  const targets = withBoundTexts(elements, selectedIds);
-  let changed = false;
-  const next = elements.map((el): SceneElement => {
-    if (!targets.has(el.id) || el.locked) return el;
-    let out: SceneElement = el;
-    if (patch.strokeColor !== undefined && el.type !== "image") {
-      out = { ...out, strokeColor: patch.strokeColor };
-    }
-    if (patch.backgroundColor !== undefined && isFillable(el)) {
-      out = { ...out, backgroundColor: patch.backgroundColor };
-    }
-    if (patch.strokeWidth !== undefined && (isShape(el) || hasPoints(el))) {
-      out = { ...out, strokeWidth: patch.strokeWidth };
-    }
-    if (out.type === "text") {
-      const t = out as TextElement;
-      const textPatch: Partial<TextElement> = {};
-      if (patch.fontFamily !== undefined) textPatch.fontFamily = patch.fontFamily;
-      if (patch.fontSize !== undefined) textPatch.fontSize = patch.fontSize;
-      if (patch.textAlign !== undefined) textPatch.textAlign = patch.textAlign;
-      if (Object.keys(textPatch).length) {
-        const merged = { ...t, ...textPatch };
-        out = merged.containerId ? merged : layoutText(merged);
-      }
-    }
-    if (out !== el) changed = true;
-    return out;
-  });
+  const styled = pasteStyle(elements, selectedIds, patch);
+  const next = styled
+    ? styled.map((el) =>
+        el.type === "text" && !el.containerId && el !== elements.find((e) => e.id === el.id)
+          ? layoutText(el)
+          : el,
+      )
+    : elements;
+  const changed = styled !== null;
   if (!changed) {
     store.set({ currentStyle: nextStyle });
   } else if (editingTextId) {
@@ -270,4 +271,186 @@ export const clearCanvas = (store: Store) => {
   // removes every element, including locked ones; undoable
   store.commit([], { selectedIds: new Set(), editingTextId: null, dialog: null });
   store.toast("The board was cleared. Undo brings it back.", "info");
+};
+
+// ---- arranging (P1) ----
+
+type Arranger = (elements: readonly SceneElement[], ids: ReadonlySet<string>) => SceneElement[] | null;
+
+const arrange = (store: Store, fn: Arranger, emptyMessage: string, extra: Partial<AppState> = {}) => {
+  const { elements, selectedIds } = store.get();
+  if (store.get().viewMode) return false;
+  if (!selectedIds.size) {
+    store.toast("Select something first.");
+    return false;
+  }
+  const next = fn(elements, selectedIds);
+  if (!next) {
+    store.toast(emptyMessage);
+    return false;
+  }
+  store.commit(next, extra);
+  return true;
+};
+
+export const groupSelected = (store: Store) =>
+  arrange(store, groupElements, "Pick two or more unlocked items to group.");
+
+export const ungroupSelected = (store: Store) =>
+  arrange(store, ungroupElements, "The selection is not grouped.");
+
+export const reorderSelected = (store: Store, op: ZOrder) =>
+  arrange(store, (els, ids) => reorder(els, ids, op), "Nothing to reorder.");
+
+export const alignSelected = (store: Store, mode: Align) =>
+  arrange(store, (els, ids) => alignElements(els, ids, mode), "Pick two or more items to align.");
+
+export const distributeSelected = (store: Store, axis: "horizontal" | "vertical") =>
+  arrange(
+    store,
+    (els, ids) => distributeElements(els, ids, axis),
+    "Pick three or more items to distribute.",
+  );
+
+export const flipSelected = (store: Store, axis: "horizontal" | "vertical") =>
+  arrange(store, (els, ids) => flipElements(els, ids, axis), "Nothing to flip.");
+
+export const lockSelected = (store: Store) =>
+  arrange(store, (els, ids) => setLocked(els, ids, true), "Already locked.", {
+    selectedIds: new Set(),
+  }) && store.toast("Locked. Use “Unlock all” in the menu to edit it again.", "info", 3000);
+
+export const lockAll = (store: Store) => {
+  const next = setLocked(store.get().elements, "all", true);
+  if (!next) return store.toast("Everything is already locked.");
+  store.commit(next, { selectedIds: new Set() });
+  store.toast("Every item is locked.", "info", 2500);
+};
+
+export const unlockAll = (store: Store) => {
+  const { elements } = store.get();
+  const ids = new Set(elements.filter((e) => e.locked).map((e) => e.id));
+  const next = setLocked(elements, "all", false);
+  if (!next) return store.toast("Nothing is locked.");
+  store.commit(next, { selectedIds: ids, tool: "pick" });
+};
+
+/** Unlocks one locked item (picked from the canvas context command). */
+export const unlockElement = (store: Store, id: string) => {
+  const next = setLocked(store.get().elements, new Set([id]), false);
+  if (next) store.commit(next, { selectedIds: new Set([id]) });
+};
+
+export const switchSelectedType = (store: Store, type: ShapeType | "arrow" | "line") =>
+  arrange(store, (els, ids) => switchType(els, ids, type), "That shape cannot switch to this type.");
+
+export const copyStyles = (store: Store) => {
+  const { elements, selectedIds } = store.get();
+  const el = elements.find((e) => selectedIds.has(e.id));
+  if (!el) return store.toast("Select an item to copy its style.");
+  const style = extractStyle(el);
+  const text = getBoundText(elements, el.id);
+  if (text) Object.assign(style, { fontFamily: text.fontFamily, fontSize: text.fontSize });
+  store.set({ copiedStyle: style });
+  store.toast("Style copied.", "success", 1800);
+};
+
+export const pasteStyles = (store: Store) => {
+  const { copiedStyle } = store.get();
+  if (!copiedStyle) return store.toast("Copy a style first.");
+  arrange(store, (els, ids) => pasteStyle(els, ids, copiedStyle), "Those items already use this style.");
+};
+
+export const setLink = (store: Store, id: string, raw: string): string | null => {
+  const { elements } = store.get();
+  if (!raw.trim()) {
+    store.commit(elements.map((e) => (e.id === id ? { ...e, link: null } : e)));
+    return null;
+  }
+  const link = normalizeLink(raw);
+  if (!link) return "That link is not allowed. Use http(s), mailto, or an internal board link.";
+  store.commit(elements.map((e) => (e.id === id ? { ...e, link } : e)));
+  return null;
+};
+
+/** Opens a link deliberately. Internal links move the view to the target. */
+export const followLink = (store: Store, link: string, win: Window | null) => {
+  const target = internalTarget(link);
+  if (target) {
+    const el = store.get().elements.find((e) => e.id === target);
+    if (!el) {
+      store.toast("The linked item is no longer on this board.", "error");
+      return;
+    }
+    const v = fitBounds(getCommonBounds([el]), store.viewSize.width, store.viewSize.height);
+    if (v) store.set({ viewport: { ...v, zoom: Math.min(v.zoom, 1.5) } });
+    if (!store.get().viewMode) store.set({ selectedIds: new Set([el.id]), tool: "pick" });
+    return;
+  }
+  if (!normalizeLink(link)) {
+    store.toast("That link is not safe to open.", "error");
+    return;
+  }
+  win?.open(link, "_blank", "noopener,noreferrer");
+};
+
+export const deletePoint = (store: Store) => {
+  const { elements, editingPointsId, editingPointIndex } = store.get();
+  const el = elements.find((e) => e.id === editingPointsId);
+  if (!el || !isLinear(el) || editingPointIndex === null) return false;
+  const next = removePoint(el, editingPointIndex);
+  if (!next) {
+    store.toast("A path needs at least two points, so this point stays.");
+    return true;
+  }
+  store.commit(
+    elements.map((e) => (e.id === el.id ? next : e)),
+    { editingPointIndex: null },
+  );
+  return true;
+};
+
+export const resetImageCrop = (store: Store) =>
+  arrange(
+    store,
+    (els, ids) => {
+      let changed = false;
+      const next = els.map((e) => {
+        if (!ids.has(e.id) || e.type !== "image" || !e.crop) return e;
+        changed = true;
+        return resetCrop(e);
+      });
+      return changed ? next : null;
+    },
+    "This picture is not cropped.",
+    { croppingId: null },
+  );
+
+export const createFrameAroundSelection = (store: Store) => {
+  const { elements, selectedIds } = store.get();
+  const items = elements.filter((e) => selectedIds.has(e.id) && e.type !== "frame");
+  const b = getCommonBounds(items);
+  if (!b) return store.toast("Select items to wrap in a page frame.");
+  const pad = 24;
+  const count = elements.filter((e) => e.type === "frame").length;
+  const frame = {
+    ...createFrame(b.minX - pad, b.minY - pad, `Page ${count + 1}`),
+    width: b.maxX - b.minX + pad * 2,
+    height: b.maxY - b.minY + pad * 2,
+  };
+  store.commit(assignFrames([frame, ...elements]), { selectedIds: new Set([frame.id]) });
+};
+
+export const setFrameName = (store: Store, id: string, name: string) => {
+  const { elements } = store.get();
+  store.commit(elements.map((e) => (e.id === id && e.type === "frame" ? { ...e, name } : e)));
+};
+
+/** Removes a frame but keeps everything that was inside it. */
+export const removeFrameKeepContents = (store: Store, id: string) => {
+  const { elements } = store.get();
+  store.commit(
+    elements.filter((e) => e.id !== id).map((e) => (e.frameId === id ? { ...e, frameId: null } : e)),
+    { selectedIds: new Set() },
+  );
 };

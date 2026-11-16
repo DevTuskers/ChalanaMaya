@@ -1,5 +1,6 @@
 import { TRANSPARENT } from "./constants";
-import { hasPoints, isFillable } from "./elements";
+import { hasPoints, isFillable, isLinear } from "./elements";
+import { routedPoints } from "./route";
 import {
   boundsContain,
   distanceToSegment,
@@ -67,7 +68,7 @@ export const hitElement = (
   elements: Elements = [],
 ): boolean => {
   if (hasPoints(el)) {
-    const pts = getAbsolutePoints(el);
+    const pts = isLinear(el) ? routedPoints(el) : getAbsolutePoints(el);
     const tol = tolerance + el.strokeWidth / 2;
     if (pts.length === 1) return Math.hypot(p.x - pts[0].x, p.y - pts[0].y) <= tol;
     const closed = el.type === "line" && el.closed;
@@ -75,9 +76,18 @@ export const hitElement = (
       if (distanceToSegment(p, pts[i], pts[i + 1]) <= tol) return true;
     }
     if (closed && el.backgroundColor !== TRANSPARENT && pointInPolygon(p, pts)) return true;
+    if (isLinear(el)) {
+      const label = elements.find((e) => e.type === "text" && e.containerId === el.id);
+      if (label && label.type === "text" && label.text.trim() && hitElement(label, p, tolerance)) return true;
+    }
     return false;
   }
   const local = toLocal(p, el);
+  if (el.type === "frame") {
+    const onTitle =
+      local.y >= el.y - 24 && local.y <= el.y && local.x >= el.x && local.x <= el.x + Math.max(60, Math.min(el.width, 200));
+    return onTitle || outlineDistance(el, local) <= tolerance + 2;
+  }
   if (el.type === "text" || el.type === "image") {
     return (
       local.x >= el.x - tolerance &&

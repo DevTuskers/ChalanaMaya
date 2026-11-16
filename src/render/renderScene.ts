@@ -1,119 +1,21 @@
 import rough from "roughjs";
-import type { Drawable, Options } from "roughjs/bin/core";
-import { getStroke } from "perfect-freehand";
-import { INK, INK_DARK, TRANSPARENT } from "../scene/constants";
+import type { Drawable } from "roughjs/bin/core";
+import { NOTE_INK } from "../scene/constants";
 import { getCenter } from "../scene/geometry";
+import { buildDrawables, freedrawOutline, resolveColor } from "./shapes";
 import { fontString, getTextLines, lineHeightPx } from "../scene/text";
 import type {
   FileMap,
   FreedrawElement,
-  Point,
   SceneElement,
   TextElement,
   Theme,
   Viewport,
 } from "../scene/types";
 
-const generator = rough.generator();
-
-/** The default ink adapts to the theme; explicit colours are never changed. */
-/**
- * Dark-theme display variants of the built-in stroke palette. Stored colours never change;
- * only how palette inks are drawn on the dark paper, so artwork stays readable.
- */
-const DARK_INKS: Record<string, string> = {
-  [INK]: INK_DARK,
-  "#007f78": "#5ad6c8",
-  "#b65b24": "#f3ad73",
-  "#c0392b": "#ff8a7a",
-  "#2f6fb5": "#86b8f0",
-  "#6b8e23": "#a9cc5e",
-};
-
-export const resolveColor = (color: string, theme: Theme) =>
-  theme === "dark" ? (DARK_INKS[color.toLowerCase()] ?? color) : color;
-
-const roughOptions = (el: SceneElement, theme: Theme, fill: boolean): Options => ({
-  seed: el.seed,
-  stroke: resolveColor(el.strokeColor, theme),
-  strokeWidth: el.strokeWidth,
-  roughness: 1,
-  bowing: 1,
-  fill: fill && el.backgroundColor !== TRANSPARENT ? el.backgroundColor : undefined,
-  fillStyle: el.fillStyle,
-  fillWeight: Math.max(0.5, el.strokeWidth / 2),
-  hachureGap: 4 + el.strokeWidth * 1.5,
-  preserveVertices: true,
-});
+export { resolveColor };
 
 const cache = new WeakMap<SceneElement, { theme: Theme; drawables: Drawable[] }>();
-
-const arrowhead = (pts: Point[], size: number): [Point, Point, Point] | null => {
-  const end = pts[pts.length - 1];
-  let prev = pts[pts.length - 2];
-  for (let i = pts.length - 2; i >= 0 && Math.hypot(end.x - prev.x, end.y - prev.y) < 1; i--) {
-    prev = pts[i];
-  }
-  const len = Math.hypot(end.x - prev.x, end.y - prev.y);
-  if (len < 1) return null;
-  const s = Math.min(size, len * 0.6);
-  const a = Math.atan2(end.y - prev.y, end.x - prev.x);
-  const spread = Math.PI / 7;
-  return [
-    { x: end.x - s * Math.cos(a - spread), y: end.y - s * Math.sin(a - spread) },
-    end,
-    { x: end.x - s * Math.cos(a + spread), y: end.y - s * Math.sin(a + spread) },
-  ];
-};
-
-const buildDrawables = (el: SceneElement, theme: Theme): Drawable[] => {
-  const w = el.width;
-  const h = el.height;
-  const ox = -w / 2;
-  const oy = -h / 2;
-  switch (el.type) {
-    case "rectangle":
-      return [generator.rectangle(ox, oy, w, h, roughOptions(el, theme, true))];
-    case "diamond":
-      return [
-        generator.polygon(
-          [
-            [0, oy],
-            [-ox, 0],
-            [0, -oy],
-            [ox, 0],
-          ],
-          roughOptions(el, theme, true),
-        ),
-      ];
-    case "ellipse":
-      return [generator.ellipse(0, 0, w, h, roughOptions(el, theme, true))];
-    case "line":
-    case "arrow": {
-      const pts = el.points.map((p) => ({ x: p.x + ox, y: p.y + oy }));
-      const tuples = pts.map((p) => [p.x, p.y] as [number, number]);
-      if (pts.length < 2) return [];
-      if (el.type === "line" && el.closed) {
-        return [generator.polygon(tuples, roughOptions(el, theme, true))];
-      }
-      const out = [generator.linearPath(tuples, roughOptions(el, theme, false))];
-      if (el.type === "arrow") {
-        const head = arrowhead(pts, 14 + el.strokeWidth * 3);
-        if (head) {
-          out.push(
-            generator.linearPath(
-              head.map((p) => [p.x, p.y] as [number, number]),
-              roughOptions(el, theme, false),
-            ),
-          );
-        }
-      }
-      return out;
-    }
-    default:
-      return [];
-  }
-};
 
 const getDrawables = (el: SceneElement, theme: Theme) => {
   const hit = cache.get(el);
@@ -124,18 +26,7 @@ const getDrawables = (el: SceneElement, theme: Theme) => {
 };
 
 const freedrawPath = (el: FreedrawElement): Path2D => {
-  const ox = -el.width / 2;
-  const oy = -el.height / 2;
-  const outline = getStroke(
-    el.points.map((p) => [p.x + ox, p.y + oy]),
-    {
-      size: el.strokeWidth * 3 + 2,
-      thinning: 0.55,
-      smoothing: 0.5,
-      streamline: 0.45,
-      simulatePressure: true,
-    },
-  );
+  const outline = freedrawOutline(el);
   const path = new Path2D();
   if (!outline.length) return path;
   path.moveTo(outline[0][0], outline[0][1]);
@@ -189,11 +80,15 @@ export const loadImages = async (elements: readonly SceneElement[], files: FileM
   );
 };
 
-const drawText = (ctx: CanvasRenderingContext2D, el: TextElement, theme: Theme) => {
+/** Text on a note keeps its stored ink: notes are light paper in both themes. */
+export const textInk = (el: TextElement, theme: Theme, onNote: boolean) =>
+  onNote ? el.strokeColor || NOTE_INK : resolveColor(el.strokeColor, theme);
+
+const drawText = (ctx: CanvasRenderingContext2D, el: TextElement, theme: Theme, onNote: boolean) => {
   const lines = getTextLines(el);
   const lh = lineHeightPx(el.fontSize);
   ctx.font = fontString(el.fontFamily, el.fontSize);
-  ctx.fillStyle = resolveColor(el.strokeColor, theme);
+  ctx.fillStyle = textInk(el, theme, onNote);
   ctx.textAlign = el.textAlign;
   ctx.textBaseline = "middle";
   const x = el.textAlign === "left" ? -el.width / 2 : el.textAlign === "right" ? el.width / 2 : 0;
@@ -207,12 +102,14 @@ export const drawElement = (
   el: SceneElement,
   files: FileMap,
   theme: Theme,
+  ctxInfo: { onNote?: boolean; alpha?: number } = {},
 ) => {
   const c = getCenter(el);
   ctx.save();
+  ctx.globalAlpha = (el.opacity / 100) * (ctxInfo.alpha ?? 1);
   ctx.translate(c.x, c.y);
   if (el.angle) ctx.rotate(el.angle);
-  if (el.type === "text") drawText(ctx, el, theme);
+  if (el.type === "text") drawText(ctx, el, theme, !!ctxInfo.onNote);
   else if (el.type === "freedraw") {
     let path = pathCache.get(el);
     if (!path) {
@@ -223,17 +120,37 @@ export const drawElement = (
     ctx.fill(path);
   } else if (el.type === "image") {
     const img = getImage(el.fileId, files);
-    if (img) ctx.drawImage(img, -el.width / 2, -el.height / 2, el.width, el.height);
-    else {
+    if (img) {
+      if (el.flipX || el.flipY) ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
+      const cr = el.crop;
+      if (cr) {
+        const kx = img.naturalWidth / cr.naturalWidth;
+        const ky = img.naturalHeight / cr.naturalHeight;
+        ctx.drawImage(img, cr.x * kx, cr.y * ky, cr.width * kx, cr.height * ky, -el.width / 2, -el.height / 2, el.width, el.height);
+      } else ctx.drawImage(img, -el.width / 2, -el.height / 2, el.width, el.height);
+    } else {
       ctx.strokeStyle = "#8aa7a2";
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
     }
   } else {
     for (const d of getDrawables(el, theme)) rc.draw(d);
+    if (el.type === "frame") {
+      ctx.font = `600 13px "Source Sans 3", system-ui, sans-serif`;
+      ctx.fillStyle = resolveColor(el.strokeColor, theme);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(el.name || "Page", -el.width / 2 + 2, -el.height / 2 - 5, Math.max(40, el.width));
+    }
   }
   ctx.restore();
 };
+
+/** Frames are always painted below everything else. */
+export const paintOrder = (elements: readonly SceneElement[]) => [
+  ...elements.filter((e) => e.type === "frame"),
+  ...elements.filter((e) => e.type !== "frame"),
+];
 
 export interface RenderOptions {
   elements: readonly SceneElement[];
@@ -245,6 +162,8 @@ export interface RenderOptions {
   width: number;
   height: number;
   skipIds?: ReadonlySet<string>;
+  /** Drawn faded (e.g. about to be erased). */
+  fadeIds?: ReadonlySet<string>;
 }
 
 /** Draws artwork only (no editor controls). The context must already be DPR-scaled. */
@@ -263,13 +182,17 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
   const minY = -v.scrollY;
   const maxX = minX + opts.width / v.zoom;
   const maxY = minY + opts.height / v.zoom;
-  for (const el of opts.elements) {
+  const notes = new Set(opts.elements.filter((e) => e.type === "note").map((e) => e.id));
+  for (const el of paintOrder(opts.elements)) {
     if (opts.skipIds?.has(el.id)) continue;
     // cheap culling with a generous margin for rotation and stroke
     const r = Math.hypot(el.width, el.height) / 2 + 40;
     const c = getCenter(el);
     if (c.x + r < minX || c.x - r > maxX || c.y + r < minY || c.y - r > maxY) continue;
-    drawElement(ctx, rc, el, opts.files, opts.theme);
+    drawElement(ctx, rc, el, opts.files, opts.theme, {
+      onNote: el.type === "text" && !!el.containerId && notes.has(el.containerId),
+      alpha: opts.fadeIds?.has(el.id) ? 0.3 : 1,
+    });
   }
   ctx.restore();
 };

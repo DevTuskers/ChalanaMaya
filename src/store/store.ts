@@ -4,11 +4,42 @@ import { finalizeScene } from "../scene/scene";
 import type { FileMap, ItemStyle, SceneElement, Theme, Viewport } from "../scene/types";
 
 export type ToolId =
-  "pick" | "rectangle" | "diamond" | "ellipse" | "arrow" | "line" | "freedraw" | "text" | "hand";
+  | "pick"
+  | "lasso"
+  | "rectangle"
+  | "diamond"
+  | "ellipse"
+  | "arrow"
+  | "line"
+  | "freedraw"
+  | "text"
+  | "note"
+  | "frame"
+  | "eraser"
+  | "eyedropper"
+  | "hand";
+
+export type InputPreference = "mouse" | "trackpad";
+
+export interface Preferences {
+  penMode: boolean;
+  inputPreference: InputPreference;
+  snapping: boolean;
+}
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  penMode: false,
+  inputPreference: "trackpad",
+  snapping: true,
+};
 
 export type Dialog =
   | { kind: "help" }
   | { kind: "export" }
+  | { kind: "svg" }
+  | { kind: "link"; elementId: string }
+  | { kind: "openLink"; url: string }
+  | { kind: "search" }
   | { kind: "clear" }
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
   | null;
@@ -34,6 +65,31 @@ export interface AppState {
   storageWarning: string | null;
   /** Bumped whenever history changes so the UI can refresh undo/redo state. */
   historyVersion: number;
+  /** Keep drawing: drawing tools stay active after finishing an item. */
+  toolLocked: boolean;
+  gridEnabled: boolean;
+  /** Board colour id (light value; dark theme shows a matching variant). */
+  viewBackgroundColor: string;
+  zenMode: boolean;
+  viewMode: boolean;
+  statsOpen: boolean;
+  searchOpen: boolean;
+  prefs: Preferences;
+  /** Style copied with "Copy styles". */
+  copiedStyle: Partial<ItemStyle> | null;
+  /** Lasso path or eraser trail in board units, drawn on the overlay. */
+  trail: { kind: "lasso" | "eraser"; points: { x: number; y: number }[] } | null;
+  /** Elements about to be erased. */
+  pendingErase: ReadonlySet<string>;
+  /** Snap guides currently shown, in board units. */
+  snapLines: { x1: number; y1: number; x2: number; y2: number }[];
+  /** Image being cropped. */
+  croppingId: string | null;
+  /** Arrow or line whose points are being edited. */
+  editingPointsId: string | null;
+  editingPointIndex: number | null;
+  /** Element id highlighted by search. */
+  searchHighlight: string | null;
 }
 
 export const initialState = (): AppState => ({
@@ -50,6 +106,22 @@ export const initialState = (): AppState => ({
   toasts: [],
   storageWarning: null,
   historyVersion: 0,
+  toolLocked: false,
+  gridEnabled: false,
+  viewBackgroundColor: PAPER.light,
+  zenMode: false,
+  viewMode: false,
+  statsOpen: false,
+  searchOpen: false,
+  prefs: { ...DEFAULT_PREFERENCES },
+  copiedStyle: null,
+  trail: null,
+  pendingErase: new Set(),
+  snapLines: [],
+  croppingId: null,
+  editingPointsId: null,
+  editingPointIndex: null,
+  searchHighlight: null,
 });
 
 type Listener = () => void;
@@ -162,6 +234,10 @@ export class Store {
   }
 
   boardSettings() {
-    return { theme: this.state.theme, viewBackgroundColor: PAPER[this.state.theme] };
+    return {
+      theme: this.state.theme,
+      viewBackgroundColor: this.state.viewBackgroundColor,
+      gridEnabled: this.state.gridEnabled,
+    };
   }
 }

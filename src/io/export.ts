@@ -8,6 +8,8 @@ export interface PngExportOptions {
   scale: number;
   theme: Theme;
   padding?: number;
+  /** Paper colour to use when `background` is on. */
+  backgroundColor?: string;
 }
 
 export const MAX_EXPORT_SIDE = 16384;
@@ -46,7 +48,7 @@ export const exportToCanvas = async (
     elements,
     files,
     theme: opts.theme,
-    background: opts.background ? PAPER[opts.theme] : null,
+    background: opts.background ? (opts.backgroundColor ?? PAPER[opts.theme]) : null,
     width: size.width / opts.scale,
     height: size.height / opts.scale,
     viewport: {

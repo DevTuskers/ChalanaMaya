@@ -1,11 +1,27 @@
 import {
+  createFrame,
   createFreedraw,
   createLinear,
+  createNote,
   createShape,
   createText,
   isLinear,
-  isShape,
+  isTextContainer,
 } from "../scene/elements";
+import {
+  assignFrames,
+  elementsInLasso,
+  elementsUnderTrail,
+  expandGroups,
+  insertPoint,
+  snapBox,
+  snapPoint,
+  withDependents,
+} from "../scene/arrange";
+import { cropByHandle } from "../scene/crop";
+import { deleteElements } from "../scene/scene";
+import { getCommonBounds } from "../scene/geometry";
+import type { ImageElement } from "../scene/types";
 import {
   distance,
   fromAbsolutePoints,
@@ -15,7 +31,7 @@ import {
   snapAngle,
 } from "../scene/geometry";
 import type { Snapshot } from "../scene/history";
-import { elementAt, elementsInBox } from "../scene/hit";
+import { elementAt, elementsInBox, hitElement } from "../scene/hit";
 import { bindingTargetAt, getBoundText } from "../scene/scene";
 import { layoutText } from "../scene/text";
 import {
@@ -55,12 +71,16 @@ export interface PointerInput {
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
+  /** "mouse", "pen" or "touch". */
+  pointerType?: string;
 }
 
 type Interaction =
   | { kind: "none" }
   | { kind: "pan"; last: Point }
   | { kind: "shape"; id: string; origin: Point; before: Snapshot }
+  | { kind: "frame"; id: string; origin: Point; before: Snapshot }
+  | { kind: "trail"; mode: "lasso" | "eraser"; points: Point[] }
   | { kind: "arrow"; id: string; origin: Point; before: Snapshot }
   | { kind: "freedraw"; id: string; points: Point[]; before: Snapshot }
   | {
@@ -109,7 +129,22 @@ export interface Overlay {
 /** Max zoom change per wheel event, as a natural log (ln 1.2 ≈ 0.182). */
 const MAX_WHEEL_ZOOM_LOG = Math.log(1.2);
 
-const DRAW_TOOLS: ToolId[] = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw"];
+const DRAW_TOOLS: ToolId[] = [
+  "rectangle",
+  "diamond",
+  "ellipse",
+  "arrow",
+  "line",
+  "freedraw",
+  "note",
+  "frame",
+  "lasso",
+  "eraser",
+  "eyedropper",
+];
+
+/** Tools that create artwork (pen mode ignores touch for these). */
+const CREATING_TOOLS: ToolId[] = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw", "text", "note", "frame", "eraser"];
 
 export class Controller {
   private interaction: Interaction = { kind: "none" };
@@ -117,6 +152,10 @@ export class Controller {
   spaceHeld = false;
   cursor = "default";
   onOverlay: () => void = () => {};
+  /** Eyedropper sampling at a screen point; set by the canvas. */
+  onSample: (screen: Point) => void = () => {};
+  /** Asked to open a link (view mode or link badge). */
+  onLink: (el: SceneElement) => void = () => {};
   /** Text edit session started by startTextEdit. */
   private textSession: { id: string; before: Snapshot; isNew: boolean } | null = null;
 
@@ -149,11 +188,31 @@ export class Controller {
 
   // ---------- pointer down ----------
 
+  /** Selection and tool to use after finishing a new item (Keep drawing aware). */
+  private after(id: string): { selectedIds: Set<string>; tool?: ToolId } {
+    if (this.state.toolLocked) return { selectedIds: new Set() };
+    return { selectedIds: new Set([id]), tool: "pick" };
+  }
+
+  private snapOn(input: PointerInput) {
+    return this.state.prefs.snapping && !input.altKey;
+  }
+
   pointerDown(input: PointerInput) {
     if (this.state.editingTextId) this.finishTextEdit();
     const p = this.toScene(input);
     const tool = this.state.tool;
-    if (input.button === 1 || this.spaceHeld || tool === "hand") {
+    const { viewMode, prefs } = this.state;
+    if (viewMode && input.button === 0 && !this.spaceHeld) {
+      const hit = elementAt(this.state.elements, p, this.tolerance());
+      if (hit?.link) {
+        this.onLink(hit);
+        return;
+      }
+    }
+    const touchBlocked =
+      prefs.penMode && input.pointerType === "touch" && CREATING_TOOLS.includes(tool);
+    if (input.button === 1 || this.spaceHeld || tool === "hand" || viewMode || touchBlocked) {
       this.interaction = { kind: "pan", last: { x: input.x, y: input.y } };
       this.cursor = "grabbing";
       return;
@@ -184,7 +243,48 @@ export class Controller {
       case "text":
         this.textToolDown(p);
         return;
+      case "note":
+        this.placeNote(p);
+        return;
+      case "frame": {
+        const before = this.store.snapshot();
+        const count = this.state.elements.filter((e) => e.type === "frame").length;
+        const el = createFrame(p.x, p.y, `Page ${count + 1}`);
+        this.store.set({ elements: [...this.state.elements, el], selectedIds: new Set() });
+        this.interaction = { kind: "frame", id: el.id, origin: p, before };
+        return;
+      }
+      case "lasso":
+      case "eraser":
+        this.interaction = { kind: "trail", mode: tool, points: [p] };
+        this.store.set({ trail: { kind: tool, points: [p] }, pendingErase: new Set() });
+        if (tool === "eraser") this.eraseAlong([p]);
+        return;
+      case "eyedropper":
+        this.onSample({ x: input.x, y: input.y });
+        return;
     }
+  }
+
+  private placeNote(p: Point) {
+    const before = this.store.snapshot();
+    const note = createNote(p.x - 90, p.y - 90, this.state.currentStyle);
+    const text = createText(p.x, p.y, { ...this.state.currentStyle, strokeColor: "#193a36" }, "", note.id);
+    this.store.updateElements([...this.state.elements, note, text]);
+    this.textSession = { id: text.id, before, isNew: false };
+    this.store.set({ editingTextId: text.id, selectedIds: new Set() });
+    this.noteSession = note.id;
+  }
+
+  /** Note created by the note tool; finishing an empty note keeps the paper. */
+  private noteSession: string | null = null;
+
+  private eraseAlong(points: Point[]) {
+    const hit = elementsUnderTrail(this.state.elements, points, this.tolerance());
+    if (!hit.size) return;
+    const next = new Set(this.state.pendingErase);
+    for (const id of hit) next.add(id);
+    if (next.size !== this.state.pendingErase.size) this.store.set({ pendingErase: next });
   }
 
   private pickDown(input: PointerInput, p: Point) {
@@ -192,6 +292,33 @@ export class Controller {
     const selected = elements.filter((e) => selectedIds.has(e.id));
     const box = getTransformBox(selected);
     const hs = HANDLE_SIZE / viewport.zoom;
+
+    const editingPts = this.state.editingPointsId
+      ? elements.find((e) => e.id === this.state.editingPointsId)
+      : undefined;
+    if (editingPts && isLinear(editingPts)) {
+      const pts = getAbsolutePoints(editingPts);
+      const idx = pts.findIndex((q) => distance(q, p) <= hs);
+      if (idx >= 0) {
+        this.interaction = { kind: "endpoint", id: editingPts.id, index: idx, before: this.store.snapshot() };
+        this.store.set({ selectedIds: new Set([editingPts.id]), editingPointIndex: idx });
+        return;
+      }
+      for (let i = 0; i < pts.length - 1; i++) {
+        const m = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 };
+        if (distance(m, p) <= hs) {
+          const before = this.store.snapshot();
+          const next = insertPoint(editingPts, i);
+          this.store.updateElements(elements.map((e) => (e.id === next.id ? next : e)));
+          this.interaction = { kind: "endpoint", id: next.id, index: i + 1, before };
+          this.store.set({ editingPointIndex: i + 1 });
+          return;
+        }
+      }
+      if (!hitElement(editingPts, p, this.tolerance(), elements)) {
+        this.store.set({ editingPointsId: null, editingPointIndex: null });
+      } else return;
+    }
 
     if (selected.length === 1 && isLinear(selected[0])) {
       const pts = getAbsolutePoints(selected[0]);
@@ -245,16 +372,20 @@ export class Controller {
     }
 
     const hit = elementAt(elements, p, this.tolerance());
+    if (this.state.croppingId && hit?.id !== this.state.croppingId) {
+      this.store.set({ croppingId: null });
+    }
     if (hit) {
       let ids: Set<string>;
+      const unit = expandGroups(elements, [hit.id]);
       if (input.shiftKey) {
         ids = new Set(selectedIds);
-        if (ids.has(hit.id)) ids.delete(hit.id);
-        else ids.add(hit.id);
+        if (ids.has(hit.id)) for (const id of unit) ids.delete(id);
+        else for (const id of unit) ids.add(id);
       } else if (selectedIds.has(hit.id)) {
         ids = new Set(selectedIds);
       } else {
-        ids = new Set([hit.id]);
+        ids = unit;
       }
       this.store.set({ selectedIds: ids });
       if (ids.has(hit.id)) this.beginMove(p, ids);
@@ -275,6 +406,9 @@ export class Controller {
   }
 
   private beginMove(p: Point, ids: Set<string>) {
+    if ([...ids].some((id) => this.find(id)?.locked)) {
+      ids = new Set([...ids].filter((id) => !this.find(id)?.locked));
+    }
     this.interaction = {
       kind: "move",
       start: p,
@@ -369,7 +503,7 @@ export class Controller {
     const finished: LinearElement = { ...fromAbsolutePoints(el, fixed), closed };
     const elements = this.state.elements.map((e) => (e.id === it.id ? finished : e));
     this.store.set({ elements });
-    this.store.commitFrom(it.before, { selectedIds: new Set([it.id]), tool: "pick" });
+    this.store.commitFrom(it.before, this.after(it.id));
   }
 
   private beginFreedraw(p: Point) {
@@ -383,7 +517,7 @@ export class Controller {
     const { elements } = this.state;
     const hit = elementAt(elements, p, this.tolerance());
     if (hit && hit.type === "text") return this.startTextEdit(hit.id);
-    if (hit && isShape(hit)) return this.editContainerText(hit);
+    if (hit && (isTextContainer(hit) || hit.type === "arrow")) return this.editContainerText(hit);
     this.createTextAt(p);
   }
 
@@ -400,7 +534,9 @@ export class Controller {
     const existing = getBoundText(this.state.elements, container.id);
     if (existing) return this.startTextEdit(existing.id);
     const c = getCenter(container);
-    const el = createText(c.x, c.y, this.state.currentStyle, "", container.id);
+    const style =
+      container.type === "note" ? { ...this.state.currentStyle, strokeColor: "#193a36" } : this.state.currentStyle;
+    const el = createText(c.x, c.y, style, "", container.id);
     const before = this.store.snapshot();
     this.store.updateElements([...this.state.elements, el]);
     this.textSession = { id: el.id, before, isNew: true };
@@ -434,6 +570,11 @@ export class Controller {
       return;
     }
     const selectId = el.containerId ?? el.id;
+    const noteId = this.noteSession;
+    this.noteSession = null;
+    const done = this.state.toolLocked && noteId
+      ? { tool: this.state.tool, selectedIds: new Set<string>() }
+      : { tool: "pick" as const, selectedIds: select(selectId) };
     if (!el.text.trim()) {
       const elements = this.state.elements.filter((e) => e.id !== id);
       if (session?.isNew) {
@@ -446,12 +587,12 @@ export class Controller {
       } else {
         this.store.updateElements(elements);
         if (session) this.store.commitFrom(session.before);
-        this.store.set({ editingTextId: null, tool: "pick", selectedIds: select(el.containerId) });
+        this.store.set({ editingTextId: null, ...(noteId ? done : { tool: "pick", selectedIds: select(el.containerId) }) });
       }
       return;
     }
     if (session) this.store.commitFrom(session.before);
-    this.store.set({ editingTextId: null, tool: "pick", selectedIds: select(selectId) });
+    this.store.set({ editingTextId: null, ...done });
   }
 
   // ---------- pointer move ----------
@@ -469,7 +610,22 @@ export class Controller {
         this.store.set({ viewport: v });
         return;
       }
+      case "trail": {
+        const last = it.points[it.points.length - 1];
+        if (distance(last, p) * this.state.viewport.zoom < 2) return;
+        it.points.push(p);
+        this.store.set({ trail: { kind: it.mode, points: [...it.points] } });
+        if (it.mode === "eraser") this.eraseAlong([last, { x: (last.x + p.x) / 2, y: (last.y + p.y) / 2 }, p]);
+        return;
+      }
+      case "frame":
       case "shape": {
+        if (this.snapOn(input)) {
+          const snapped = snapPoint(this.state.elements, p, new Set([it.id]), 6 / this.state.viewport.zoom);
+          p.x = snapped.point.x;
+          p.y = snapped.point.y;
+          this.store.set({ snapLines: snapped.lines });
+        } else if (this.state.snapLines.length) this.store.set({ snapLines: [] });
         let w = p.x - it.origin.x;
         let h = p.y - it.origin.y;
         if (input.shiftKey) {
@@ -513,8 +669,23 @@ export class Controller {
         return;
       }
       case "move": {
-        const dx = p.x - it.start.x;
-        const dy = p.y - it.start.y;
+        let dx = p.x - it.start.x;
+        let dy = p.y - it.start.y;
+        if (this.snapOn(input)) {
+          const moving = withDependents(it.base, it.ids);
+          const b = getCommonBounds(it.base.filter((e) => moving.has(e.id)));
+          if (b) {
+            const r = snapBox(
+              it.base,
+              { minX: b.minX + dx, maxX: b.maxX + dx, minY: b.minY + dy, maxY: b.maxY + dy },
+              moving,
+              6 / this.state.viewport.zoom,
+            );
+            dx += r.dx;
+            dy += r.dy;
+            this.store.set({ snapLines: r.lines });
+          }
+        } else if (this.state.snapLines.length) this.store.set({ snapLines: [] });
         this.store.updateElements(moveElements(it.base, it.ids, dx, dy));
         return;
       }
@@ -523,7 +694,10 @@ export class Controller {
         if (it.ids.size === 1) {
           const [id] = it.ids;
           const el = it.base.find((e) => e.id === id)!;
-          const next = resizeElement(el, it.handle, target, input.shiftKey);
+          const img = el.type === "image" && this.state.croppingId === el.id ? this.naturalSize(el) : null;
+          const next = img
+            ? cropByHandle(el as ImageElement, img, it.handle, target)
+            : resizeElement(el, it.handle, target, input.shiftKey);
           this.store.updateElements(it.base.map((e) => (e.id === id ? next : e)));
         } else {
           this.store.updateElements(
@@ -546,7 +720,10 @@ export class Controller {
       case "box": {
         it.current = p;
         const box = normalizeRect(it.origin, p);
-        const inside = elementsInBox(this.state.elements, box).map((e) => e.id);
+        const inside = expandGroups(
+          this.state.elements,
+          elementsInBox(this.state.elements, box).map((e) => e.id),
+        );
         const ids = new Set(it.base);
         for (const id of inside) ids.add(id);
         this.store.set({ selectedIds: ids });
@@ -560,11 +737,11 @@ export class Controller {
         const detached: LinearElement = {
           ...el,
           startBinding: it.index === 0 ? null : el.startBinding,
-          endBinding: it.index === 0 ? el.endBinding : null,
+          endBinding: it.index === pts.length - 1 ? null : el.endBinding,
         };
         const next = fromAbsolutePoints(detached, pts);
         this.store.updateElements(this.state.elements.map((e) => (e.id === it.id ? next : e)));
-        if (el.type === "arrow") {
+        if (el.type === "arrow" && (it.index === 0 || it.index === pts.length - 1)) {
           const target = bindingTargetAt(this.state.elements, p, new Set([it.id]));
           this.setOverlay({ bindingTargetId: target?.id ?? null });
         }
@@ -611,15 +788,32 @@ export class Controller {
         this.cursor = this.spaceHeld || this.state.tool === "hand" ? "grab" : "default";
         this.onOverlay();
         return;
+      case "trail": {
+        this.interaction = { kind: "none" };
+        if (it.mode === "lasso") {
+          const ids = elementsInLasso(this.state.elements, it.points);
+          this.store.set({ trail: null });
+          // an empty loop leaves the selection as it was
+          if (ids.length) this.store.set({ selectedIds: expandGroups(this.state.elements, ids) });
+          return;
+        }
+        const erase = this.state.pendingErase;
+        this.store.set({ trail: null, pendingErase: new Set() });
+        if (erase.size) this.store.commit(deleteElements(this.state.elements, erase));
+        return;
+      }
+      case "frame":
       case "shape": {
         this.interaction = { kind: "none" };
+        if (this.state.snapLines.length) this.store.set({ snapLines: [] });
         const el = this.find(it.id);
         const zoom = this.state.viewport.zoom;
         if (!el || (el.width * zoom < 3 && el.height * zoom < 3)) {
           this.store.set({ elements: it.before.elements });
           return;
         }
-        this.store.commitFrom(it.before, { selectedIds: new Set([it.id]), tool: "pick" });
+        if (it.kind === "frame") this.store.updateElements(assignFrames(this.state.elements));
+        this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
       case "arrow": {
@@ -638,7 +832,7 @@ export class Controller {
           endBinding: target && !sameAsStart ? { elementId: target.id } : null,
         };
         this.store.updateElements(this.state.elements.map((e) => (e.id === it.id ? bound : e)));
-        this.store.commitFrom(it.before, { selectedIds: new Set([it.id]), tool: "pick" });
+        this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
       case "freedraw": {
@@ -669,9 +863,17 @@ export class Controller {
         return;
       }
       case "move":
+        this.interaction = { kind: "none" };
+        if (this.state.snapLines.length) this.store.set({ snapLines: [] });
+        this.store.updateElements(assignFrames(this.state.elements, withDependents(this.state.elements, it.ids)));
+        this.store.commitFrom(it.before);
+        return;
       case "resize":
       case "rotate":
         this.interaction = { kind: "none" };
+        if (it.ids.size === 1 && this.find([...it.ids][0])?.type === "frame") {
+          this.store.updateElements(assignFrames(this.state.elements));
+        }
         this.store.commitFrom(it.before);
         return;
       case "box":
@@ -682,13 +884,15 @@ export class Controller {
         this.interaction = { kind: "none" };
         this.setOverlay({ bindingTargetId: null });
         const el = this.find(it.id) as LinearElement | undefined;
-        if (el && el.type === "arrow") {
+        const isEnd = el && (it.index === 0 || it.index === el.points.length - 1);
+        if (el && el.type === "arrow" && isEnd) {
           const target = bindingTargetAt(this.state.elements, p, new Set([it.id]));
           const other = it.index === 0 ? el.endBinding : el.startBinding;
           const binding =
             target && other?.elementId !== target.id ? { elementId: target.id } : null;
           const next: LinearElement =
             it.index === 0 ? { ...el, startBinding: binding } : { ...el, endBinding: binding };
+          // rebinding happens only when released over a target; elsewhere the end stays detached
           this.store.updateElements(this.state.elements.map((e) => (e.id === it.id ? next : e)));
         }
         this.store.commitFrom(it.before);
@@ -709,11 +913,19 @@ export class Controller {
     const { elements } = this.state;
     const hit = elementAt(elements, p, this.tolerance());
     if (hit?.type === "text") return this.startTextEdit(hit.id);
-    if (hit && isShape(hit)) return this.editContainerText(hit);
+    if (hit && (isTextContainer(hit) || hit.type === "arrow")) return this.editContainerText(hit);
+    if (hit?.type === "line") {
+      this.store.set({ editingPointsId: hit.id, selectedIds: new Set([hit.id]) });
+      return;
+    }
+    if (hit?.type === "image") {
+      this.store.set({ croppingId: hit.id, selectedIds: new Set([hit.id]) });
+      return;
+    }
     if (hit) return;
     // double-clicking inside an unfilled shape still edits its label
     const container = bindingTargetAt(elements, p);
-    if (container && isShape(container) && !container.locked)
+    if (container && isTextContainer(container) && !container.locked)
       return this.editContainerText(container);
     this.createTextAt(p);
   }
@@ -728,13 +940,15 @@ export class Controller {
     shiftKey: boolean;
   }) {
     const v = this.state.viewport;
-    if (e.ctrlKey || e.metaKey) {
+    const mouse = this.state.prefs.inputPreference === "mouse";
+    if (e.ctrlKey || e.metaKey || (mouse && !e.shiftKey)) {
       // fine for trackpad pinch (small deltas), capped per event for mouse wheel notches
       const step = Math.max(-MAX_WHEEL_ZOOM_LOG, Math.min(MAX_WHEEL_ZOOM_LOG, -e.deltaY * 0.01));
       const factor = Math.exp(step);
       this.store.set({ viewport: zoomAt(v, v.zoom * factor, { x: e.x, y: e.y }) });
       return;
     }
+    // trackpad: two-finger scroll pans; mouse: Shift + wheel pans sideways
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
     const dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
     this.store.set({ viewport: panBy(v, -dx, -dy) });
@@ -745,8 +959,11 @@ export class Controller {
     const it = this.interaction;
     if (it.kind === "path") return this.finishPath(false);
     if (it.kind === "box") this.setOverlay({ selectionBox: null });
+    if (it.kind === "trail") this.store.set({ trail: null, pendingErase: new Set() });
+    if (this.state.snapLines.length) this.store.set({ snapLines: [] });
     if (
       it.kind === "shape" ||
+      it.kind === "frame" ||
       it.kind === "arrow" ||
       it.kind === "freedraw" ||
       it.kind === "move" ||
@@ -759,6 +976,9 @@ export class Controller {
     this.interaction = { kind: "none" };
     this.setOverlay({ bindingTargetId: null, selectionBox: null });
   }
+
+  /** Natural pixel size of an image, when loaded. Set by the canvas. */
+  naturalSize: (el: SceneElement) => { width: number; height: number } | null = () => null;
 
   private find(id: string) {
     return this.state.elements.find((e) => e.id === id);

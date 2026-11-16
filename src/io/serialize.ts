@@ -8,6 +8,7 @@ export const CLIPBOARD_TYPE = "chalana/clipboard";
 export interface BoardSettings {
   viewBackgroundColor: string;
   theme: Theme;
+  gridEnabled: boolean;
 }
 
 export interface ChalanaFile {
@@ -37,7 +38,30 @@ const ELEMENT_TYPES = new Set([
   "freedraw",
   "text",
   "image",
+  "note",
+  "frame",
 ]);
+
+const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
+  typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+
+export const ARROWHEADS = [
+  "none",
+  "arrow",
+  "bar",
+  "circle",
+  "circle-outline",
+  "triangle",
+  "triangle-outline",
+  "diamond",
+  "diamond-outline",
+  "er-zero",
+  "er-one",
+  "er-many",
+  "er-zero-one",
+  "er-zero-many",
+  "er-one-many",
+] as const;
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -77,10 +101,19 @@ export const parseElement = (raw: unknown): SceneElement => {
     angle: num(raw.angle, 0),
     strokeColor: str(raw.strokeColor, "#193a36"),
     backgroundColor: str(raw.backgroundColor, "transparent"),
-    fillStyle: raw.fillStyle === "solid" ? ("solid" as const) : ("hachure" as const),
+    fillStyle: oneOf(raw.fillStyle, ["hachure", "cross-hatch", "zigzag", "solid"], "hachure"),
     strokeWidth: num(raw.strokeWidth, 2.5),
+    strokeStyle: oneOf(raw.strokeStyle, ["solid", "dashed", "dotted"], "solid"),
+    roughness: (raw.roughness === 0 || raw.roughness === 2 ? raw.roughness : 1) as 0 | 1 | 2,
+    edges: oneOf(raw.edges, ["sharp", "round"], "sharp"),
+    opacity: Math.max(0, Math.min(100, num(raw.opacity, 100))),
     seed: num(raw.seed, 1),
     locked: raw.locked === true,
+    groupIds: Array.isArray(raw.groupIds)
+      ? raw.groupIds.filter((g): g is string => typeof g === "string")
+      : [],
+    frameId: typeof raw.frameId === "string" ? raw.frameId : null,
+    link: typeof raw.link === "string" && raw.link ? raw.link : null,
   };
   switch (type) {
     case "rectangle":
@@ -96,6 +129,9 @@ export const parseElement = (raw: unknown): SceneElement => {
         closed: type === "line" && raw.closed === true,
         startBinding: binding(raw.startBinding),
         endBinding: binding(raw.endBinding),
+        routing: type === "arrow" ? oneOf(raw.routing, ["straight", "curved", "elbow"], "straight") : "straight",
+        startArrowhead: oneOf(raw.startArrowhead, ARROWHEADS, "none"),
+        endArrowhead: oneOf(raw.endArrowhead, ARROWHEADS, type === "arrow" ? "arrow" : "none"),
       };
     case "freedraw":
       return { ...base, type, points: points(raw.points) };
@@ -113,8 +149,37 @@ export const parseElement = (raw: unknown): SceneElement => {
         autoWidth: raw.autoWidth !== false,
       };
     }
-    default:
-      return { ...base, type: "image", fileId: str(raw.fileId) };
+    case "note":
+      return { ...base, type };
+    case "frame":
+      return { ...base, type, name: str(raw.name, "Page") };
+    default: {
+      const c = raw.crop;
+      const crop =
+        isObj(c) &&
+        [c.x, c.y, c.width, c.height, c.naturalWidth, c.naturalHeight].every(
+          (v) => typeof v === "number" && isFinite(v),
+        ) &&
+        num(c.width) > 0 &&
+        num(c.height) > 0
+          ? {
+              x: num(c.x),
+              y: num(c.y),
+              width: num(c.width),
+              height: num(c.height),
+              naturalWidth: num(c.naturalWidth),
+              naturalHeight: num(c.naturalHeight),
+            }
+          : null;
+      return {
+        ...base,
+        type: "image",
+        fileId: str(raw.fileId),
+        crop,
+        flipX: raw.flipX === true,
+        flipY: raw.flipY === true,
+      };
+    }
   }
 };
 
@@ -168,6 +233,10 @@ export const parseBoard = (text: string): ChalanaFile => {
   } catch {
     throw new FormatError("This file is not valid ChalanaMaya data (it is not JSON).");
   }
+  return parseBoardObject(raw);
+};
+
+export const parseBoardObject = (raw: unknown): ChalanaFile => {
   if (!isObj(raw) || raw.type !== FILE_TYPE) {
     throw new FormatError("This is not a .chalana board file.");
   }
@@ -190,6 +259,7 @@ export const parseBoard = (text: string): ChalanaFile => {
     settings: {
       viewBackgroundColor: str(settingsRaw.viewBackgroundColor, PAPER.light),
       theme: settingsRaw.theme === "dark" ? "dark" : "light",
+      gridEnabled: settingsRaw.gridEnabled === true,
     },
   };
 };

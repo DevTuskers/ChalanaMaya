@@ -43,6 +43,41 @@ export const DEFAULT_STYLE: ItemStyle = {
   fontFamily: "hand",
   fontSize: FONT_SIZES.m.value,
   textAlign: "left",
+  fillStyle: "hachure",
+  strokeStyle: "solid",
+  roughness: 1,
+  edges: "sharp",
+  opacity: 100,
+  routing: "straight",
+  startArrowhead: "none",
+  endArrowhead: "arrow",
 };
 
 export const PAPER = { light: "#fff9ed", dark: "#172524" } as const;
+
+/** Note colours (stored as is; notes keep dark ink in both themes). */
+export const NOTE_SWATCHES = ["#ffe59a", "#ffd2b0", "#c9efe6", "#d6e4fb", "#f6d0e2"];
+export const NOTE_INK = "#193a36";
+
+/** Board background choices; the dark theme shows a matching dark variant. */
+export const BOARD_COLORS: { id: string; label: string; light: string; dark: string }[] = [
+  { id: "#fff9ed", label: "Paper", light: "#fff9ed", dark: "#172524" },
+  { id: "#ffffff", label: "White", light: "#ffffff", dark: "#121212" },
+  { id: "#eef6f4", label: "Mist", light: "#eef6f4", dark: "#1b2b33" },
+  { id: "#fdf0e6", label: "Peach", light: "#fdf0e6", dark: "#2b221c" },
+  { id: "#eef0f3", label: "Slate", light: "#eef0f3", dark: "#1e2226" },
+];
+
+export const resolveBoardColor = (color: string, theme: "light" | "dark") => {
+  const known = BOARD_COLORS.find((c) => c.id === color.toLowerCase());
+  if (known) return known[theme];
+  return color;
+};
+
+export const ROUGHNESS_LEVELS = [
+  { value: 0, label: "Tidy" },
+  { value: 1, label: "Sketchy" },
+  { value: 2, label: "Wobbly" },
+] as const;
+
+export const GRID_SIZE = 20;

@@ -18,7 +18,7 @@ import {
   serializeClipboard,
 } from "./serialize";
 
-const settings = { theme: "light" as const, viewBackgroundColor: "#fff9ed" };
+const settings = { theme: "light" as const, viewBackgroundColor: "#fff9ed", gridEnabled: false };
 
 const sample = () => {
   const shape = { ...createShape("rectangle", 10, 20), width: 100, height: 50 };

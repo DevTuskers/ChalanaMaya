@@ -18,6 +18,13 @@ export interface OverlayOptions {
   pathStart: Point | null;
   width: number;
   height: number;
+  trail?: { kind: "lasso" | "eraser"; points: Point[] } | null;
+  snapLines?: { x1: number; y1: number; x2: number; y2: number }[];
+  highlight?: SceneElement | null;
+  /** Arrow or path in point-editing mode. */
+  pointEditing?: SceneElement | null;
+  /** Image in crop mode with its full (uncropped) box. */
+  cropping?: { el: SceneElement; full: { x: number; y: number; width: number; height: number } } | null;
 }
 
 const ACCENT = { light: "#007f78", dark: "#5ad6c8" };
@@ -119,6 +126,76 @@ export const renderOverlay = (ctx: CanvasRenderingContext2D, o: OverlayOptions) 
     ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
   }
 
+  if (o.highlight) {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = WARM[o.theme];
+    ctx.lineWidth = 2.5;
+    polygon(ctx, paddedBoxCorners(o.highlight, v.zoom).map((p) => toScreen(p, v)));
+    ctx.stroke();
+  }
+
+  if (o.cropping) {
+    const { el, full } = o.cropping;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = WARM[o.theme];
+    ctx.lineWidth = 1;
+    const fc = getCorners({ ...el, ...full } as SceneElement).map((p) => toScreen(p, v));
+    polygon(ctx, fc);
+    ctx.stroke();
+  }
+
+  if (o.pointEditing && isLinear(o.pointEditing)) {
+    const el = o.pointEditing;
+    const pts = getAbsolutePoints(el);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const m = toScreen({ x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 }, v);
+      ctx.beginPath();
+      ctx.moveTo(m.x - 4, m.y);
+      ctx.lineTo(m.x + 4, m.y);
+      ctx.moveTo(m.x, m.y - 4);
+      ctx.lineTo(m.x, m.y + 4);
+      ctx.stroke();
+    }
+    drawEndpointHandles(ctx, el, v, accent, SURFACE[o.theme], true);
+  }
+
+  if (o.snapLines?.length) {
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = WARM[o.theme];
+    ctx.lineWidth = 1;
+    for (const l of o.snapLines) {
+      const a = toScreen({ x: l.x1, y: l.y1 }, v);
+      const b = toScreen({ x: l.x2, y: l.y2 }, v);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+  }
+
+  if (o.trail && o.trail.points.length > 1) {
+    ctx.setLineDash(o.trail.kind === "lasso" ? [4, 4] : []);
+    ctx.strokeStyle = o.trail.kind === "lasso" ? accent : o.theme === "dark" ? "rgba(237,248,243,0.45)" : "rgba(25,58,54,0.35)";
+    ctx.lineWidth = o.trail.kind === "lasso" ? 1.5 : 6;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    o.trail.points.forEach((p, i) => {
+      const sp = toScreen(p, v);
+      if (i) ctx.lineTo(sp.x, sp.y);
+      else ctx.moveTo(sp.x, sp.y);
+    });
+    if (o.trail.kind === "lasso") {
+      ctx.closePath();
+      ctx.fillStyle = o.theme === "dark" ? "rgba(90,214,200,0.08)" : "rgba(0,127,120,0.06)";
+      ctx.fill();
+    }
+    ctx.stroke();
+  }
+
   if (o.pathStart) {
     const sp = toScreen(o.pathStart, v);
     ctx.setLineDash([]);
@@ -137,6 +214,7 @@ const drawEndpointHandles = (
   v: Viewport,
   accent: string,
   surface: string,
+  big = false,
 ) => {
   if (!isLinear(el)) return;
   const pts = getAbsolutePoints(el);
@@ -149,7 +227,7 @@ const drawEndpointHandles = (
     const bound = (i === 0 && el.startBinding) || (i === pts.length - 1 && el.endBinding);
     ctx.fillStyle = bound ? accent : surface;
     ctx.beginPath();
-    ctx.arc(sp.x, sp.y, isEnd ? HANDLE_SIZE / 2 + 1 : 3, 0, Math.PI * 2);
+    ctx.arc(sp.x, sp.y, isEnd || big ? HANDLE_SIZE / 2 + 1 : 3, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });

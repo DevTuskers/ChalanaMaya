@@ -1,5 +1,6 @@
 import { hasPoints, isLinear } from "./elements";
 import { getCenter, getCommonBounds, normalizePoints, rotatePoint } from "./geometry";
+import { withDependents } from "./arrange";
 import { withBoundTexts, type Elements } from "./scene";
 import { layoutText } from "./text";
 import type { Bounds, Point, SceneElement } from "./types";
@@ -15,7 +16,7 @@ export const moveElements = (
   dx: number,
   dy: number,
 ): SceneElement[] => {
-  const moving = withBoundTexts(elements, ids);
+  const moving = withDependents(elements, ids);
   return elements.map((el) => {
     if (!moving.has(el.id) || el.locked) return el;
     const moved = { ...el, x: el.x + dx, y: el.y + dy } as SceneElement;
@@ -52,7 +53,7 @@ export const resizeElement = (
   if (handle.includes("s")) y1 = lp.y;
 
   const isCorner = handle.length === 2;
-  const forceRatio = keepRatio || (isCorner && (el.type === "image" || el.type === "text"));
+  const forceRatio = keepRatio || el.type === "image" || (isCorner && el.type === "text");
 
   if (el.type === "text") {
     if (handle === "n" || handle === "s") return el;

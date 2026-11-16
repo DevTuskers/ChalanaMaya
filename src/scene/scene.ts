@@ -6,8 +6,10 @@ import {
   containerTextWidth,
   fontString,
   lineHeightPx,
+  measureLines,
   wrapText,
 } from "./text";
+import { polylineMidpoint, routedPoints } from "./route";
 import type { LinearElement, Point, SceneElement, TextElement } from "./types";
 
 export type Elements = readonly SceneElement[];
@@ -26,6 +28,26 @@ export const syncBoundTexts = (elements: Elements): SceneElement[] => {
     let container = updates.get(el.containerId!) ?? map.get(el.containerId!);
     if (!container) continue;
     const font = fontString(el.fontFamily, el.fontSize);
+    if (isLinear(container)) {
+      // connector label: sits on the middle of the drawn path, never moves endpoints
+      const lines = wrapText(el.text, font, null);
+      const width = Math.max(4, measureLines(lines, font));
+      const height = Math.max(1, lines.length) * lineHeightPx(el.fontSize);
+      const mid = polylineMidpoint(routedPoints(container));
+      const next: TextElement = {
+        ...el,
+        x: mid.x - width / 2,
+        y: mid.y - height / 2,
+        width,
+        height,
+        angle: 0,
+        autoWidth: false,
+      };
+      if (next.x !== el.x || next.y !== el.y || next.width !== el.width || next.height !== el.height || el.angle) {
+        updates.set(el.id, next);
+      }
+      continue;
+    }
     const maxW = containerTextWidth(container);
     const lines = wrapText(el.text, font, maxW);
     const height = lines.length * lineHeightPx(el.fontSize);
@@ -84,6 +106,18 @@ export const boundaryPoint = (el: SceneElement, toward: Point, gap = 4): Point =
   return rotatePoint(edge, c, el.angle);
 };
 
+/** Middle of the box side facing `toward` (used by elbow connectors). */
+export const sidePoint = (el: SceneElement, toward: Point, gap = 4): Point => {
+  const c = getCenter(el);
+  const local = toLocal(toward, el);
+  const dx = (local.x - c.x) / Math.max(el.width, 1);
+  const dy = (local.y - c.y) / Math.max(el.height, 1);
+  let p: Point;
+  if (Math.abs(dx) >= Math.abs(dy)) p = { x: dx >= 0 ? el.x + el.width + gap : el.x - gap, y: c.y };
+  else p = { x: c.x, y: dy >= 0 ? el.y + el.height + gap : el.y - gap };
+  return rotatePoint(p, c, el.angle);
+};
+
 /** Recomputes endpoints of arrows attached to shapes. */
 export const updateBindings = (elements: Elements): SceneElement[] => {
   const map = byId(elements);
@@ -102,6 +136,12 @@ export const updateBindings = (elements: Elements): SceneElement[] => {
     const abs = getAbsolutePoints(el);
     const n = abs.length;
     if (n < 2) return updated;
+    if (el.type === "arrow" && el.routing === "elbow") {
+      if (start) abs[0] = sidePoint(start, end ? getCenter(end) : abs[1]);
+      if (end) abs[n - 1] = sidePoint(end, start ? getCenter(start) : abs[n - 2]);
+      changed = true;
+      return fromAbsolutePoints(updated, abs);
+    }
     if (start) {
       const target = n === 2 && end ? getCenter(end) : abs[1];
       abs[0] = boundaryPoint(start, target);
@@ -155,6 +195,7 @@ export const deleteElements = (elements: Elements, ids: Iterable<string>): Scene
   const remove = withBoundTexts(elements, editable);
   const remaining = elements.filter((e) => !remove.has(e.id));
   return remaining.map((e) => {
+    if (e.frameId && remove.has(e.frameId)) e = { ...e, frameId: null };
     if (!isLinear(e)) return e;
     const s = e.startBinding && remove.has(e.startBinding.elementId);
     const en = e.endBinding && remove.has(e.endBinding.elementId);
@@ -174,6 +215,11 @@ export const cloneElements = (
 ): { clones: SceneElement[]; idMap: Map<string, string> } => {
   const idMap = new Map<string, string>();
   for (const el of source) idMap.set(el.id, newId());
+  const groupMap = new Map<string, string>();
+  const mapGroup = (g: string) => {
+    if (!groupMap.has(g)) groupMap.set(g, newId());
+    return groupMap.get(g)!;
+  };
   const clones = source
     .filter((el) => !(el.type === "text" && el.containerId && !idMap.has(el.containerId)))
     .map((el): SceneElement => {
@@ -183,6 +229,8 @@ export const cloneElements = (
       copy.y += dy;
       copy.seed = newSeed();
       copy.locked = false;
+      copy.groupIds = el.groupIds.map(mapGroup);
+      if (copy.frameId) copy.frameId = idMap.get(copy.frameId) ?? copy.frameId;
       if (copy.type === "text" && copy.containerId) copy.containerId = idMap.get(copy.containerId)!;
       if (isLinear(copy)) {
         copy.startBinding =
