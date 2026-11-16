@@ -5,7 +5,7 @@ import { Icon } from "./icons";
 import { formatKeys } from "./shortcuts";
 
 export const MainMenu = () => {
-  const { store, openFile, saveFile } = useServices();
+  const { store, openFile, saveFile, insertPicture } = useServices();
   const theme = useAppState((s) => s.theme);
   const grid = useAppState((s) => s.gridEnabled);
   const zen = useAppState((s) => s.zenMode);
@@ -16,6 +16,12 @@ export const MainMenu = () => {
   useEffect(() => {
     const menu = ref.current!;
     const doc = menu.ownerDocument;
+    const win = doc.defaultView;
+    if (win) {
+      // keep the whole menu inside the window; it scrolls when the window is short
+      const top = menu.getBoundingClientRect().top;
+      menu.style.maxHeight = `${Math.max(200, win.innerHeight - top - 14)}px`;
+    }
     menu.querySelector<HTMLButtonElement>("button")?.focus();
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
@@ -64,6 +70,7 @@ export const MainMenu = () => {
       keys: "Mod+O",
       onClick: openFile,
     },
+    { id: "insert-picture", label: "Insert picture…", icon: Icon.image, onClick: insertPicture },
     { id: "save", label: "Save as .chalana", icon: Icon.save, keys: "Mod+S", onClick: saveFile },
     {
       id: "export",

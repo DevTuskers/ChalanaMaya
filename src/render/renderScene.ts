@@ -243,12 +243,20 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
   const maxX = minX + opts.width / v.zoom;
   const maxY = minY + opts.height / v.zoom;
   const notes = new Set(opts.elements.filter((e) => e.type === "note").map((e) => e.id));
+  const linear = new Set(
+    opts.elements.filter((e) => e.type === "arrow" || e.type === "line").map((e) => e.id),
+  );
   for (const el of paintOrder(opts.elements)) {
     if (opts.skipIds?.has(el.id)) continue;
     // cheap culling with a generous margin for rotation and stroke
     const r = Math.hypot(el.width, el.height) / 2 + 40;
     const c = getCenter(el);
     if (c.x + r < minX || c.x - r > maxX || c.y + r < minY || c.y - r > maxY) continue;
+    if (el.type === "text" && el.containerId && linear.has(el.containerId) && opts.background) {
+      // knock the connector line out behind its label so the words stay readable
+      ctx.fillStyle = opts.background;
+      ctx.fillRect(el.x - 4, el.y - 2, el.width + 8, el.height + 4);
+    }
     drawElement(ctx, rc, el, opts.files, opts.theme, {
       onNote: el.type === "text" && !!el.containerId && notes.has(el.containerId),
       alpha: opts.fadeIds?.has(el.id) ? 0.3 : 1,

@@ -26,6 +26,7 @@ import {
   reorderSelected,
   ungroupSelected,
   pasteContent,
+  insertImageBlob,
   redo,
   resetZoom,
   selectAll,
@@ -179,9 +180,11 @@ export const App = () => {
   const store = useMemo(createStore, []);
   const controller = useMemo(() => new Controller(store), [store]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const pictureInput = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const theme = useSyncTheme(store);
   const zen = useSyncExternalStore(store.subscribe, () => store.get().zenMode);
+  const viewMode = useSyncExternalStore(store.subscribe, () => store.get().viewMode);
 
   const services: AppServices = useMemo(() => {
     const saveFile = () => {
@@ -192,7 +195,8 @@ export const App = () => {
       store.toast("Saved a .chalana file to your downloads.", "success", 2500);
     };
     const openFile = () => fileInput.current?.click();
-    return { store, controller, saveFile, openFile };
+    const insertPicture = () => pictureInput.current?.click();
+    return { store, controller, saveFile, openFile, insertPicture };
   }, [store, controller]);
 
   // autosave
@@ -505,7 +509,12 @@ export const App = () => {
 
   return (
     <AppContext.Provider value={services}>
-      <div className={`app theme-${theme}`} data-theme={theme} ref={rootRef} data-testid="app">
+      <div
+        className={`app theme-${theme}${viewMode ? " is-view-mode" : ""}`}
+        data-theme={theme}
+        ref={rootRef}
+        data-testid="app"
+      >
         <Canvas />
         <TextEditor />
         <ToolRail />
@@ -525,6 +534,28 @@ export const App = () => {
           hidden
           data-testid="file-input"
           onChange={(e) => void onFileChosen(e.currentTarget)}
+        />
+        <input
+          ref={pictureInput}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+          hidden
+          data-testid="picture-input"
+          onChange={(e) => {
+            const input = e.currentTarget;
+            const f = input.files?.[0];
+            input.value = "";
+            if (!f) return;
+            if (!f.type.startsWith("image/")) {
+              store.toast(
+                `“${f.name}” isn't a supported picture (PNG, JPEG, GIF, WebP or SVG). The board was not changed.`,
+                "error",
+                6000,
+              );
+              return;
+            }
+            void insertImageBlob(store, f);
+          }}
         />
       </div>
     </AppContext.Provider>

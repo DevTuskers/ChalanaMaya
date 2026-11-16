@@ -1,3 +1,4 @@
+import { normalizeLink } from "../scene/arrange";
 import { PAPER } from "../scene/constants";
 import type { FileMap, SceneElement, Theme } from "../scene/types";
 
@@ -113,7 +114,7 @@ export const parseElement = (raw: unknown): SceneElement => {
       ? raw.groupIds.filter((g): g is string => typeof g === "string")
       : [],
     frameId: typeof raw.frameId === "string" ? raw.frameId : null,
-    link: typeof raw.link === "string" && raw.link ? raw.link : null,
+    link: typeof raw.link === "string" ? normalizeLink(raw.link) : null,
   };
   switch (type) {
     case "rectangle":

@@ -1,6 +1,6 @@
 # Documentation
 
-These documents describe ChalanaMaya's behaviour. The P0 MVP is implemented with React, strict TypeScript, Vite, HTML Canvas 2D, roughjs, and perfect-freehand; see the status table below.
+These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase are implemented with React, strict TypeScript, Vite, HTML Canvas 2D, roughjs, and perfect-freehand; see the status table below.
 
 ## Index
 
@@ -30,16 +30,18 @@ All features start as **planned**. Track implementation in issues using the feat
 
 ## Implementation status
 
-Phase P0 (MVP). Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts`. All P1 and P2 features remain **planned**.
+Phases P0 (MVP) and P1. Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0) and `e2e/p1.spec.ts` (P1). All P2 features remain **planned**.
 
-| Area | Feature IDs | Status |
+| Area | P0 feature IDs (done) | P1 feature IDs (done) |
 | --- | --- | --- |
-| Drawing | DRAW-01, DRAW-02, DRAW-03, DRAW-04, DRAW-07, DRAW-08, DRAW-10, DRAW-17, DRAW-21 | done |
-| Styling | STYLE-01, STYLE-02, STYLE-05, STYLE-11, STYLE-12, STYLE-13 | done |
-| Selecting and arranging | ARR-01, ARR-02, ARR-03, ARR-04, ARR-05 | done |
-| Canvas and view | VIEW-01, VIEW-02, VIEW-03, VIEW-12, VIEW-13, VIEW-16 | done |
-| Save, open, and export | FILE-01, FILE-02, FILE-03, FILE-08, FILE-10 | done |
-| Everything else (P1, P2) | — | planned |
+| Drawing | DRAW-01, DRAW-02, DRAW-03, DRAW-04, DRAW-07, DRAW-08, DRAW-10, DRAW-17, DRAW-21 | DRAW-05, DRAW-06, DRAW-11, DRAW-12, DRAW-13, DRAW-15, DRAW-20, DRAW-22 |
+| Styling | STYLE-01, STYLE-02, STYLE-05, STYLE-11, STYLE-12, STYLE-13 | STYLE-03, STYLE-04, STYLE-06, STYLE-07, STYLE-08, STYLE-09, STYLE-10, STYLE-14 |
+| Selecting and arranging | ARR-01, ARR-02, ARR-03, ARR-04, ARR-05 | ARR-06, ARR-07, ARR-08, ARR-09, ARR-10, ARR-11, ARR-12, ARR-13, ARR-14 |
+| Canvas and view | VIEW-01, VIEW-02, VIEW-03, VIEW-12, VIEW-13, VIEW-16 | VIEW-04, VIEW-06, VIEW-07, VIEW-08, VIEW-09, VIEW-10, VIEW-11, VIEW-14, VIEW-15 |
+| Save, open, and export | FILE-01, FILE-02, FILE-03, FILE-08, FILE-10 | FILE-04, FILE-05, FILE-06, FILE-07 |
+| Everything else (P2) | — | planned |
+
+P1 notes: pictures are inserted from the main menu ("Insert picture…"), by paste, or by drop; links accept only http(s), mailto and in-board `#el=` targets, and unsafe links are dropped when a file is opened; embedded board data in PNG (`tEXt` chunk) and SVG (`<metadata id="chalanamaya-scene">`) is validated, and damaged data is refused without touching the board; preferences (input preference, pen mode) are kept under `chalanamaya.prefs`.
 
 Review round 2 fixes: style changes made while typing are part of the single text-edit undo step (VIEW-12 with STYLE-11/12/13 and DRAW-10); Ctrl/⌘ + wheel zoom is capped at 1.2× per event (VIEW-02); handle resizing follows the pointer delta (ARR-03); drags are cancelled on window blur and pointer cancel; dialogs return focus to the control that opened them; switching theme autosaves the board settings; an unreadable autosaved board is kept under `chalanamaya.board.unreadable` instead of being overwritten (FILE-01).
 

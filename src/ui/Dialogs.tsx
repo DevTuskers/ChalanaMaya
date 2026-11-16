@@ -353,9 +353,14 @@ const LinkDialog = ({ elementId, onClose }: { elementId: string; onClose: () => 
             type="button"
             className="text-btn"
             data-testid="copy-item-link"
-            onClick={() => {
-              void navigator.clipboard
-                ?.writeText(`#el=${el.id}`)
+            onClick={(e) => {
+              const clip = e.currentTarget.ownerDocument.defaultView?.navigator.clipboard;
+              if (!clip) {
+                store.toast("The browser blocked the clipboard.", "error");
+                return;
+              }
+              void clip
+                .writeText(`#el=${el.id}`)
                 .then(() => store.toast("Link to this item copied.", "success", 1800))
                 .catch(() => store.toast("The browser blocked the clipboard.", "error"));
             }}

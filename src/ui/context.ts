@@ -6,6 +6,7 @@ export interface AppServices {
   store: Store;
   controller: Controller;
   openFile: () => void;
+  insertPicture: () => void;
   saveFile: () => void;
 }
 

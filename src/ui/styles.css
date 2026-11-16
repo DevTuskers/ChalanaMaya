@@ -676,11 +676,6 @@ kbd {
   width: 34px;
   height: 34px;
 }
-.rail {
-  max-height: calc(100% - 28px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
 @media (max-height: 700px) {
   .rail-tools {
     display: grid;
@@ -690,8 +685,10 @@ kbd {
 
 /* ---------- P1: menu ---------- */
 .menu {
-  max-height: calc(100vh - 40px);
   overflow-y: auto;
+}
+.rail:has(.menu) {
+  z-index: 45;
 }
 .menu-sep {
   height: 1px;
@@ -771,7 +768,7 @@ kbd {
 /* ---------- P1: stats, search, banners ---------- */
 .stats {
   position: absolute;
-  right: 14px;
+  right: 260px;
   bottom: 14px;
   width: 210px;
   padding: 8px 12px 10px;
@@ -859,4 +856,25 @@ kbd {
 }
 .banner .segmented button {
   height: 26px;
+}
+.text-btn {
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.text-btn:hover {
+  background: var(--surface-2);
+}
+.text-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.app.is-view-mode .stats {
+  bottom: 70px;
 }
