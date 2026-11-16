@@ -35,6 +35,11 @@ export const MainMenu = () => {
   }, [store]);
 
   const run = (fn: () => void) => () => {
+    // the menu item unmounts, so hand focus to the menu button first; dialogs opened
+    // from the menu then return focus there when they close
+    ref.current?.ownerDocument
+      .querySelector<HTMLButtonElement>("[data-testid=menu-button]")
+      ?.focus();
     store.set({ menuOpen: false });
     fn();
   };

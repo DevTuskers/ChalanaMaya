@@ -106,14 +106,6 @@ export const elementAt = (elements: Elements, p: Point, tolerance: number): Scen
   return null;
 };
 
-/** Topmost element under `p`, including locked ones, without selection rules. */
-export const anyElementAt = (elements: Elements, p: Point, tolerance: number) => {
-  for (let i = elements.length - 1; i >= 0; i--) {
-    if (hitElement(elements[i], p, tolerance, elements)) return elements[i];
-  }
-  return null;
-};
-
 /** Selectable elements fully enclosed by the box. */
 export const elementsInBox = (elements: Elements, box: Bounds): SceneElement[] =>
   elements.filter((el) => isSelectable(el) && boundsContain(box, getElementBounds(el)));

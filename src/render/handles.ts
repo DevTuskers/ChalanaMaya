@@ -62,6 +62,21 @@ export const getHandleLayout = (box: TransformBox, zoom: number): HandleLayout =
   return { box, handles, rotate: r({ x: cx, y: y0 - ROTATE_OFFSET / zoom }) };
 };
 
+/** Point on the (unpadded) box edge that a handle controls, in board space. */
+export const handleEdgePoint = (box: TransformBox, handle: Handle): Point => {
+  const x = handle.includes("w")
+    ? box.x
+    : handle.includes("e")
+      ? box.x + box.width
+      : box.x + box.width / 2;
+  const y = handle.includes("n")
+    ? box.y
+    : handle.includes("s")
+      ? box.y + box.height
+      : box.y + box.height / 2;
+  return rotatePoint({ x, y }, getCenter(box), box.angle);
+};
+
 export const paddedBoxCorners = (box: TransformBox, zoom: number): Point[] => {
   const pad = PAD / zoom;
   const c = getCenter(box);

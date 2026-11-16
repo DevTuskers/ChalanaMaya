@@ -40,3 +40,7 @@ Phase P0 (MVP). Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke 
 | Canvas and view | VIEW-01, VIEW-02, VIEW-03, VIEW-12, VIEW-13, VIEW-16 | done |
 | Save, open, and export | FILE-01, FILE-02, FILE-03, FILE-08, FILE-10 | done |
 | Everything else (P1, P2) | — | planned |
+
+Review round 2 fixes: style changes made while typing are part of the single text-edit undo step (VIEW-12 with STYLE-11/12/13 and DRAW-10); Ctrl/⌘ + wheel zoom is capped at 1.2× per event (VIEW-02); handle resizing follows the pointer delta (ARR-03); drags are cancelled on window blur and pointer cancel; dialogs return focus to the control that opened them; switching theme autosaves the board settings; an unreadable autosaved board is kept under `chalanamaya.board.unreadable` instead of being overwritten (FILE-01).
+
+Known limits: images are stored as data URLs inside the single localStorage entry, so a large photo can exceed the browser quota (the storage warning then appears); moving files to IndexedDB is left for a later phase. Right-aligned auto-width text grows leftwards from the click point by design.

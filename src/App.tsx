@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { getStorage, loadFromStorage, saveToStorage } from "./io/autosave";
+import { STORAGE_KEY, getStorage, loadFromStorage, saveToStorage } from "./io/autosave";
 import { readPasteEvent } from "./io/clipboard";
 import { downloadBlob, timestampName } from "./io/export";
 import { FormatError, parseBoard, serializeBoard, type ChalanaFile } from "./io/serialize";
@@ -60,7 +60,21 @@ const createStore = () => {
     state.theme = saved.settings.theme;
   }
   if (savedTheme === "light" || savedTheme === "dark") state.theme = savedTheme;
-  return new Store(state);
+  const store = new Store(state);
+  let unreadable = false;
+  try {
+    unreadable = !saved && !!storage?.getItem(STORAGE_KEY);
+  } catch {
+    unreadable = false;
+  }
+  if (unreadable) {
+    store.toast(
+      "The board saved in this browser could not be read, so a new board was started. A copy of the old data was kept.",
+      "error",
+      9000,
+    );
+  }
+  return store;
 };
 
 const Toasts = () => {
@@ -108,6 +122,8 @@ const PathHint = () => {
       "Click to add points · double-click, Enter or Escape to finish · click the first point to close";
   else if (tool === "text") text = "Click anywhere to start typing";
   else if (tool === "hand") text = "Drag to move around the board";
+  else if (tool === "freedraw")
+    text = "Drag to sketch · the pencil stays active for more strokes · Escape returns to Pick";
   else if (empty && tool === "pick")
     text = "Pick a tool on the left to start drawing · press ? for shortcuts";
   if (!text) return null;
@@ -269,6 +285,8 @@ export const App = () => {
     };
     const onBlur = () => {
       controller.spaceHeld = false;
+      // a drag can't finish once the window loses focus; multi-click paths stay open
+      if (controller.isBusy() && !controller.isDrawingPath) controller.cancel();
     };
     const editable = () => {
       const s = store.get();
@@ -369,6 +387,12 @@ export const App = () => {
 /** Mirrors the theme to <html> (for scrollbars/colour-scheme) and remembers it. */
 function useSyncTheme(store: Store): Theme {
   const theme = useSyncExternalStoreTheme(store);
+  const firstRun = useRef(true);
+  useEffect(() => {
+    // the theme is part of the saved board settings, so autosave it too
+    if (firstRun.current) firstRun.current = false;
+    else store.onSceneChange?.();
+  }, [store, theme]);
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.theme = theme;

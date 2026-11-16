@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createImage, createLinear, createShape, createText } from "../scene/elements";
-import { STORAGE_KEY, loadFromStorage, saveToStorage, type StorageLike } from "./autosave";
+import {
+  BACKUP_KEY,
+  STORAGE_KEY,
+  loadFromStorage,
+  saveToStorage,
+  type StorageLike,
+} from "./autosave";
 import { classifyText } from "./clipboard";
 import { exportSize, timestampName } from "./export";
 import {
@@ -128,10 +134,11 @@ describe("autosave", () => {
     expect(saveToStorage(null, [], {}, settings)).toMatch(/storage/);
   });
 
-  it("ignores corrupt stored data", () => {
+  it("ignores corrupt stored data but keeps a backup copy", () => {
     const s = new MemoryStorage();
     s.data.set(STORAGE_KEY, "garbage");
     expect(loadFromStorage(s)).toBeNull();
+    expect(s.data.get(BACKUP_KEY)).toBe("garbage");
   });
 });
 

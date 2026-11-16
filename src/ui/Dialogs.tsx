@@ -25,10 +25,16 @@ const Modal = ({
   wide?: boolean;
 }) => {
   const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
   useEffect(() => {
     const el = ref.current!;
     const doc = el.ownerDocument;
+    // the control that opened the dialog gets focus back when it closes
     const prev = doc.activeElement as HTMLElement | null;
+    const onClose = () => onCloseRef.current();
     el.querySelector<HTMLElement>("[data-autofocus], button")?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -55,9 +61,13 @@ const Modal = ({
     doc.addEventListener("keydown", onKey, true);
     return () => {
       doc.removeEventListener("keydown", onKey, true);
-      prev?.focus?.();
+      const target =
+        prev && prev.isConnected && prev !== doc.body
+          ? prev
+          : doc.querySelector<HTMLElement>("[data-testid=board]");
+      target?.focus({ preventScroll: true });
     };
-  }, [onClose]);
+  }, []);
   return (
     <div className="backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div

@@ -25,11 +25,6 @@ export const viewCenter = (store: Store) => ({
   y: store.viewSize.height / 2,
 });
 
-const selectedElements = (store: Store) => {
-  const { elements, selectedIds } = store.get();
-  return elements.filter((e) => selectedIds.has(e.id));
-};
-
 export const setTool = (store: Store, tool: ToolId) => {
   const patch: Parameters<Store["set"]>[0] = { tool, menuOpen: false };
   if (tool !== "pick") patch.selectedIds = new Set();
@@ -101,8 +96,16 @@ export const applyStyle = (store: Store, patch: Partial<ItemStyle>) => {
     if (out !== el) changed = true;
     return out;
   });
-  if (changed) store.commit(next, { currentStyle: nextStyle });
-  else store.set({ currentStyle: nextStyle });
+  if (!changed) {
+    store.set({ currentStyle: nextStyle });
+  } else if (editingTextId) {
+    // The text edit session records one history entry (from its start snapshot)
+    // when editing ends, so style changes made while typing must not add their own.
+    store.updateElements(next);
+    store.set({ currentStyle: nextStyle });
+  } else {
+    store.commit(next, { currentStyle: nextStyle });
+  }
 };
 
 export const zoomBy = (store: Store, factor: number, at = viewCenter(store)) => {
@@ -268,7 +271,3 @@ export const clearCanvas = (store: Store) => {
   store.commit([], { selectedIds: new Set(), editingTextId: null, dialog: null });
   store.toast("The board was cleared. Undo brings it back.", "info");
 };
-
-export const isBoardEmpty = (store: Store) => store.get().elements.length === 0;
-
-export const selectionList = selectedElements;

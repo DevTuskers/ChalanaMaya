@@ -37,13 +37,24 @@ export const saveToStorage = (
   }
 };
 
+/** Where an unreadable saved board is kept so the next autosave doesn't destroy it. */
+export const BACKUP_KEY = "chalanamaya.board.unreadable";
+
 export const loadFromStorage = (storage: StorageLike | null): ChalanaFile | null => {
   if (!storage) return null;
+  let raw: string | null = null;
   try {
-    const raw = storage.getItem(STORAGE_KEY);
+    raw = storage.getItem(STORAGE_KEY);
     if (!raw) return null;
     return parseBoard(raw);
   } catch {
+    if (raw) {
+      try {
+        storage.setItem(BACKUP_KEY, raw);
+      } catch {
+        // nothing more we can do; the board starts empty
+      }
+    }
     return null;
   }
 };

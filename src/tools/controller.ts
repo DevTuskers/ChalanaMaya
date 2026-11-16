@@ -15,8 +15,8 @@ import {
   snapAngle,
 } from "../scene/geometry";
 import type { Snapshot } from "../scene/history";
-import { elementAt, elementsInBox, hitElement } from "../scene/hit";
-import { bindingTargetAt, getBoundText, withBoundTexts } from "../scene/scene";
+import { elementAt, elementsInBox } from "../scene/hit";
+import { bindingTargetAt, getBoundText } from "../scene/scene";
 import { layoutText } from "../scene/text";
 import {
   moveElements,
@@ -39,6 +39,7 @@ import {
   HANDLE_SIZE,
   getHandleLayout,
   getTransformBox,
+  handleEdgePoint,
   paddedBoxCorners,
   usesEndpointHandlesOnly,
 } from "../render/handles";
@@ -80,6 +81,8 @@ type Interaction =
   | {
       kind: "resize";
       handle: Handle;
+      /** Edge point minus grab point, so the box edge follows the pointer delta. */
+      offset: Point;
       base: readonly SceneElement[];
       ids: Set<string>;
       startBounds: Bounds;
@@ -102,6 +105,9 @@ export interface Overlay {
   bindingTargetId: string | null;
   pathStart: Point | null;
 }
+
+/** Max zoom change per wheel event, as a natural log (ln 1.2 ≈ 0.182). */
+const MAX_WHEEL_ZOOM_LOG = Math.log(1.2);
 
 const DRAW_TOOLS: ToolId[] = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw"];
 
@@ -218,9 +224,11 @@ export class Controller {
       }
       for (const [h, pos] of Object.entries(layout.handles) as [Handle, Point][]) {
         if (Math.abs(pos.x - p.x) <= hs && Math.abs(pos.y - p.y) <= hs) {
+          const edge = handleEdgePoint(box, h);
           this.interaction = {
             kind: "resize",
             handle: h,
+            offset: { x: edge.x - p.x, y: edge.y - p.y },
             base: elements,
             ids: new Set(selectedIds),
             startBounds: {
@@ -362,10 +370,6 @@ export class Controller {
     const elements = this.state.elements.map((e) => (e.id === it.id ? finished : e));
     this.store.set({ elements });
     this.store.commitFrom(it.before, { selectedIds: new Set([it.id]), tool: "pick" });
-  }
-
-  cancelPath() {
-    if (this.interaction.kind === "path") this.finishPath(false);
   }
 
   private beginFreedraw(p: Point) {
@@ -515,13 +519,16 @@ export class Controller {
         return;
       }
       case "resize": {
+        const target = { x: p.x + it.offset.x, y: p.y + it.offset.y };
         if (it.ids.size === 1) {
           const [id] = it.ids;
           const el = it.base.find((e) => e.id === id)!;
-          const next = resizeElement(el, it.handle, p, input.shiftKey);
+          const next = resizeElement(el, it.handle, target, input.shiftKey);
           this.store.updateElements(it.base.map((e) => (e.id === id ? next : e)));
         } else {
-          this.store.updateElements(resizeGroup(it.base, it.ids, it.startBounds, it.handle, p));
+          this.store.updateElements(
+            resizeGroup(it.base, it.ids, it.startBounds, it.handle, target),
+          );
         }
         return;
       }
@@ -722,7 +729,9 @@ export class Controller {
   }) {
     const v = this.state.viewport;
     if (e.ctrlKey || e.metaKey) {
-      const factor = Math.exp(-e.deltaY * 0.01);
+      // fine for trackpad pinch (small deltas), capped per event for mouse wheel notches
+      const step = Math.max(-MAX_WHEEL_ZOOM_LOG, Math.min(MAX_WHEEL_ZOOM_LOG, -e.deltaY * 0.01));
+      const factor = Math.exp(step);
       this.store.set({ viewport: zoomAt(v, v.zoom * factor, { x: e.x, y: e.y }) });
       return;
     }
@@ -731,7 +740,7 @@ export class Controller {
     this.store.set({ viewport: panBy(v, -dx, -dy) });
   }
 
-  /** Cancels any in-progress gesture (used on Escape and blur). */
+  /** Cancels any in-progress gesture (used on Escape, window blur and lost pointer capture). */
   cancel() {
     const it = this.interaction;
     if (it.kind === "path") return this.finishPath(false);
@@ -759,14 +768,5 @@ export class Controller {
     this.store.updateElements(
       this.state.elements.map((e) => (e.id === id ? ({ ...e, ...patch } as SceneElement) : e)),
     );
-  }
-
-  /** Hit test helper exposed for the UI (e.g. context checks). */
-  hit(p: Point) {
-    return this.state.elements.some((e) => hitElement(e, p, this.tolerance()));
-  }
-
-  selectionWithText() {
-    return withBoundTexts(this.state.elements, this.state.selectedIds);
   }
 }

@@ -99,6 +99,11 @@ export const Canvas = () => {
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       controller.pointerUp(toInput(e, canvas));
     };
+    const onCancel = (e: PointerEvent) => {
+      // the browser took the pointer away (e.g. a system gesture): undo the drag
+      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      if (controller.isBusy() && !controller.isDrawingPath) controller.cancel();
+    };
     const onLeave = () => {
       store.lastPointer = null;
     };
@@ -121,7 +126,7 @@ export const Canvas = () => {
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerup", onUp);
-    canvas.addEventListener("pointercancel", onUp);
+    canvas.addEventListener("pointercancel", onCancel);
     canvas.addEventListener("pointerleave", onLeave);
     canvas.addEventListener("dblclick", onDbl);
     canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -134,7 +139,7 @@ export const Canvas = () => {
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("pointercancel", onCancel);
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("dblclick", onDbl);
       canvas.removeEventListener("wheel", onWheel);

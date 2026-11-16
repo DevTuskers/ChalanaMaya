@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickBoard, drag, expectCount, freshBoard, storedElements } from "./helpers";
+import { STORAGE_KEY, clickBoard, drag, expectCount, freshBoard, storedElements } from "./helpers";
 
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -159,9 +159,13 @@ test("move, resize and rotate the selection", async ({ page }) => {
   // resize from bottom-right handle
   const right = el.x + el.width;
   const bottom = el.y + el.height;
+  const w0 = el.width;
+  const h0 = el.height;
   await drag(page, { x: right + 4, y: bottom + 4 }, { x: right + 54, y: bottom + 34 });
   el = (await storedElements(page))[0];
-  expect(el.width).toBeGreaterThan(130);
+  // the edge follows the pointer delta exactly (no jump by the handle padding)
+  expect(el.width).toBeCloseTo(w0 + 50, 0);
+  expect(el.height).toBeCloseTo(h0 + 30, 0);
   // rotate from the handle above the box
   await drag(
     page,
@@ -312,7 +316,60 @@ test("theme switch keeps the board", async ({ page }) => {
   await page.getByTestId("menu-button").click();
   await page.getByTestId("menu-theme").click();
   await expect(page.getByTestId("app")).toHaveAttribute("data-theme", "dark");
+  // the theme is part of the autosaved board settings straight away
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings?.theme,
+        STORAGE_KEY,
+      ),
+    )
+    .toBe("dark");
   await page.reload();
   await expect(page.getByTestId("app")).toHaveAttribute("data-theme", "dark");
   await expectCount(page, 1);
+});
+
+test("style changes while typing undo and redo in linear order", async ({ page }) => {
+  await drawBox(page, "r");
+  await page.keyboard.press("Enter");
+  const editor = page.getByTestId("text-editor");
+  await expect(editor).toBeFocused();
+  await page.keyboard.type("hello");
+  await page.getByTestId("font-code").click();
+  await page.getByTestId("size-xl").click();
+  await expect(editor).toBeFocused();
+  await page.keyboard.press("Escape");
+  const label = async () => {
+    const els = await storedElements(page);
+    const t = els.find((e) => e.type === "text");
+    return `${els.length}:${t ? `${t.text}/${t.fontFamily}/${t.fontSize}` : "-"}`;
+  };
+  await expect.poll(label).toBe("2:hello/code/40");
+
+  await page.getByTestId("board").focus();
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(label).toBe("1:-");
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(label).toBe("0:-");
+  await page.keyboard.press(`${mod}+z`);
+  await expect(page.getByTestId("toast").filter({ hasText: "Nothing to undo" })).toBeVisible();
+  await page.keyboard.press(`${mod}+Shift+z`);
+  await expect.poll(label).toBe("1:-");
+  await page.keyboard.press(`${mod}+Shift+z`);
+  await expect.poll(label).toBe("2:hello/code/40");
+});
+
+test("dialogs return focus to the control that opened them", async ({ page }) => {
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("menu-help").click();
+  await expect(page.getByTestId("help-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("help-dialog")).toBeHidden();
+  await expect(page.getByTestId("menu-button")).toBeFocused();
+
+  await page.getByTestId("board").focus();
+  await page.keyboard.press("?");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("board")).toBeFocused();
 });
