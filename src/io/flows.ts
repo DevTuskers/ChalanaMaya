@@ -1,5 +1,18 @@
 import { resolveBoardColor } from "../scene/constants";
+import { withBoundTexts } from "../scene/scene";
 import type { FileMap, SceneElement, Theme } from "../scene/types";
+
+/** Items to export for a selection: bound labels and frame contents come along. */
+export const selectionTargets = (
+  elements: readonly SceneElement[],
+  selectedIds: ReadonlySet<string>,
+) => {
+  if (!selectedIds.size) return elements;
+  const ids = new Set(selectedIds);
+  for (const e of elements) if (e.frameId && ids.has(e.frameId)) ids.add(e.id);
+  const all = withBoundTexts(elements, ids);
+  return elements.filter((e) => all.has(e.id));
+};
 import { embedInPng, svgMetadata } from "./embed";
 import { canvasToBlob, exportToCanvas } from "./export";
 import { serializeBoard, type BoardSettings } from "./serialize";
@@ -43,7 +56,8 @@ const toDataUrl = async (url: string) => {
   const res = await fetch(url);
   const buf = new Uint8Array(await res.arrayBuffer());
   let bin = "";
-  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  for (let i = 0; i < buf.length; i += 0x8000)
+    bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
   return `data:font/woff2;base64,${btoa(bin)}`;
 };
 
@@ -102,7 +116,8 @@ export const copyAs = async (
     if (kind === "svg") {
       await clipboard.writeText(await exportSvgText({ ...r, embedScene: false }));
     } else {
-      if (typeof ClipboardItem === "undefined" || !clipboard.write) throw new Error("no image clipboard");
+      if (typeof ClipboardItem === "undefined" || !clipboard.write)
+        throw new Error("no image clipboard");
       const blob = exportPngBlob({ ...r, embedScene: false });
       await clipboard.write([new ClipboardItem({ "image/png": blob })]);
     }

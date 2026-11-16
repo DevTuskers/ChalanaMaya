@@ -3,7 +3,14 @@ import type { Drawable, Options } from "roughjs/bin/core";
 import { getStroke } from "perfect-freehand";
 import { INK, INK_DARK, TRANSPARENT } from "../scene/constants";
 import { elbowRoute, curveRoute } from "../scene/route";
-import type { Arrowhead, FreedrawElement, LinearElement, Point, SceneElement, Theme } from "../scene/types";
+import type {
+  Arrowhead,
+  FreedrawElement,
+  LinearElement,
+  Point,
+  SceneElement,
+  Theme,
+} from "../scene/types";
 
 export const generator = rough.generator();
 
@@ -111,7 +118,8 @@ const endDirection = (pts: Point[], atStart: boolean) => {
   const seq = atStart ? [...pts].reverse() : pts;
   const end = seq[seq.length - 1];
   let prev = seq[seq.length - 2];
-  for (let i = seq.length - 2; i >= 0 && Math.hypot(end.x - prev.x, end.y - prev.y) < 1; i--) prev = seq[i];
+  for (let i = seq.length - 2; i >= 0 && Math.hypot(end.x - prev.x, end.y - prev.y) < 1; i--)
+    prev = seq[i];
   const len = Math.hypot(end.x - prev.x, end.y - prev.y);
   if (len < 1) return null;
   return { end, angle: Math.atan2(end.y - prev.y, end.x - prev.x), len };
@@ -135,14 +143,22 @@ const markerDrawables = (
     y: end.y - back * Math.sin(angle) + side * Math.cos(angle),
   });
   const ink = resolveColor(el.strokeColor, theme);
-  const base = { ...roughOptions(el, theme, false), strokeLineDash: undefined, disableMultiStroke: false };
+  const base = {
+    ...roughOptions(el, theme, false),
+    strokeLineDash: undefined,
+    disableMultiStroke: false,
+  };
   const solid = { ...base, fill: ink, fillStyle: "solid" as const };
   const tup = (p: Point) => [p.x, p.y] as [number, number];
   const spread = Math.tan(Math.PI / 7) * s;
   const out: Drawable[] = [];
-  const bar = (back: number) => out.push(generator.linearPath([tup(at(back, -s / 2)), tup(at(back, s / 2))], base));
+  const bar = (back: number) =>
+    out.push(generator.linearPath([tup(at(back, -s / 2)), tup(at(back, s / 2))], base));
   const crow = () =>
-    out.push(generator.linearPath([tup(at(s, 0)), tup(at(0, -s / 2))], base), generator.linearPath([tup(at(s, 0)), tup(at(0, s / 2))], base));
+    out.push(
+      generator.linearPath([tup(at(s, 0)), tup(at(0, -s / 2))], base),
+      generator.linearPath([tup(at(s, 0)), tup(at(0, s / 2))], base),
+    );
   const ring = (back: number) => {
     const c = at(back, 0);
     out.push(generator.circle(c.x, c.y, s * 0.55, { ...base, fill: undefined }));
@@ -154,7 +170,10 @@ const markerDrawables = (
     case "triangle":
     case "triangle-outline":
       out.push(
-        generator.polygon([tup(end), tup(at(s, -spread)), tup(at(s, spread))], kind === "triangle" ? solid : base),
+        generator.polygon(
+          [tup(end), tup(at(s, -spread)), tup(at(s, spread))],
+          kind === "triangle" ? solid : base,
+        ),
       );
       break;
     case "circle":
@@ -217,7 +236,13 @@ export const buildDrawables = (el: SceneElement, theme: Theme): Drawable[] => {
     case "note":
       return [generator.path(roundRectPath(w, h, 10), roughOptions(el, theme, true))];
     case "frame":
-      return [generator.path(roundRectPath(w, h, 8), { ...roughOptions(el, theme, false), roughness: 0, bowing: 0 })];
+      return [
+        generator.path(roundRectPath(w, h, 8), {
+          ...roughOptions(el, theme, false),
+          roughness: 0,
+          bowing: 0,
+        }),
+      ];
     case "diamond": {
       const pts = [
         { x: 0, y: oy },
@@ -227,7 +252,12 @@ export const buildDrawables = (el: SceneElement, theme: Theme): Drawable[] => {
       ];
       return round
         ? [generator.path(roundedPolyPath(pts, radius, true), roughOptions(el, theme, true))]
-        : [generator.polygon(pts.map((p) => [p.x, p.y] as [number, number]), roughOptions(el, theme, true))];
+        : [
+            generator.polygon(
+              pts.map((p) => [p.x, p.y] as [number, number]),
+              roughOptions(el, theme, true),
+            ),
+          ];
     }
     case "ellipse":
       return [generator.ellipse(0, 0, w, h, roughOptions(el, theme, true))];

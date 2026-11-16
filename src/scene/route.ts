@@ -48,7 +48,8 @@ export const curveRoute = (pts: Point[], samples = 16): Point[] => {
       const t2 = t * t;
       const t3 = t2 * t;
       const f = (a: number, b: number, c: number, d: number) =>
-        0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+        0.5 *
+        (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
       out.push({ x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) });
     }
   }
@@ -68,7 +69,8 @@ export const polylineMidpoint = (pts: Point[]): Point => {
   if (pts.length === 0) return { x: 0, y: 0 };
   if (pts.length === 1) return { ...pts[0] };
   let total = 0;
-  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  for (let i = 1; i < pts.length; i++)
+    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
   let half = total / 2;
   for (let i = 1; i < pts.length; i++) {
     const seg = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);

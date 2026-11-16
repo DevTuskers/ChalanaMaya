@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
-import { PAPER } from "../scene/constants";
+import { resolveBoardColor } from "../scene/constants";
+import { effectiveCrop, fullImageBox } from "../scene/crop";
+import { applyStyle, setTool } from "../store/actions";
+import { getImage } from "../render/renderScene";
 import { renderOverlay } from "../render/renderOverlay";
 import { renderScene, setImageLoadListener } from "../render/renderScene";
 import type { PointerInput } from "../tools/controller";
@@ -15,6 +18,7 @@ const toInput = (e: PointerEvent | MouseEvent, canvas: HTMLCanvasElement): Point
     ctrlKey: e.ctrlKey,
     metaKey: e.metaKey,
     altKey: e.altKey,
+    pointerType: "pointerType" in e ? e.pointerType : "mouse",
   };
 };
 
@@ -42,10 +46,16 @@ export const Canvas = () => {
         files: s.files,
         viewport: s.viewport,
         theme: s.theme,
-        background: PAPER[s.theme],
+        background: resolveBoardColor(s.viewBackgroundColor, s.theme),
+        grid: s.gridEnabled
+          ? s.theme === "dark"
+            ? "rgba(237,248,243,0.09)"
+            : "rgba(25,58,54,0.08)"
+          : null,
         width,
         height,
         skipIds: skip,
+        fadeIds: s.pendingErase,
       });
       const selected = s.elements.filter((e) => s.selectedIds.has(e.id));
       const o = controller.overlay;
@@ -60,6 +70,20 @@ export const Canvas = () => {
         pathStart: o.pathStart,
         width,
         height,
+        trail: s.trail,
+        snapLines: s.snapLines,
+        highlight: s.searchHighlight
+          ? (s.elements.find((e) => e.id === s.searchHighlight) ?? null)
+          : null,
+        pointEditing: s.editingPointsId
+          ? (s.elements.find((e) => e.id === s.editingPointsId) ?? null)
+          : null,
+        cropping: (() => {
+          const el = s.croppingId ? s.elements.find((e) => e.id === s.croppingId) : undefined;
+          if (el?.type !== "image") return null;
+          const nat = controller.naturalSize(el);
+          return nat ? { el, full: fullImageBox(el, effectiveCrop(el, nat)) } : null;
+        })(),
       });
       canvas.style.cursor = controller.cursor;
     };
@@ -81,6 +105,40 @@ export const Canvas = () => {
 
     const unsub = store.subscribe(schedule);
     controller.onOverlay = schedule;
+    controller.naturalSize = (el) => {
+      if (el.type !== "image") return null;
+      if (el.crop) return { width: el.crop.naturalWidth, height: el.crop.naturalHeight };
+      const img = getImage(el.fileId, store.get().files);
+      return img && img.naturalWidth
+        ? { width: img.naturalWidth, height: img.naturalHeight }
+        : null;
+    };
+    controller.onLink = (el) => {
+      if (el.link) store.set({ dialog: { kind: "openLink", url: el.link } });
+    };
+    controller.onSample = (pt) => {
+      draw();
+      const dpr = win.devicePixelRatio || 1;
+      const [r, g, b, a] = ctx.getImageData(
+        Math.floor(pt.x * dpr),
+        Math.floor(pt.y * dpr),
+        1,
+        1,
+      ).data;
+      const s = store.get();
+      const hex =
+        a === 0
+          ? resolveBoardColor(s.viewBackgroundColor, s.theme)
+          : `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+      applyStyle(store, { [s.eyedropperTarget]: hex });
+      store.toast(
+        `Picked ${hex} for the ${s.eyedropperTarget === "strokeColor" ? "stroke" : "fill"}.`,
+        "success",
+        1800,
+      );
+      setTool(store, s.toolBeforeEyedropper === "eyedropper" ? "pick" : s.toolBeforeEyedropper);
+      if (s.toolBeforeEyedropper === "pick") store.set({ selectedIds: s.selectedIds });
+    };
     setImageLoadListener(schedule);
     doc.fonts?.addEventListener?.("loadingdone", schedule);
 

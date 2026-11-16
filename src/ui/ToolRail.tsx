@@ -10,6 +10,9 @@ export const ToolRail = () => {
   const { store } = useServices();
   const tool = useAppState((s) => s.tool);
   const menuOpen = useAppState((s) => s.menuOpen);
+  const toolLocked = useAppState((s) => s.toolLocked);
+  const viewMode = useAppState((s) => s.viewMode);
+  const zen = useAppState((s) => s.zenMode);
   return (
     <nav className="rail panel" aria-label="Tools">
       <div className="rail-menu">
@@ -25,31 +28,55 @@ export const ToolRail = () => {
         </HintButton>
         {menuOpen ? <MainMenu /> : null}
       </div>
-      <div className="rail-sep" role="separator" />
-      <div
-        className="rail-tools"
-        role="toolbar"
-        aria-orientation="vertical"
-        aria-label="Drawing tools"
-      >
-        {TOOLS.map((t) => (
-          <HintButton
-            key={t.id}
-            label={`${t.name} — ${t.common}`}
-            shortcut={t.digit ? `${t.key} or ${t.digit}` : t.key}
-            active={tool === t.id}
-            data-testid={`tool-${t.id}`}
-            onClick={() => setTool(store, t.id)}
+      {viewMode ? null : (
+        <>
+          <div className="rail-sep" role="separator" />
+          <div
+            className="rail-tools"
+            role="toolbar"
+            aria-orientation="vertical"
+            aria-label="Drawing tools"
           >
-            <ToolIcon tool={t.id} />
-            {t.digit ? (
-              <span className="tool-digit" aria-hidden="true">
-                {t.digit}
-              </span>
-            ) : null}
-          </HintButton>
-        ))}
-      </div>
+            {TOOLS.map((t) => (
+              <HintButton
+                key={t.id}
+                label={`${t.name} — ${t.common}`}
+                shortcut={t.digit ? `${t.key} or ${t.digit}` : t.key}
+                active={tool === t.id}
+                data-testid={`tool-${t.id}`}
+                onClick={() => setTool(store, t.id)}
+              >
+                <ToolIcon tool={t.id} />
+                {t.digit ? (
+                  <span className="tool-digit" aria-hidden="true">
+                    {t.digit}
+                  </span>
+                ) : null}
+              </HintButton>
+            ))}
+          </div>
+          {zen ? null : (
+            <>
+              <div className="rail-sep" role="separator" />
+              <HintButton
+                label={toolLocked ? "Keep drawing is on" : "Keep drawing"}
+                hint={
+                  toolLocked
+                    ? "Keep drawing is on — tools stay active"
+                    : "Keep drawing — stay on the tool after each item"
+                }
+                shortcut="K"
+                active={toolLocked}
+                aria-pressed={toolLocked}
+                data-testid="tool-lock"
+                onClick={() => store.set({ toolLocked: !toolLocked })}
+              >
+                {toolLocked ? <Icon.lock /> : <Icon.unlock />}
+              </HintButton>
+            </>
+          )}
+        </>
+      )}
     </nav>
   );
 };

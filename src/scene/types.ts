@@ -12,8 +12,7 @@ export interface Bounds {
 
 export type ShapeType = "rectangle" | "diamond" | "ellipse";
 export type LinearType = "arrow" | "line";
-export type ElementType =
-  ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame";
+export type ElementType = ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame";
 
 export type FontFamily = "hand" | "normal" | "code";
 export type FontSizeName = "s" | "m" | "l" | "xl";

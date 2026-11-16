@@ -129,7 +129,10 @@ export const parseElement = (raw: unknown): SceneElement => {
         closed: type === "line" && raw.closed === true,
         startBinding: binding(raw.startBinding),
         endBinding: binding(raw.endBinding),
-        routing: type === "arrow" ? oneOf(raw.routing, ["straight", "curved", "elbow"], "straight") : "straight",
+        routing:
+          type === "arrow"
+            ? oneOf(raw.routing, ["straight", "curved", "elbow"], "straight")
+            : "straight",
         startArrowhead: oneOf(raw.startArrowhead, ARROWHEADS, "none"),
         endArrowhead: oneOf(raw.endArrowhead, ARROWHEADS, type === "arrow" ? "arrow" : "none"),
       };

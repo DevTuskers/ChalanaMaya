@@ -144,7 +144,18 @@ const DRAW_TOOLS: ToolId[] = [
 ];
 
 /** Tools that create artwork (pen mode ignores touch for these). */
-const CREATING_TOOLS: ToolId[] = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw", "text", "note", "frame", "eraser"];
+const CREATING_TOOLS: ToolId[] = [
+  "rectangle",
+  "diamond",
+  "ellipse",
+  "arrow",
+  "line",
+  "freedraw",
+  "text",
+  "note",
+  "frame",
+  "eraser",
+];
 
 export class Controller {
   private interaction: Interaction = { kind: "none" };
@@ -269,7 +280,13 @@ export class Controller {
   private placeNote(p: Point) {
     const before = this.store.snapshot();
     const note = createNote(p.x - 90, p.y - 90, this.state.currentStyle);
-    const text = createText(p.x, p.y, { ...this.state.currentStyle, strokeColor: "#193a36" }, "", note.id);
+    const text = createText(
+      p.x,
+      p.y,
+      { ...this.state.currentStyle, strokeColor: "#193a36" },
+      "",
+      note.id,
+    );
     this.store.updateElements([...this.state.elements, note, text]);
     this.textSession = { id: text.id, before, isNew: false };
     this.store.set({ editingTextId: text.id, selectedIds: new Set() });
@@ -300,7 +317,12 @@ export class Controller {
       const pts = getAbsolutePoints(editingPts);
       const idx = pts.findIndex((q) => distance(q, p) <= hs);
       if (idx >= 0) {
-        this.interaction = { kind: "endpoint", id: editingPts.id, index: idx, before: this.store.snapshot() };
+        this.interaction = {
+          kind: "endpoint",
+          id: editingPts.id,
+          index: idx,
+          before: this.store.snapshot(),
+        };
         this.store.set({ selectedIds: new Set([editingPts.id]), editingPointIndex: idx });
         return;
       }
@@ -535,7 +557,9 @@ export class Controller {
     if (existing) return this.startTextEdit(existing.id);
     const c = getCenter(container);
     const style =
-      container.type === "note" ? { ...this.state.currentStyle, strokeColor: "#193a36" } : this.state.currentStyle;
+      container.type === "note"
+        ? { ...this.state.currentStyle, strokeColor: "#193a36" }
+        : this.state.currentStyle;
     const el = createText(c.x, c.y, style, "", container.id);
     const before = this.store.snapshot();
     this.store.updateElements([...this.state.elements, el]);
@@ -572,9 +596,10 @@ export class Controller {
     const selectId = el.containerId ?? el.id;
     const noteId = this.noteSession;
     this.noteSession = null;
-    const done = this.state.toolLocked && noteId
-      ? { tool: this.state.tool, selectedIds: new Set<string>() }
-      : { tool: "pick" as const, selectedIds: select(selectId) };
+    const done =
+      this.state.toolLocked && noteId
+        ? { tool: this.state.tool, selectedIds: new Set<string>() }
+        : { tool: "pick" as const, selectedIds: select(selectId) };
     if (!el.text.trim()) {
       const elements = this.state.elements.filter((e) => e.id !== id);
       if (session?.isNew) {
@@ -587,7 +612,10 @@ export class Controller {
       } else {
         this.store.updateElements(elements);
         if (session) this.store.commitFrom(session.before);
-        this.store.set({ editingTextId: null, ...(noteId ? done : { tool: "pick", selectedIds: select(el.containerId) }) });
+        this.store.set({
+          editingTextId: null,
+          ...(noteId ? done : { tool: "pick", selectedIds: select(el.containerId) }),
+        });
       }
       return;
     }
@@ -615,13 +643,19 @@ export class Controller {
         if (distance(last, p) * this.state.viewport.zoom < 2) return;
         it.points.push(p);
         this.store.set({ trail: { kind: it.mode, points: [...it.points] } });
-        if (it.mode === "eraser") this.eraseAlong([last, { x: (last.x + p.x) / 2, y: (last.y + p.y) / 2 }, p]);
+        if (it.mode === "eraser")
+          this.eraseAlong([last, { x: (last.x + p.x) / 2, y: (last.y + p.y) / 2 }, p]);
         return;
       }
       case "frame":
       case "shape": {
         if (this.snapOn(input)) {
-          const snapped = snapPoint(this.state.elements, p, new Set([it.id]), 6 / this.state.viewport.zoom);
+          const snapped = snapPoint(
+            this.state.elements,
+            p,
+            new Set([it.id]),
+            6 / this.state.viewport.zoom,
+          );
           p.x = snapped.point.x;
           p.y = snapped.point.y;
           this.store.set({ snapLines: snapped.lines });
@@ -694,7 +728,8 @@ export class Controller {
         if (it.ids.size === 1) {
           const [id] = it.ids;
           const el = it.base.find((e) => e.id === id)!;
-          const img = el.type === "image" && this.state.croppingId === el.id ? this.naturalSize(el) : null;
+          const img =
+            el.type === "image" && this.state.croppingId === el.id ? this.naturalSize(el) : null;
           const next = img
             ? cropByHandle(el as ImageElement, img, it.handle, target)
             : resizeElement(el, it.handle, target, input.shiftKey);
@@ -793,8 +828,10 @@ export class Controller {
         if (it.mode === "lasso") {
           const ids = elementsInLasso(this.state.elements, it.points);
           this.store.set({ trail: null });
-          // an empty loop leaves the selection as it was
-          if (ids.length) this.store.set({ selectedIds: expandGroups(this.state.elements, ids) });
+          // an empty loop leaves no selection
+          this.store.set({
+            selectedIds: ids.length ? expandGroups(this.state.elements, ids) : new Set(),
+          });
           return;
         }
         const erase = this.state.pendingErase;
@@ -847,7 +884,7 @@ export class Controller {
             ),
           });
         }
-        this.store.commitFrom(it.before);
+        this.store.commitFrom(it.before, this.after(it.id));
         return;
       }
       case "path": {
@@ -865,7 +902,9 @@ export class Controller {
       case "move":
         this.interaction = { kind: "none" };
         if (this.state.snapLines.length) this.store.set({ snapLines: [] });
-        this.store.updateElements(assignFrames(this.state.elements, withDependents(this.state.elements, it.ids)));
+        this.store.updateElements(
+          assignFrames(this.state.elements, withDependents(this.state.elements, it.ids)),
+        );
         this.store.commitFrom(it.before);
         return;
       case "resize":

@@ -670,3 +670,193 @@ kbd {
 .hint-wrap:has(> [aria-expanded="true"]) .hint {
   display: none !important;
 }
+
+/* ---------- P1: rail additions ---------- */
+.rail .icon-btn {
+  width: 34px;
+  height: 34px;
+}
+.rail {
+  max-height: calc(100% - 28px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+@media (max-height: 700px) {
+  .rail-tools {
+    display: grid;
+    grid-template-columns: repeat(2, 34px);
+  }
+}
+
+/* ---------- P1: menu ---------- */
+.menu {
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+.menu-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------- P1: properties extras ---------- */
+.text-btn {
+  width: auto;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.prop-actions.wrap {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.prop-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.prop-select {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+.prop-select select,
+.prop-select input:not([type="range"]),
+.field input,
+.search input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+  min-width: 0;
+}
+.prop-range input {
+  accent-color: var(--accent);
+}
+.field {
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 4px !important;
+}
+.dialog-note.warn {
+  color: var(--warm);
+}
+.link-preview {
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--surface);
+}
+
+/* ---------- P1: stats, search, banners ---------- */
+.stats {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 210px;
+  padding: 8px 12px 10px;
+  z-index: 11;
+}
+.stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stats-head h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.icon-btn.small {
+  width: 28px;
+  height: 28px;
+}
+.icon-btn.small svg {
+  width: 16px;
+  height: 16px;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+.stats-grid dt {
+  color: var(--muted);
+}
+.stats-grid dd {
+  margin: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.stats-empty,
+.stats-foot {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.search {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  z-index: 12;
+}
+.search input {
+  width: 200px;
+}
+.search-status {
+  min-width: 70px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.banners {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  z-index: 12;
+  pointer-events: none;
+}
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  pointer-events: auto;
+}
+.banner .segmented button {
+  height: 26px;
+}

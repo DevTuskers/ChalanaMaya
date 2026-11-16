@@ -111,8 +111,25 @@ const Select = <T extends string>({
   </label>
 );
 
-const Btn = ({ label, testId, onClick, keys }: { label: string; testId: string; onClick: () => void; keys?: string }) => (
-  <HintButton label={label} shortcut={keys} side="bottom" data-testid={testId} className="text-btn" onClick={onClick}>
+const Btn = ({
+  label,
+  testId,
+  onClick,
+  keys,
+}: {
+  label: string;
+  testId: string;
+  onClick: () => void;
+  keys?: string;
+}) => (
+  <HintButton
+    label={label}
+    shortcut={keys}
+    side="bottom"
+    data-testid={testId}
+    className="text-btn"
+    onClick={onClick}
+  >
     {label}
   </HintButton>
 );
@@ -240,7 +257,16 @@ export const PropertiesPanel = () => {
   const selected = elements.filter((e) => selectedIds.has(e.id));
   const editing = editingId ? elements.find((e) => e.id === editingId) : undefined;
   const subjects: SceneElement[] = editing ? [editing] : selected;
-  const drawingTools = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw", "text", "note"];
+  const drawingTools = [
+    "rectangle",
+    "diamond",
+    "ellipse",
+    "arrow",
+    "line",
+    "freedraw",
+    "text",
+    "note",
+  ];
   const drawing = drawingTools.includes(tool);
   if (!subjects.length && !drawing) return null;
 
@@ -250,7 +276,12 @@ export const PropertiesPanel = () => {
     return bound ? [bound] : [];
   });
   // a stand-in element for "new item" style, so the same rules decide what is shown
-  const proto = { type: tool === "freedraw" ? "freedraw" : tool, containerId: null, closed: false, routing: style.routing } as unknown as SceneElement;
+  const proto = {
+    type: tool === "freedraw" ? "freedraw" : tool,
+    containerId: null,
+    closed: false,
+    routing: style.routing,
+  } as unknown as SceneElement;
   const pool: SceneElement[] = subjects.length ? [...subjects, ...texts] : [proto];
   const can = (k: keyof ItemStyle) => pool.some((e) => acceptsStyle(e, k));
   const showText = subjects.length ? texts.length > 0 : tool === "text" || tool === "note";
@@ -258,7 +289,8 @@ export const PropertiesPanel = () => {
 
   const first = subjects[0] as (SceneElement & Partial<ItemStyle>) | undefined;
   const pick = <K extends keyof ItemStyle>(k: K): ItemStyle[K] => {
-    const holder = pool.find((e) => e !== proto && acceptsStyle(e, k)) as unknown as ItemStyle | undefined;
+    const holder = pool.find((e) => e !== proto && acceptsStyle(e, k)) as unknown as
+      ItemStyle | undefined;
     return holder ? holder[k] : style[k];
   };
   const current: ItemStyle = {
@@ -281,7 +313,9 @@ export const PropertiesPanel = () => {
   const mod = (k: string) => formatKeys(k);
   const single = selected.length === 1 ? selected[0] : null;
   const allShapes = selected.length > 0 && selected.every(isShape);
-  const allConnectors = selected.length > 0 && selected.every((e) => (e.type === "arrow" || e.type === "line") && !e.closed);
+  const allConnectors =
+    selected.length > 0 &&
+    selected.every((e) => (e.type === "arrow" || e.type === "line") && !e.closed);
   const grouped = selected.some((e) => e.groupIds.length > 0);
 
   return (
@@ -301,7 +335,11 @@ export const PropertiesPanel = () => {
       </h2>
       {can("strokeColor") || showText ? (
         <Swatches
-          legend={showText && !can("backgroundColor") && !can("strokeWidth") ? "Text colour" : "Stroke colour"}
+          legend={
+            showText && !can("backgroundColor") && !can("strokeWidth")
+              ? "Text colour"
+              : "Stroke colour"
+          }
           colors={STROKE_SWATCHES}
           value={current.strokeColor}
           onPick={(c) => set({ strokeColor: c })}
@@ -342,7 +380,13 @@ export const PropertiesPanel = () => {
             label: w.label,
             content: (
               <svg width="28" height="16" aria-hidden="true">
-                <path d="M3 9c6-3 15 2 22-2" stroke="currentColor" strokeWidth={w.value} fill="none" strokeLinecap="round" />
+                <path
+                  d="M3 9c6-3 15 2 22-2"
+                  stroke="currentColor"
+                  strokeWidth={w.value}
+                  fill="none"
+                  strokeLinecap="round"
+                />
               </svg>
             ),
           }))}
@@ -359,7 +403,13 @@ export const PropertiesPanel = () => {
             label: v[0].toUpperCase() + v.slice(1),
             content: (
               <svg width="28" height="16" aria-hidden="true">
-                <path d="M3 8h22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray={v === "dashed" ? "6 4" : v === "dotted" ? "0.5 4" : undefined} />
+                <path
+                  d="M3 8h22"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeDasharray={v === "dashed" ? "6 4" : v === "dotted" ? "0.5 4" : undefined}
+                />
               </svg>
             ),
           }))}
@@ -400,8 +450,20 @@ export const PropertiesPanel = () => {
             ]}
           />
           <div className="prop-row">
-            <Select label="Start" testId="start-head" value={current.startArrowhead} options={ARROWHEAD_OPTIONS} onPick={(v) => set({ startArrowhead: v })} />
-            <Select label="End" testId="end-head" value={current.endArrowhead} options={ARROWHEAD_OPTIONS} onPick={(v) => set({ endArrowhead: v })} />
+            <Select
+              label="Start"
+              testId="start-head"
+              value={current.startArrowhead}
+              options={ARROWHEAD_OPTIONS}
+              onPick={(v) => set({ startArrowhead: v })}
+            />
+            <Select
+              label="End"
+              testId="end-head"
+              value={current.endArrowhead}
+              options={ARROWHEAD_OPTIONS}
+              onPick={(v) => set({ endArrowhead: v })}
+            />
           </div>
         </>
       ) : null}
@@ -415,7 +477,9 @@ export const PropertiesPanel = () => {
             options={(Object.keys(FONT_FAMILIES) as FontFamily[]).map((f) => ({
               value: f,
               label: FONT_FAMILIES[f].label,
-              content: <span style={{ fontFamily: FONT_FAMILIES[f].css }}>{FONT_FAMILIES[f].label}</span>,
+              content: (
+                <span style={{ fontFamily: FONT_FAMILIES[f].css }}>{FONT_FAMILIES[f].label}</span>
+              ),
             }))}
           />
           <Segmented<FontSizeName>
@@ -429,7 +493,8 @@ export const PropertiesPanel = () => {
               content: k.toUpperCase(),
             }))}
           />
-          {pool.some((e) => e.type === "text" && !e.containerId) || (!subjects.length && tool === "text") ? (
+          {pool.some((e) => e.type === "text" && !e.containerId) ||
+          (!subjects.length && tool === "text") ? (
             <Segmented<TextAlign>
               legend="Alignment"
               testId="align"
@@ -461,7 +526,11 @@ export const PropertiesPanel = () => {
           <legend>Page frame</legend>
           <FrameName key={single.id} id={single.id} name={single.name} />
           <div className="prop-actions wrap">
-            <Btn label="Remove frame, keep contents" testId="frame-unwrap" onClick={() => removeFrameKeepContents(store, single.id)} />
+            <Btn
+              label="Remove frame, keep contents"
+              testId="frame-unwrap"
+              onClick={() => removeFrameKeepContents(store, single.id)}
+            />
           </div>
         </fieldset>
       ) : null}
@@ -483,7 +552,12 @@ export const PropertiesPanel = () => {
           <Btn
             label={editingPointsId === single.id ? "Done editing points" : "Edit points"}
             testId="edit-points"
-            onClick={() => store.set({ editingPointsId: editingPointsId === single.id ? null : single.id, editingPointIndex: null })}
+            onClick={() =>
+              store.set({
+                editingPointsId: editingPointsId === single.id ? null : single.id,
+                editingPointIndex: null,
+              })
+            }
           />
         </div>
       ) : null}
@@ -502,7 +576,12 @@ export const PropertiesPanel = () => {
                   ["line", "Path"],
                 ] as const)
             ).map(([t, label]) => (
-              <Btn key={t} label={label} testId={`switch-${t}`} onClick={() => switchSelectedType(store, t)} />
+              <Btn
+                key={t}
+                label={label}
+                testId={`switch-${t}`}
+                onClick={() => switchSelectedType(store, t)}
+              />
             ))}
           </div>
         </fieldset>
@@ -512,53 +591,173 @@ export const PropertiesPanel = () => {
           <fieldset className="prop-group">
             <legend>Layers</legend>
             <div className="prop-actions wrap">
-              <Btn label="To back" testId="z-back" keys={mod("Mod+Shift+[")} onClick={() => reorderSelected(store, "back")} />
-              <Btn label="Backward" testId="z-backward" keys={mod("Mod+[")} onClick={() => reorderSelected(store, "backward")} />
-              <Btn label="Forward" testId="z-forward" keys={mod("Mod+]")} onClick={() => reorderSelected(store, "forward")} />
-              <Btn label="To front" testId="z-front" keys={mod("Mod+Shift+]")} onClick={() => reorderSelected(store, "front")} />
+              <Btn
+                label="To back"
+                testId="z-back"
+                keys={mod("Mod+Shift+[")}
+                onClick={() => reorderSelected(store, "back")}
+              />
+              <Btn
+                label="Backward"
+                testId="z-backward"
+                keys={mod("Mod+[")}
+                onClick={() => reorderSelected(store, "backward")}
+              />
+              <Btn
+                label="Forward"
+                testId="z-forward"
+                keys={mod("Mod+]")}
+                onClick={() => reorderSelected(store, "forward")}
+              />
+              <Btn
+                label="To front"
+                testId="z-front"
+                keys={mod("Mod+Shift+]")}
+                onClick={() => reorderSelected(store, "front")}
+              />
             </div>
           </fieldset>
           {selected.length > 1 ? (
             <fieldset className="prop-group">
               <legend>Align</legend>
               <div className="prop-actions wrap">
-                <Btn label="Left" testId="align-left" onClick={() => alignSelected(store, "left")} />
-                <Btn label="Centre" testId="align-hcenter" onClick={() => alignSelected(store, "hcenter")} />
-                <Btn label="Right" testId="align-right" onClick={() => alignSelected(store, "right")} />
+                <Btn
+                  label="Left"
+                  testId="align-left"
+                  onClick={() => alignSelected(store, "left")}
+                />
+                <Btn
+                  label="Centre"
+                  testId="align-hcenter"
+                  onClick={() => alignSelected(store, "hcenter")}
+                />
+                <Btn
+                  label="Right"
+                  testId="align-right"
+                  onClick={() => alignSelected(store, "right")}
+                />
                 <Btn label="Top" testId="align-top" onClick={() => alignSelected(store, "top")} />
-                <Btn label="Middle" testId="align-vcenter" onClick={() => alignSelected(store, "vcenter")} />
-                <Btn label="Bottom" testId="align-bottom" onClick={() => alignSelected(store, "bottom")} />
-                <Btn label="Space across" testId="distribute-h" onClick={() => distributeSelected(store, "horizontal")} />
-                <Btn label="Space down" testId="distribute-v" onClick={() => distributeSelected(store, "vertical")} />
+                <Btn
+                  label="Middle"
+                  testId="align-vcenter"
+                  onClick={() => alignSelected(store, "vcenter")}
+                />
+                <Btn
+                  label="Bottom"
+                  testId="align-bottom"
+                  onClick={() => alignSelected(store, "bottom")}
+                />
+                <Btn
+                  label="Space across"
+                  testId="distribute-h"
+                  onClick={() => distributeSelected(store, "horizontal")}
+                />
+                <Btn
+                  label="Space down"
+                  testId="distribute-v"
+                  onClick={() => distributeSelected(store, "vertical")}
+                />
               </div>
             </fieldset>
           ) : null}
           <fieldset className="prop-group">
             <legend>Arrange</legend>
             <div className="prop-actions wrap">
-              {selected.length > 1 ? <Btn label="Group" testId="group" keys={mod("Mod+G")} onClick={() => groupSelected(store)} /> : null}
-              {grouped ? <Btn label="Ungroup" testId="ungroup" keys={mod("Mod+Shift+G")} onClick={() => ungroupSelected(store)} /> : null}
-              <Btn label="Flip across" testId="flip-h" keys="Shift+H" onClick={() => flipSelected(store, "horizontal")} />
-              <Btn label="Flip down" testId="flip-v" keys="Shift+V" onClick={() => flipSelected(store, "vertical")} />
-              <Btn label="Lock" testId="lock" keys={mod("Mod+Shift+L")} onClick={() => lockSelected(store)} />
-              <Btn label="Link…" testId="link" keys={mod("Mod+K")} onClick={() => single && store.set({ dialog: { kind: "link", elementId: single.id } })} />
-              <Btn label="Copy styles" testId="copy-styles" keys={mod("Mod+Alt+C")} onClick={() => copyStyles(store)} />
-              {copiedStyle ? <Btn label="Paste styles" testId="paste-styles" keys={mod("Mod+Alt+V")} onClick={() => pasteStyles(store)} /> : null}
+              {selected.length > 1 ? (
+                <Btn
+                  label="Group"
+                  testId="group"
+                  keys={mod("Mod+G")}
+                  onClick={() => groupSelected(store)}
+                />
+              ) : null}
+              {grouped ? (
+                <Btn
+                  label="Ungroup"
+                  testId="ungroup"
+                  keys={mod("Mod+Shift+G")}
+                  onClick={() => ungroupSelected(store)}
+                />
+              ) : null}
+              <Btn
+                label="Flip across"
+                testId="flip-h"
+                keys="Shift+H"
+                onClick={() => flipSelected(store, "horizontal")}
+              />
+              <Btn
+                label="Flip down"
+                testId="flip-v"
+                keys="Shift+V"
+                onClick={() => flipSelected(store, "vertical")}
+              />
+              <Btn
+                label="Lock"
+                testId="lock"
+                keys={mod("Mod+Shift+L")}
+                onClick={() => lockSelected(store)}
+              />
+              <Btn
+                label="Link…"
+                testId="link"
+                keys={mod("Mod+K")}
+                onClick={() =>
+                  single && store.set({ dialog: { kind: "link", elementId: single.id } })
+                }
+              />
+              <Btn
+                label="Copy styles"
+                testId="copy-styles"
+                keys={mod("Mod+Alt+C")}
+                onClick={() => copyStyles(store)}
+              />
+              {copiedStyle ? (
+                <Btn
+                  label="Paste styles"
+                  testId="paste-styles"
+                  keys={mod("Mod+Alt+V")}
+                  onClick={() => pasteStyles(store)}
+                />
+              ) : null}
             </div>
           </fieldset>
           <fieldset className="prop-group">
             <legend>Actions</legend>
             <div className="prop-actions">
-              <HintButton label="Duplicate" shortcut={mod("Mod+D")} side="bottom" data-testid="action-duplicate" onClick={() => duplicateSelected(store)}>
+              <HintButton
+                label="Duplicate"
+                shortcut={mod("Mod+D")}
+                side="bottom"
+                data-testid="action-duplicate"
+                onClick={() => duplicateSelected(store)}
+              >
                 <Icon.duplicate />
               </HintButton>
-              <HintButton label="Copy" shortcut={mod("Mod+C")} side="bottom" data-testid="action-copy" onClick={() => void copyWithApi(store, false)}>
+              <HintButton
+                label="Copy"
+                shortcut={mod("Mod+C")}
+                side="bottom"
+                data-testid="action-copy"
+                onClick={() => void copyWithApi(store, false)}
+              >
                 <Icon.copy />
               </HintButton>
-              <HintButton label="Cut" shortcut={mod("Mod+X")} side="bottom" data-testid="action-cut" onClick={() => void copyWithApi(store, true)}>
+              <HintButton
+                label="Cut"
+                shortcut={mod("Mod+X")}
+                side="bottom"
+                data-testid="action-cut"
+                onClick={() => void copyWithApi(store, true)}
+              >
                 <Icon.cut />
               </HintButton>
-              <HintButton label="Delete" shortcut="Delete" side="bottom" data-testid="action-delete" onClick={() => deleteSelected(store)}>
+              <HintButton
+                label="Delete"
+                shortcut="Delete"
+                side="bottom"
+                data-testid="action-delete"
+                onClick={() => deleteSelected(store)}
+              >
                 <Icon.trash />
               </HintButton>
             </div>

@@ -35,6 +35,11 @@ export const TOOLS: ToolDef[] = [
   { id: "line", name: "Path", common: "line", key: "L", digit: "6" },
   { id: "freedraw", name: "Sketch pencil", common: "freehand", key: "P", digit: "7" },
   { id: "text", name: "Words", common: "text", key: "T", digit: "8" },
+  { id: "note", name: "Sticky note", common: "note", key: "N" },
+  { id: "frame", name: "Page frame", common: "frame", key: "F" },
+  { id: "eraser", name: "Rubber", common: "eraser", key: "E", digit: "9" },
+  { id: "lasso", name: "Lasso", common: "lasso selection", key: "Q" },
+  { id: "eyedropper", name: "Colour picker", common: "eyedropper", key: "I" },
 ];
 
 export interface ShortcutGroup {
@@ -63,6 +68,15 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { label: "Edit text in a shape", keys: ["Enter", "Double-click"] },
       { label: "Finish text or path, deselect", keys: ["Escape"] },
       { label: "Keep proportions / snap angle", keys: ["Shift+Drag"] },
+      { label: "Move without snapping", keys: ["Alt+Drag"] },
+      { label: "Group / ungroup", keys: ["Mod+G", "Mod+Shift+G"] },
+      { label: "Send backward / bring forward", keys: ["Mod+[", "Mod+]"] },
+      { label: "Send to back / bring to front", keys: ["Mod+Shift+[", "Mod+Shift+]"] },
+      { label: "Flip across / down", keys: ["Shift+H", "Shift+V"] },
+      { label: "Lock selection", keys: ["Mod+Shift+L"] },
+      { label: "Add link", keys: ["Mod+K"] },
+      { label: "Copy / paste styles", keys: ["Mod+Alt+C", "Mod+Alt+V"] },
+      { label: "Keep drawing (tool lock)", keys: ["K"] },
     ],
   },
   {
@@ -74,6 +88,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { label: "Zoom to fit all", keys: ["Shift+1"] },
       { label: "Zoom to selection", keys: ["Shift+2"] },
       { label: "Pan the board", keys: ["Space+Drag", "Wheel"] },
+      { label: "Show grid", keys: ["Mod+'"] },
+      { label: "Quiet desk (hide panels)", keys: ["Alt+Z"] },
+      { label: "Look-only mode", keys: ["Alt+R"] },
+      { label: "Find text", keys: ["Mod+F"] },
+      { label: "Measurements", keys: ["Alt+/"] },
     ],
   },
   {
@@ -81,7 +100,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { label: "Save .chalana file", keys: ["Mod+S"] },
       { label: "Open .chalana file", keys: ["Mod+O"] },
-      { label: "Export PNG", keys: ["Mod+Shift+E"] },
+      { label: "Export image", keys: ["Mod+Shift+E"] },
+      { label: "Copy selection as PNG", keys: ["Shift+Alt+C"] },
       { label: "Show this help", keys: ["?"] },
     ],
   },

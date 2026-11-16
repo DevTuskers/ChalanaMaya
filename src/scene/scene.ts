@@ -43,7 +43,13 @@ export const syncBoundTexts = (elements: Elements): SceneElement[] => {
         angle: 0,
         autoWidth: false,
       };
-      if (next.x !== el.x || next.y !== el.y || next.width !== el.width || next.height !== el.height || el.angle) {
+      if (
+        next.x !== el.x ||
+        next.y !== el.y ||
+        next.width !== el.width ||
+        next.height !== el.height ||
+        el.angle
+      ) {
         updates.set(el.id, next);
       }
       continue;

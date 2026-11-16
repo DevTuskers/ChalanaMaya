@@ -10,14 +10,7 @@ import {
 } from "./geometry";
 import { hitElement } from "./hit";
 import { type Elements } from "./scene";
-import type {
-  Bounds,
-  ItemStyle,
-  LinearElement,
-  Point,
-  SceneElement,
-  ShapeType,
-} from "./types";
+import type { Bounds, ItemStyle, LinearElement, Point, SceneElement, ShapeType } from "./types";
 
 const outerGroup = (el: SceneElement) => el.groupIds[el.groupIds.length - 1] ?? null;
 
@@ -37,7 +30,9 @@ export const expandGroups = (elements: Elements, ids: Iterable<string>): Set<str
 /** Ids plus everything that should travel with them (frame contents, bound text). */
 export const withDependents = (elements: Elements, ids: Iterable<string>): Set<string> => {
   const set = new Set(ids);
-  const frames = new Set(elements.filter((e) => e.type === "frame" && set.has(e.id)).map((e) => e.id));
+  const frames = new Set(
+    elements.filter((e) => e.type === "frame" && set.has(e.id)).map((e) => e.id),
+  );
   for (const el of elements) {
     if (el.frameId && frames.has(el.frameId) && !el.locked) set.add(el.id);
   }
@@ -191,20 +186,24 @@ export const flipElements = (
   for (const el of targets) {
     let next: SceneElement;
     if (isLinear(el) || el.type === "freedraw") {
-      const abs = getAbsolutePoints(el).map((p) => (h ? { x: 2 * cx - p.x, y: p.y } : { x: p.x, y: 2 * cy - p.y }));
+      const abs = getAbsolutePoints(el).map((p) =>
+        h ? { x: 2 * cx - p.x, y: p.y } : { x: p.x, y: 2 * cy - p.y },
+      );
       next = fromAbsolutePoints(el, abs);
     } else {
       const c = getCenter(el);
       const nc = h ? { x: 2 * cx - c.x, y: c.y } : { x: c.x, y: 2 * cy - c.y };
       next = { ...el, x: nc.x - el.width / 2, y: nc.y - el.height / 2 };
-      if (next.type === "image") next = h ? { ...next, flipX: !next.flipX } : { ...next, flipY: !next.flipY };
+      if (next.type === "image")
+        next = h ? { ...next, flipX: !next.flipX } : { ...next, flipY: !next.flipY };
     }
     next = { ...next, angle: el.angle ? -el.angle : 0 };
     if (isLinear(next) && isLinear(el)) {
       // bindings stay correct because both ends are mirrored with their targets only when selected
       next = {
         ...next,
-        startBinding: el.startBinding && set.has(el.startBinding.elementId) ? el.startBinding : null,
+        startBinding:
+          el.startBinding && set.has(el.startBinding.elementId) ? el.startBinding : null,
         endBinding: el.endBinding && set.has(el.endBinding.elementId) ? el.endBinding : null,
       } as LinearElement;
     }
@@ -213,7 +212,11 @@ export const flipElements = (
   return elements.map((e) => flipped.get(e.id) ?? e);
 };
 
-export const setLocked = (elements: Elements, ids: ReadonlySet<string> | "all", locked: boolean) => {
+export const setLocked = (
+  elements: Elements,
+  ids: ReadonlySet<string> | "all",
+  locked: boolean,
+) => {
   let changed = false;
   const next = elements.map((e) => {
     if (ids !== "all" && !ids.has(e.id)) return e;
@@ -240,7 +243,15 @@ export const switchType = (
     if (isLinear(e) && (type === "arrow" || type === "line") && !e.closed) {
       changed = true;
       return type === "line"
-        ? { ...e, type, startBinding: null, endBinding: null, startArrowhead: "none", endArrowhead: "none", routing: "straight" }
+        ? {
+            ...e,
+            type,
+            startBinding: null,
+            endBinding: null,
+            startArrowhead: "none",
+            endArrowhead: "none",
+            routing: "straight",
+          }
         : { ...e, type, endArrowhead: "arrow" };
     }
     return e;
@@ -356,18 +367,27 @@ export const snapBox = (
   threshold: number,
 ): SnapResult => {
   const others = elements.filter((e) => !exclude.has(e.id) && !isBoundText(e));
-  let best = { dx: Infinity, dy: Infinity, x: 0, y: 0, bx: null as Bounds | null, by: null as Bounds | null };
+  let best = {
+    dx: Infinity,
+    dy: Infinity,
+    x: 0,
+    y: 0,
+    bx: null as Bounds | null,
+    by: null as Bounds | null,
+  };
   for (const o of others) {
     const ob = getElementBounds(o);
     for (const tx of keyXs(ob))
       for (const mx of keyXs(moving)) {
         const d = tx - mx;
-        if (Math.abs(d) <= threshold && Math.abs(d) < Math.abs(best.dx)) best = { ...best, dx: d, x: tx, bx: ob };
+        if (Math.abs(d) <= threshold && Math.abs(d) < Math.abs(best.dx))
+          best = { ...best, dx: d, x: tx, bx: ob };
       }
     for (const ty of keyYs(ob))
       for (const my of keyYs(moving)) {
         const d = ty - my;
-        if (Math.abs(d) <= threshold && Math.abs(d) < Math.abs(best.dy)) best = { ...best, dy: d, y: ty, by: ob };
+        if (Math.abs(d) <= threshold && Math.abs(d) < Math.abs(best.dy))
+          best = { ...best, dy: d, y: ty, by: ob };
       }
   }
   const dx = isFinite(best.dx) ? best.dx : 0;
@@ -393,7 +413,12 @@ export const snapBox = (
 };
 
 /** Snaps a single point (e.g. a drawing corner). */
-export const snapPoint = (elements: Elements, p: Point, exclude: ReadonlySet<string>, threshold: number) => {
+export const snapPoint = (
+  elements: Elements,
+  p: Point,
+  exclude: ReadonlySet<string>,
+  threshold: number,
+) => {
   const r = snapBox(elements, { minX: p.x, maxX: p.x, minY: p.y, maxY: p.y }, exclude, threshold);
   return { point: { x: p.x + r.dx, y: p.y + r.dy }, lines: r.lines };
 };
@@ -467,7 +492,12 @@ export const acceptsStyle = (el: SceneElement, k: keyof ItemStyle): boolean => {
     case "roughness":
       return hasOutline(el);
     case "edges":
-      return el.type === "rectangle" || el.type === "diamond" || el.type === "note" || el.type === "arrow";
+      return (
+        el.type === "rectangle" ||
+        el.type === "diamond" ||
+        el.type === "note" ||
+        el.type === "arrow"
+      );
     case "opacity":
       return true;
     case "fontFamily":
@@ -483,9 +513,14 @@ export const acceptsStyle = (el: SceneElement, k: keyof ItemStyle): boolean => {
 };
 
 /** Applies style keys that each target supports; geometry and content stay. */
-export const pasteStyle = (elements: Elements, ids: ReadonlySet<string>, style: Partial<ItemStyle>) => {
+export const pasteStyle = (
+  elements: Elements,
+  ids: ReadonlySet<string>,
+  style: Partial<ItemStyle>,
+) => {
   const targets = new Set(ids);
-  for (const el of elements) if (isBoundText(el) && targets.has(el.containerId!)) targets.add(el.id);
+  for (const el of elements)
+    if (isBoundText(el) && targets.has(el.containerId!)) targets.add(el.id);
   let changed = false;
   const next = elements.map((el) => {
     if (!targets.has(el.id) || el.locked) return el;

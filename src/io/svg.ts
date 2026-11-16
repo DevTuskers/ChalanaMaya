@@ -4,7 +4,14 @@ import { getCenter } from "../scene/geometry";
 import { getTextLines, lineHeightPx } from "../scene/text";
 import type { FileMap, SceneElement, TextElement, Theme } from "../scene/types";
 import { paintOrder, textInk } from "../render/renderScene";
-import { buildDrawables, dashFor, freedrawOutline, generator, outlineToSvgPath, resolveColor } from "../render/shapes";
+import {
+  buildDrawables,
+  dashFor,
+  freedrawOutline,
+  generator,
+  outlineToSvgPath,
+  resolveColor,
+} from "../render/shapes";
 import { exportSize } from "./export";
 
 export interface SvgExportOptions {
@@ -63,7 +70,8 @@ const elementSvg = (el: SceneElement, files: FileMap, theme: Theme, onNote: bool
   } else if (el.type === "image") {
     const file = files[el.fileId];
     if (file) {
-      const flip = el.flipX || el.flipY ? ` transform="scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})"` : "";
+      const flip =
+        el.flipX || el.flipY ? ` transform="scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})"` : "";
       const cr = el.crop;
       const inner = cr
         ? `<svg x="${n(-el.width / 2)}" y="${n(-el.height / 2)}" width="${n(el.width)}" height="${n(el.height)}" viewBox="${n(cr.x)} ${n(cr.y)} ${n(cr.width)} ${n(cr.height)}" preserveAspectRatio="none"><image width="${n(cr.naturalWidth)}" height="${n(cr.naturalHeight)}" href="${file.dataURL}" preserveAspectRatio="none"/></svg>`
@@ -95,7 +103,12 @@ export const exportToSvg = (
   const oy = -size.bounds.minY + padding;
   const notes = new Set(elements.filter((e) => e.type === "note").map((e) => e.id));
   const parts = paintOrder(elements).map((el) =>
-    elementSvg(el, files, opts.theme, el.type === "text" && !!el.containerId && notes.has(el.containerId)),
+    elementSvg(
+      el,
+      files,
+      opts.theme,
+      el.type === "text" && !!el.containerId && notes.has(el.containerId),
+    ),
   );
   const bg = opts.background ? `<rect width="100%" height="100%" fill="${opts.background}"/>` : "";
   const style = opts.fontCss ? `<defs><style>${opts.fontCss}</style></defs>` : "";

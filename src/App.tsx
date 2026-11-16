@@ -1,15 +1,30 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { STORAGE_KEY, getStorage, loadFromStorage, saveToStorage } from "./io/autosave";
+import {
+  STORAGE_KEY,
+  getStorage,
+  loadFromStorage,
+  saveToStorage,
+  type StorageLike,
+} from "./io/autosave";
 import { readPasteEvent } from "./io/clipboard";
 import { downloadBlob, timestampName } from "./io/export";
 import { FormatError, parseBoard, serializeBoard, type ChalanaFile } from "./io/serialize";
 import { getCommonBounds } from "./scene/geometry";
 import { fitBounds } from "./scene/viewport";
 import {
+  copySelectionAs,
+  copyStyles,
   copyToEvent,
+  deletePoint,
   deleteSelected,
   duplicateSelected,
   fitToContent,
+  flipSelected,
+  groupSelected,
+  lockSelected,
+  pasteStyles,
+  reorderSelected,
+  ungroupSelected,
   pasteContent,
   redo,
   resetZoom,
@@ -18,7 +33,9 @@ import {
   undo,
   zoomBy,
 } from "./store/actions";
-import { Store, initialState } from "./store/store";
+import { DEFAULT_PREFERENCES, Store, initialState, type Preferences } from "./store/store";
+import { EmbedError, extractFromPng, extractFromSvg } from "./io/embed";
+import { ModeBanners, SearchBar, StatsPanel } from "./ui/ViewPanels";
 import { Controller } from "./tools/controller";
 import { Canvas } from "./ui/Canvas";
 import { AppContext, useAppState, useServices, type AppServices } from "./ui/context";
@@ -31,6 +48,24 @@ import { TOOLS } from "./ui/shortcuts";
 import type { Theme } from "./scene/types";
 
 const THEME_KEY = "chalanamaya.theme";
+export const PREFS_KEY = "chalanamaya.prefs";
+
+const readPrefs = (storage: StorageLike | null): Preferences => {
+  try {
+    const raw = JSON.parse(storage?.getItem(PREFS_KEY) ?? "null") as Partial<Preferences> | null;
+    if (!raw || typeof raw !== "object") return { ...DEFAULT_PREFERENCES };
+    return {
+      penMode: typeof raw.penMode === "boolean" ? raw.penMode : DEFAULT_PREFERENCES.penMode,
+      inputPreference:
+        raw.inputPreference === "mouse" || raw.inputPreference === "trackpad"
+          ? raw.inputPreference
+          : DEFAULT_PREFERENCES.inputPreference,
+      snapping: typeof raw.snapping === "boolean" ? raw.snapping : DEFAULT_PREFERENCES.snapping,
+    };
+  } catch {
+    return { ...DEFAULT_PREFERENCES };
+  }
+};
 
 const isTypingTarget = (t: EventTarget | null) => {
   const el = t as HTMLElement | null;
@@ -58,7 +93,10 @@ const createStore = () => {
     state.elements = saved.elements;
     state.files = saved.files;
     state.theme = saved.settings.theme;
+    state.viewBackgroundColor = saved.settings.viewBackgroundColor;
+    state.gridEnabled = saved.settings.gridEnabled;
   }
+  state.prefs = readPrefs(storage);
   if (savedTheme === "light" || savedTheme === "dark") state.theme = savedTheme;
   const store = new Store(state);
   let unreadable = false;
@@ -122,8 +160,11 @@ const PathHint = () => {
       "Click to add points · double-click, Enter or Escape to finish · click the first point to close";
   else if (tool === "text") text = "Click anywhere to start typing";
   else if (tool === "hand") text = "Drag to move around the board";
-  else if (tool === "freedraw")
-    text = "Drag to sketch · the pencil stays active for more strokes · Escape returns to Pick";
+  else if (tool === "freedraw") text = "Drag to sketch · turn on Keep drawing for several strokes";
+  else if (tool === "eraser") text = "Drag across items to rub them out · release to erase";
+  else if (tool === "lasso") text = "Draw a loop around the items to pick";
+  else if (tool === "note") text = "Click to place a sticky note and start typing";
+  else if (tool === "frame") text = "Drag to draw a page frame · items fully inside belong to it";
   else if (empty && tool === "pick")
     text = "Pick a tool on the left to start drawing · press ? for shortcuts";
   if (!text) return null;
@@ -140,6 +181,7 @@ export const App = () => {
   const fileInput = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const theme = useSyncTheme(store);
+  const zen = useSyncExternalStore(store.subscribe, () => store.get().zenMode);
 
   const services: AppServices = useMemo(() => {
     const saveFile = () => {
@@ -166,6 +208,25 @@ export const App = () => {
         if (err || s.storageWarning) store.set({ storageWarning: err });
       }
     };
+    store.ownerWindow = win;
+    let lastPrefs = store.get().prefs;
+    let lastBoard = [store.get().viewBackgroundColor, store.get().gridEnabled].join();
+    const unsubPrefs = store.subscribe(() => {
+      const s = store.get();
+      if (s.prefs !== lastPrefs) {
+        lastPrefs = s.prefs;
+        try {
+          storage?.setItem(PREFS_KEY, JSON.stringify(s.prefs));
+        } catch {
+          // preferences are optional
+        }
+      }
+      const board = [s.viewBackgroundColor, s.gridEnabled].join();
+      if (board !== lastBoard) {
+        lastBoard = board;
+        store.onSceneChange?.();
+      }
+    });
     store.onSceneChange = () => {
       if (timer) win.clearTimeout(timer);
       timer = win.setTimeout(flush, 250);
@@ -179,6 +240,7 @@ export const App = () => {
     win.addEventListener("pagehide", onHide);
     win.addEventListener("beforeunload", onHide);
     return () => {
+      unsubPrefs();
       store.onSceneChange = null;
       win.removeEventListener("pagehide", onHide);
       win.removeEventListener("beforeunload", onHide);
@@ -193,6 +255,24 @@ export const App = () => {
       if (s.dialog || isTypingTarget(e.target) || s.editingTextId) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
+      const ro = s.viewMode;
+      if (e.altKey && !mod) {
+        const code = e.code;
+        if (code === "KeyZ") return (e.preventDefault(), store.set({ zenMode: !s.zenMode }));
+        if (code === "KeyR") {
+          e.preventDefault();
+          return store.set({
+            viewMode: !ro,
+            selectedIds: new Set(),
+            tool: "pick",
+            editingPointsId: null,
+            croppingId: null,
+          });
+        }
+        if (code === "Slash") return (e.preventDefault(), store.set({ statsOpen: !s.statsOpen }));
+        if (code === "KeyC" && e.shiftKey)
+          return (e.preventDefault(), void copySelectionAs(store, "png"));
+      }
       if (e.key === " " && !mod) {
         if (!controller.spaceHeld) {
           controller.spaceHeld = true;
@@ -204,6 +284,31 @@ export const App = () => {
       }
       if (mod) {
         const handled = (() => {
+          if (key === "f") return (store.set({ searchOpen: true }), true);
+          if (key === "'" || e.code === "Quote")
+            return (store.set({ gridEnabled: !s.gridEnabled }), true);
+          if (key === "=" || key === "+") return (zoomBy(store, 1.2), true);
+          if (key === "-") return (zoomBy(store, 1 / 1.2), true);
+          if (key === "0") return (resetZoom(store), true);
+          if (key === "s") return (services.saveFile(), true);
+          if (key === "e" && e.shiftKey) return (store.set({ dialog: { kind: "export" } }), true);
+          if (key === "a" && !ro) return (selectAll(store), true);
+          if (ro) return key === "z" || key === "y" || key === "d" || key === "o" || key === "g";
+          if (e.altKey && e.code === "KeyC") return (copyStyles(store), true);
+          if (e.altKey && e.code === "KeyV") return (pasteStyles(store), true);
+          if (key === "g" && e.shiftKey) return (ungroupSelected(store), true);
+          if (key === "g") return (groupSelected(store), true);
+          if (key === "l" && e.shiftKey) return (lockSelected(store), true);
+          if (key === "k") {
+            const sel = s.elements.filter((x) => s.selectedIds.has(x.id));
+            if (sel.length === 1) store.set({ dialog: { kind: "link", elementId: sel[0].id } });
+            else store.toast("Select one item to add a link.");
+            return true;
+          }
+          if (e.code === "BracketLeft")
+            return (reorderSelected(store, e.shiftKey ? "back" : "backward"), true);
+          if (e.code === "BracketRight")
+            return (reorderSelected(store, e.shiftKey ? "front" : "forward"), true);
           if (key === "z" && !e.shiftKey) return (undo(store), true);
           if ((key === "z" && e.shiftKey) || key === "y") return (redo(store), true);
           if (key === "a") return (selectAll(store), true);
@@ -221,10 +326,20 @@ export const App = () => {
       }
       if (e.altKey) return;
       if (e.key === "Escape") {
-        if (controller.isBusy()) controller.cancel();
+        if (s.tool === "eyedropper") setTool(store, s.toolBeforeEyedropper);
+        else if (controller.isBusy()) controller.cancel();
+        else if (s.searchOpen) store.set({ searchOpen: false, searchHighlight: null });
+        else if (s.editingPointsId || s.croppingId)
+          store.set({ editingPointsId: null, croppingId: null, editingPointIndex: null });
         else if (s.menuOpen) store.set({ menuOpen: false });
         else if (s.selectedIds.size) store.set({ selectedIds: new Set() });
         else if (s.tool !== "pick") setTool(store, "pick");
+        return;
+      }
+      if (ro) {
+        if (e.key === "?") store.set({ dialog: { kind: "help" } });
+        else if (e.shiftKey && e.code === "Digit1") fitToContent(store, false);
+        else if (key === "h" || key === "v") setTool(store, key === "h" ? "hand" : "pick");
         return;
       }
       if (e.key === "Enter") {
@@ -240,7 +355,9 @@ export const App = () => {
             (el.type === "text" ||
               el.type === "rectangle" ||
               el.type === "diamond" ||
-              el.type === "ellipse")
+              el.type === "ellipse" ||
+              el.type === "note" ||
+              el.type === "arrow")
           ) {
             e.preventDefault();
             if (el.type === "text") controller.startTextEdit(el.id);
@@ -250,7 +367,7 @@ export const App = () => {
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
-        deleteSelected(store);
+        if (!deletePoint(store)) deleteSelected(store);
         e.preventDefault();
         return;
       }
@@ -269,7 +386,17 @@ export const App = () => {
         e.preventDefault();
         return;
       }
+      if (e.shiftKey && e.code === "KeyH")
+        return (e.preventDefault(), void flipSelected(store, "horizontal"));
+      if (e.shiftKey && e.code === "KeyV")
+        return (e.preventDefault(), void flipSelected(store, "vertical"));
       if (e.shiftKey) return;
+      if (key === "k" && !controller.isBusy()) {
+        store.set({ toolLocked: !s.toolLocked });
+        store.toast(s.toolLocked ? "Keep drawing is off." : "Keep drawing is on.", "info", 1500);
+        e.preventDefault();
+        return;
+      }
       const tool = TOOLS.find((t) => t.key.toLowerCase() === key || t.digit === e.key);
       if (tool && !controller.isBusy()) {
         setTool(store, tool.id);
@@ -298,12 +425,12 @@ export const App = () => {
       copyToEvent(store, e.clipboardData, false);
     };
     const onCut = (e: ClipboardEvent) => {
-      if (!editable() || !store.get().selectedIds.size) return;
+      if (!editable() || !store.get().selectedIds.size || store.get().viewMode) return;
       e.preventDefault();
       copyToEvent(store, e.clipboardData, true);
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (!editable()) return;
+      if (!editable() || store.get().viewMode) return;
       e.preventDefault();
       void pasteContent(store, readPasteEvent(e.clipboardData));
     };
@@ -334,6 +461,8 @@ export const App = () => {
       selectedIds: new Set(),
       editingTextId: null,
       theme: file.settings.theme,
+      viewBackgroundColor: file.settings.viewBackgroundColor,
+      gridEnabled: file.settings.gridEnabled,
       viewport: (b && fitBounds(b, view.width, view.height)) || { scrollX: 0, scrollY: 0, zoom: 1 },
       historyVersion: store.get().historyVersion + 1,
     });
@@ -346,9 +475,24 @@ export const App = () => {
     if (!f) return;
     let parsed: ChalanaFile;
     try {
-      parsed = parseBoard(await f.text());
+      const name = f.name.toLowerCase();
+      let text: string | null;
+      if (f.type === "image/png" || name.endsWith(".png")) {
+        text = extractFromPng(new Uint8Array(await f.arrayBuffer()));
+        if (text === null)
+          throw new EmbedError(
+            "This picture has no editable board data. You can still paste it onto the board as an image.",
+          );
+      } else if (f.type === "image/svg+xml" || name.endsWith(".svg")) {
+        text = extractFromSvg(await f.text());
+        if (text === null) throw new EmbedError("This SVG has no editable board data.");
+      } else text = await f.text();
+      parsed = parseBoard(text);
     } catch (err) {
-      const msg = err instanceof FormatError ? err.message : "The file could not be read.";
+      const msg =
+        err instanceof FormatError || err instanceof EmbedError
+          ? err.message
+          : "The file could not be read.";
       store.toast(`Couldn't open “${f.name}”: ${msg} Your board is unchanged.`, "error", 7000);
       return;
     }
@@ -365,8 +509,11 @@ export const App = () => {
         <Canvas />
         <TextEditor />
         <ToolRail />
-        <PropertiesPanel />
-        <ZoomStrip />
+        {zen ? null : <PropertiesPanel />}
+        {zen ? null : <ZoomStrip />}
+        {zen ? null : <StatsPanel />}
+        <SearchBar />
+        <ModeBanners />
         <PathHint />
         <StorageWarning />
         <Toasts />
@@ -374,7 +521,7 @@ export const App = () => {
         <input
           ref={fileInput}
           type="file"
-          accept=".chalana,application/json"
+          accept=".chalana,application/json,.png,image/png,.svg,image/svg+xml"
           hidden
           data-testid="file-input"
           onChange={(e) => void onFileChosen(e.currentTarget)}

@@ -39,7 +39,7 @@ export type Dialog =
   | { kind: "svg" }
   | { kind: "link"; elementId: string }
   | { kind: "openLink"; url: string }
-  | { kind: "search" }
+  | { kind: "settings" }
   | { kind: "clear" }
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
   | null;
@@ -88,6 +88,10 @@ export interface AppState {
   /** Arrow or line whose points are being edited. */
   editingPointsId: string | null;
   editingPointIndex: number | null;
+  /** Which colour the eyedropper fills in. */
+  eyedropperTarget: "strokeColor" | "backgroundColor";
+  /** Tool to return to when the eyedropper finishes. */
+  toolBeforeEyedropper: ToolId;
   /** Element id highlighted by search. */
   searchHighlight: string | null;
 }
@@ -121,6 +125,8 @@ export const initialState = (): AppState => ({
   croppingId: null,
   editingPointsId: null,
   editingPointIndex: null,
+  eyedropperTarget: "strokeColor",
+  toolBeforeEyedropper: "pick",
   searchHighlight: null,
 });
 
@@ -136,6 +142,8 @@ export class Store {
   onSceneChange: (() => void) | null = null;
   /** CSS-pixel size of the canvas, kept current by the canvas component. */
   viewSize = { width: 1024, height: 768 };
+  /** Window hosting the app (set on mount), used for opening links. */
+  ownerWindow: Window | null = null;
   /** Last pointer position over the canvas, in screen px. */
   lastPointer: { x: number; y: number } | null = null;
 

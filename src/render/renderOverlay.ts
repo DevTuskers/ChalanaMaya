@@ -24,7 +24,10 @@ export interface OverlayOptions {
   /** Arrow or path in point-editing mode. */
   pointEditing?: SceneElement | null;
   /** Image in crop mode with its full (uncropped) box. */
-  cropping?: { el: SceneElement; full: { x: number; y: number; width: number; height: number } } | null;
+  cropping?: {
+    el: SceneElement;
+    full: { x: number; y: number; width: number; height: number };
+  } | null;
 }
 
 const ACCENT = { light: "#007f78", dark: "#5ad6c8" };
@@ -130,7 +133,10 @@ export const renderOverlay = (ctx: CanvasRenderingContext2D, o: OverlayOptions) 
     ctx.setLineDash([]);
     ctx.strokeStyle = WARM[o.theme];
     ctx.lineWidth = 2.5;
-    polygon(ctx, paddedBoxCorners(o.highlight, v.zoom).map((p) => toScreen(p, v)));
+    polygon(
+      ctx,
+      paddedBoxCorners(o.highlight, v.zoom).map((p) => toScreen(p, v)),
+    );
     ctx.stroke();
   }
 
@@ -178,7 +184,12 @@ export const renderOverlay = (ctx: CanvasRenderingContext2D, o: OverlayOptions) 
 
   if (o.trail && o.trail.points.length > 1) {
     ctx.setLineDash(o.trail.kind === "lasso" ? [4, 4] : []);
-    ctx.strokeStyle = o.trail.kind === "lasso" ? accent : o.theme === "dark" ? "rgba(237,248,243,0.45)" : "rgba(25,58,54,0.35)";
+    ctx.strokeStyle =
+      o.trail.kind === "lasso"
+        ? accent
+        : o.theme === "dark"
+          ? "rgba(237,248,243,0.45)"
+          : "rgba(25,58,54,0.35)";
     ctx.lineWidth = o.trail.kind === "lasso" ? 1.5 : 6;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";

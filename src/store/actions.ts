@@ -29,6 +29,7 @@ import {
   type ZOrder,
 } from "../scene/arrange";
 import { resetCrop } from "../scene/crop";
+import { copyAs, selectionTargets, type CopyKind } from "../io/flows";
 import { clampZoom, fitBounds, screenToScene, zoomAt } from "../scene/viewport";
 import {
   blobToDataURL,
@@ -46,8 +47,20 @@ export const viewCenter = (store: Store) => ({
 });
 
 export const setTool = (store: Store, tool: ToolId) => {
-  const patch: Parameters<Store["set"]>[0] = { tool, menuOpen: false };
-  if (tool !== "pick") patch.selectedIds = new Set();
+  const s = store.get();
+  if (s.viewMode && tool !== "hand" && tool !== "pick") {
+    store.toast("Look-only mode is on. Leave it to draw or edit.");
+    return;
+  }
+  const patch: Parameters<Store["set"]>[0] = {
+    tool,
+    menuOpen: false,
+    editingPointsId: null,
+    croppingId: null,
+  };
+  if (tool === "eyedropper") {
+    if (s.tool !== "eyedropper") patch.toolBeforeEyedropper = s.tool;
+  } else if (tool !== "pick") patch.selectedIds = new Set();
   store.set(patch);
 };
 
@@ -275,9 +288,17 @@ export const clearCanvas = (store: Store) => {
 
 // ---- arranging (P1) ----
 
-type Arranger = (elements: readonly SceneElement[], ids: ReadonlySet<string>) => SceneElement[] | null;
+type Arranger = (
+  elements: readonly SceneElement[],
+  ids: ReadonlySet<string>,
+) => SceneElement[] | null;
 
-const arrange = (store: Store, fn: Arranger, emptyMessage: string, extra: Partial<AppState> = {}) => {
+const arrange = (
+  store: Store,
+  fn: Arranger,
+  emptyMessage: string,
+  extra: Partial<AppState> = {},
+) => {
   const { elements, selectedIds } = store.get();
   if (store.get().viewMode) return false;
   if (!selectedIds.size) {
@@ -342,7 +363,11 @@ export const unlockElement = (store: Store, id: string) => {
 };
 
 export const switchSelectedType = (store: Store, type: ShapeType | "arrow" | "line") =>
-  arrange(store, (els, ids) => switchType(els, ids, type), "That shape cannot switch to this type.");
+  arrange(
+    store,
+    (els, ids) => switchType(els, ids, type),
+    "That shape cannot switch to this type.",
+  );
 
 export const copyStyles = (store: Store) => {
   const { elements, selectedIds } = store.get();
@@ -358,7 +383,11 @@ export const copyStyles = (store: Store) => {
 export const pasteStyles = (store: Store) => {
   const { copiedStyle } = store.get();
   if (!copiedStyle) return store.toast("Copy a style first.");
-  arrange(store, (els, ids) => pasteStyle(els, ids, copiedStyle), "Those items already use this style.");
+  arrange(
+    store,
+    (els, ids) => pasteStyle(els, ids, copiedStyle),
+    "Those items already use this style.",
+  );
 };
 
 export const setLink = (store: Store, id: string, raw: string): string | null => {
@@ -450,7 +479,38 @@ export const setFrameName = (store: Store, id: string, name: string) => {
 export const removeFrameKeepContents = (store: Store, id: string) => {
   const { elements } = store.get();
   store.commit(
-    elements.filter((e) => e.id !== id).map((e) => (e.frameId === id ? { ...e, frameId: null } : e)),
+    elements
+      .filter((e) => e.id !== id)
+      .map((e) => (e.frameId === id ? { ...e, frameId: null } : e)),
     { selectedIds: new Set() },
   );
+};
+
+/** Copies the selection (or the whole board) as PNG, SVG or plain text. */
+export const copySelectionAs = async (store: Store, kind: CopyKind) => {
+  const s = store.get();
+  const elements = selectionTargets(s.elements, s.selectedIds);
+  const res = await copyAs(
+    kind,
+    {
+      elements,
+      files: s.files,
+      theme: s.theme,
+      background: true,
+      boardColor: s.viewBackgroundColor,
+      scale: 2,
+      embedScene: false,
+      settings: store.boardSettings(),
+    },
+    store.ownerWindow?.navigator.clipboard,
+  );
+  if (res.ok) {
+    const what = s.selectedIds.size ? "Selection" : "Board";
+    store.toast(
+      `${what} copied as ${kind === "text" ? "text" : kind.toUpperCase()}.`,
+      "success",
+      2000,
+    );
+  } else store.toast(res.message, "error", 5000);
+  return res.ok;
 };

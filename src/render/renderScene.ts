@@ -84,7 +84,12 @@ export const loadImages = async (elements: readonly SceneElement[], files: FileM
 export const textInk = (el: TextElement, theme: Theme, onNote: boolean) =>
   onNote ? el.strokeColor || NOTE_INK : resolveColor(el.strokeColor, theme);
 
-const drawText = (ctx: CanvasRenderingContext2D, el: TextElement, theme: Theme, onNote: boolean) => {
+const drawText = (
+  ctx: CanvasRenderingContext2D,
+  el: TextElement,
+  theme: Theme,
+  onNote: boolean,
+) => {
   const lines = getTextLines(el);
   const lh = lineHeightPx(el.fontSize);
   ctx.font = fontString(el.fontFamily, el.fontSize);
@@ -126,7 +131,17 @@ export const drawElement = (
       if (cr) {
         const kx = img.naturalWidth / cr.naturalWidth;
         const ky = img.naturalHeight / cr.naturalHeight;
-        ctx.drawImage(img, cr.x * kx, cr.y * ky, cr.width * kx, cr.height * ky, -el.width / 2, -el.height / 2, el.width, el.height);
+        ctx.drawImage(
+          img,
+          cr.x * kx,
+          cr.y * ky,
+          cr.width * kx,
+          cr.height * ky,
+          -el.width / 2,
+          -el.height / 2,
+          el.width,
+          el.height,
+        );
       } else ctx.drawImage(img, -el.width / 2, -el.height / 2, el.width, el.height);
     } else {
       ctx.strokeStyle = "#8aa7a2";
@@ -140,7 +155,12 @@ export const drawElement = (
       ctx.fillStyle = resolveColor(el.strokeColor, theme);
       ctx.textAlign = "left";
       ctx.textBaseline = "bottom";
-      ctx.fillText(el.name || "Page", -el.width / 2 + 2, -el.height / 2 - 5, Math.max(40, el.width));
+      ctx.fillText(
+        el.name || "Page",
+        -el.width / 2 + 2,
+        -el.height / 2 - 5,
+        Math.max(40, el.width),
+      );
     }
   }
   ctx.restore();
@@ -164,7 +184,46 @@ export interface RenderOptions {
   skipIds?: ReadonlySet<string>;
   /** Drawn faded (e.g. about to be erased). */
   fadeIds?: ReadonlySet<string>;
+  /** Grid colour; when set a view-only grid is drawn under the artwork. */
+  grid?: string | null;
 }
+
+export const GRID_SIZE = 20;
+
+/** Board-aligned grid lines (a view aid, never part of the artwork). */
+export const drawGrid = (
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  width: number,
+  height: number,
+  color: string,
+) => {
+  let step = GRID_SIZE * v.zoom;
+  while (step < 8) step *= 5;
+  const major = step * 5;
+  const offX = (v.scrollX * v.zoom) % major;
+  const offY = (v.scrollY * v.zoom) % major;
+  ctx.save();
+  ctx.strokeStyle = color;
+  for (const [s, alpha] of [
+    [step, 0.45],
+    [major, 1],
+  ] as const) {
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = offX % s; x < width; x += s) {
+      ctx.moveTo(Math.round(x) + 0.5, 0);
+      ctx.lineTo(Math.round(x) + 0.5, height);
+    }
+    for (let y = offY % s; y < height; y += s) {
+      ctx.moveTo(0, Math.round(y) + 0.5);
+      ctx.lineTo(width, Math.round(y) + 0.5);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+};
 
 /** Draws artwork only (no editor controls). The context must already be DPR-scaled. */
 export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) => {
@@ -175,6 +234,7 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
     ctx.fillStyle = opts.background;
     ctx.fillRect(0, 0, opts.width, opts.height);
   }
+  if (opts.grid) drawGrid(ctx, v, opts.width, opts.height, opts.grid);
   ctx.scale(v.zoom, v.zoom);
   ctx.translate(v.scrollX, v.scrollY);
   const rc = rough.canvas(ctx.canvas);
