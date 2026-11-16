@@ -4,6 +4,7 @@ import { effectiveCrop, fullImageBox } from "../scene/crop";
 import { applyStyle, setTool } from "../store/actions";
 import { getImage } from "../render/renderScene";
 import { renderOverlay } from "../render/renderOverlay";
+import { drawSpotlight, pruneSpotlight } from "../render/spotlight";
 import { renderScene, setImageLoadListener } from "../render/renderScene";
 import type { PointerInput } from "../tools/controller";
 import { useServices } from "./context";
@@ -19,6 +20,7 @@ const toInput = (e: PointerEvent | MouseEvent, canvas: HTMLCanvasElement): Point
     metaKey: e.metaKey,
     altKey: e.altKey,
     pointerType: "pointerType" in e ? e.pointerType : "mouse",
+    pressure: "pressure" in e ? e.pressure : undefined,
   };
 };
 
@@ -85,6 +87,13 @@ export const Canvas = () => {
           return nat ? { el, full: fullImageBox(el, effectiveCrop(el, nat)) } : null;
         })(),
       });
+      if (s.spotlight.length) {
+        const now = controller.now();
+        drawSpotlight(ctx, s.spotlight, s.viewport, s.theme, now);
+        const next = pruneSpotlight(s.spotlight, now, undefined, controller.isBusy());
+        if (next !== s.spotlight) store.set({ spotlight: next });
+        if (next.length) schedule();
+      }
       canvas.style.cursor = controller.cursor;
     };
     const schedule = () => {

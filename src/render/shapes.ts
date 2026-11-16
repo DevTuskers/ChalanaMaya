@@ -285,19 +285,36 @@ export const buildDrawables = (el: SceneElement, theme: Theme): Drawable[] => {
 };
 
 /** Outline polygon of a pencil stroke, relative to its centre. */
+/** True when the stroke carries real stylus pressure (DRAW-09). */
+export const hasPressure = (el: FreedrawElement) =>
+  !!el.pressures && el.pressures.length === el.points.length && el.points.length > 0;
+
+/** Input points for perfect-freehand, with pressure as the third value when recorded. */
+export const freedrawInput = (el: FreedrawElement, ox = 0, oy = 0): number[][] => {
+  const pr = hasPressure(el) ? el.pressures! : null;
+  return el.points.map((p, i) => (pr ? [p.x + ox, p.y + oy, pr[i]] : [p.x + ox, p.y + oy]));
+};
+
+/**
+ * Strokes with recorded pressure vary in width with the pen; all others keep a
+ * steady width so mouse and touch drawings look even.
+ */
+export const freedrawOptions = (el: FreedrawElement) => {
+  const pressure = hasPressure(el);
+  return {
+    size: el.strokeWidth * 3 + 2,
+    thinning: pressure ? 0.6 : 0,
+    smoothing: 0.5,
+    streamline: 0.45,
+    simulatePressure: false,
+    last: true,
+  };
+};
+
 export const freedrawOutline = (el: FreedrawElement): number[][] => {
   const ox = -el.width / 2;
   const oy = -el.height / 2;
-  return getStroke(
-    el.points.map((p) => [p.x + ox, p.y + oy]),
-    {
-      size: el.strokeWidth * 3 + 2,
-      thinning: 0.55,
-      smoothing: 0.5,
-      streamline: 0.45,
-      simulatePressure: true,
-    },
-  );
+  return getStroke(freedrawInput(el, ox, oy), freedrawOptions(el));
 };
 
 export const outlineToSvgPath = (outline: number[][]) => {

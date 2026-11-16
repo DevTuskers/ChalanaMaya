@@ -80,6 +80,14 @@ const elementSvg = (el: SceneElement, files: FileMap, theme: Theme, onNote: bool
         : `<image x="${n(-el.width / 2)}" y="${n(-el.height / 2)}" width="${n(el.width)}" height="${n(el.height)}" href="${file.dataURL}" preserveAspectRatio="none"/>`;
       body = `<g${flip}>${inner}</g>`;
     }
+  } else if (el.type === "embed") {
+    // exports show the card with its address; live pages can't be exported
+    const stroke = theme === "dark" ? "#4d6b66" : "#9fbdb7";
+    const fill = theme === "dark" ? "#223533" : "#ffffff";
+    const ink = theme === "dark" ? "#edf8f3" : "#193a36";
+    body =
+      `<rect x="${n(-el.width / 2)}" y="${n(-el.height / 2)}" width="${n(el.width)}" height="${n(el.height)}" rx="10" fill="${fill}" stroke="${stroke}"/>` +
+      `<text x="0" y="0" font-family="'Source Sans 3', sans-serif" font-size="14" fill="${ink}" text-anchor="middle" dominant-baseline="central">${esc(el.url)}</text>`;
   } else {
     const dash = dashFor(el);
     body = buildDrawables(el, theme)

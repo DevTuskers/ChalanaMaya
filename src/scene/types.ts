@@ -12,7 +12,8 @@ export interface Bounds {
 
 export type ShapeType = "rectangle" | "diamond" | "ellipse";
 export type LinearType = "arrow" | "line";
-export type ElementType = ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame";
+export type ElementType =
+  ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame" | "embed";
 
 export type FontFamily = "hand" | "normal" | "code";
 export type FontSizeName = "s" | "m" | "l" | "xl";
@@ -104,6 +105,15 @@ export interface FreedrawElement extends BaseElement {
   type: "freedraw";
   /** Points relative to (x, y). */
   points: Point[];
+  /** Stylus pressure per point (0–1) when pressure was recorded; otherwise a steady width. */
+  pressures?: number[] | null;
+}
+
+/** Web card: shows a web page or video from a link (DRAW-14). */
+export interface EmbedElement extends BaseElement {
+  type: "embed";
+  /** The http(s) address the user entered. */
+  url: string;
 }
 
 export interface TextElement extends BaseElement {
@@ -143,7 +153,8 @@ export type SceneElement =
   | TextElement
   | ImageElement
   | NoteElement
-  | FrameElement;
+  | FrameElement
+  | EmbedElement;
 
 export interface BinaryFile {
   id: string;

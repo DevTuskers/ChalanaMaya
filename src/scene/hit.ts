@@ -92,7 +92,7 @@ export const hitElement = (
       local.x <= el.x + Math.max(60, Math.min(el.width, 200));
     return onTitle || outlineDistance(el, local) <= tolerance + 2;
   }
-  if (el.type === "text" || el.type === "image") {
+  if (el.type === "text" || el.type === "image" || el.type === "embed") {
     return (
       local.x >= el.x - tolerance &&
       local.x <= el.x + el.width + tolerance &&
@@ -143,3 +143,27 @@ export const elementsInBox = (elements: Elements, box: Bounds): SceneElement[] =
   elements.filter((el) => isSelectable(el) && boundsContain(box, getElementBounds(el)));
 
 export { insideShape };
+
+export type PourHit =
+  | { kind: "fill"; element: SceneElement }
+  | { kind: "none" }
+  | { kind: "open"; element: SceneElement }
+  | { kind: "locked"; element: SceneElement };
+
+/**
+ * Pour colour (DRAW-19): the closed shape whose inside contains `p`, counting the
+ * inside of unfilled shapes. Text inside a shape counts as the shape.
+ */
+export const pourTargetAt = (elements: Elements, p: Point, tolerance: number): PourHit => {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.type === "frame") continue;
+    if (isBoundText(el)) continue;
+    const solid = isFillable(el) ? ({ ...el, backgroundColor: "#000000" } as SceneElement) : el;
+    if (!hitElement(solid, p, tolerance, elements)) continue;
+    if (el.locked) return { kind: "locked", element: el };
+    if (isFillable(el)) return { kind: "fill", element: el };
+    return { kind: "open", element: el };
+  }
+  return { kind: "none" };
+};

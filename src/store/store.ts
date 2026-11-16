@@ -17,7 +17,11 @@ export type ToolId =
   | "frame"
   | "eraser"
   | "eyedropper"
-  | "hand";
+  | "hand"
+  | "laser"
+  | "tidy"
+  | "pour"
+  | "embed";
 
 export type InputPreference = "mouse" | "trackpad";
 
@@ -25,13 +29,24 @@ export interface Preferences {
   penMode: boolean;
   inputPreference: InputPreference;
   snapping: boolean;
+  /** Vary Sketch pencil width with stylus pressure (DRAW-09). */
+  pencilPressure: boolean;
+  /** Show the board overview (VIEW-05). */
+  minimap: boolean;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
   penMode: false,
   inputPreference: "trackpad",
   snapping: true,
+  pencilPressure: true,
+  minimap: false,
 };
+
+/** A Spotlight stroke: board points with the time (ms) each was drawn. Never saved. */
+export interface SpotlightStroke {
+  points: { x: number; y: number; t: number }[];
+}
 
 export type Dialog =
   | { kind: "help" }
@@ -42,6 +57,8 @@ export type Dialog =
   | { kind: "settings" }
   | { kind: "clear" }
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
+  | { kind: "webcard"; at: { x: number; y: number } }
+  | { kind: "chart"; text: string }
   | null;
 
 export interface Toast {
@@ -96,6 +113,10 @@ export interface AppState {
   toolBeforeEyedropper: ToolId;
   /** Element id highlighted by search. */
   searchHighlight: string | null;
+  /** Spotlight (laser) trails; temporary and never part of the board. */
+  spotlight: SpotlightStroke[];
+  /** Web card that currently receives pointer input. */
+  activeEmbedId: string | null;
 }
 
 export const initialState = (): AppState => ({
@@ -130,6 +151,8 @@ export const initialState = (): AppState => ({
   eyedropperTarget: "strokeColor",
   toolBeforeEyedropper: "pick",
   searchHighlight: null,
+  spotlight: [],
+  activeEmbedId: null,
 });
 
 type Listener = () => void;

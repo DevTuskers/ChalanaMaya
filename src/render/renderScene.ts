@@ -4,7 +4,9 @@ import { NOTE_INK } from "../scene/constants";
 import { getCenter } from "../scene/geometry";
 import { buildDrawables, freedrawOutline, resolveColor } from "./shapes";
 import { fontString, getTextLines, lineHeightPx } from "../scene/text";
+import { resolveWebCard, WEB_CARD_HEADER } from "../scene/webcard";
 import type {
+  EmbedElement,
   FileMap,
   FreedrawElement,
   SceneElement,
@@ -101,6 +103,68 @@ const drawText = (
   lines.forEach((line, i) => ctx.fillText(line, x, top + (i + 0.5) * lh));
 };
 
+const WEB_CARD_COLORS = {
+  light: {
+    surface: "#ffffff",
+    header: "#e6f3f0",
+    ink: "#193a36",
+    soft: "#52706b",
+    line: "#9fbdb7",
+  },
+  dark: { surface: "#223533", header: "#1b2c2a", ink: "#edf8f3", soft: "#a9c7c0", line: "#4d6b66" },
+} as const;
+
+/** Canvas face of a web card; the live page is shown on top of it by the web card layer. */
+const drawWebCard = (ctx: CanvasRenderingContext2D, el: EmbedElement, theme: Theme) => {
+  const c = WEB_CARD_COLORS[theme];
+  const w = el.width;
+  const h = el.height;
+  const x = -w / 2;
+  const y = -h / 2;
+  const r = Math.min(10, w / 4, h / 4);
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fillStyle = c.surface;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = c.header;
+  ctx.fillRect(x, y, w, Math.min(WEB_CARD_HEADER, h));
+  ctx.restore();
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  const res = resolveWebCard(el.url);
+  const title = res.ok
+    ? res.target.kind === "embed"
+      ? `${res.target.provider} \u00b7 ${new URL(res.target.url).hostname.replace(/^www\./, "")}`
+      : res.target.host
+    : "Web card";
+  ctx.font = `600 13px "Source Sans 3", system-ui, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = c.ink;
+  if (h >= 18)
+    ctx.fillText(title, x + 12, y + Math.min(WEB_CARD_HEADER, h) / 2, Math.max(10, w - 24));
+  if (h < WEB_CARD_HEADER + 30) return;
+  ctx.font = `14px "Source Sans 3", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillStyle = c.soft;
+  const msg = !res.ok
+    ? "This web address can't be used."
+    : res.target.kind === "embed"
+      ? "Double-click to use the page"
+      : "This site can't be shown here.";
+  ctx.fillText(msg, 0, y + WEB_CARD_HEADER + (h - WEB_CARD_HEADER) / 2 - 10, Math.max(10, w - 24));
+  ctx.font = `12px "IBM Plex Mono", ui-monospace, monospace`;
+  ctx.fillText(
+    el.url.length > 60 ? `${el.url.slice(0, 57)}...` : el.url,
+    0,
+    y + WEB_CARD_HEADER + (h - WEB_CARD_HEADER) / 2 + 12,
+    Math.max(10, w - 24),
+  );
+};
+
 export const drawElement = (
   ctx: CanvasRenderingContext2D,
   rc: ReturnType<typeof rough.canvas>,
@@ -148,6 +212,8 @@ export const drawElement = (
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
     }
+  } else if (el.type === "embed") {
+    drawWebCard(ctx, el, theme);
   } else {
     for (const d of getDrawables(el, theme)) rc.draw(d);
     if (el.type === "frame") {

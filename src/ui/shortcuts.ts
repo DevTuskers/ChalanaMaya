@@ -40,6 +40,10 @@ export const TOOLS: ToolDef[] = [
   { id: "eraser", name: "Rubber", common: "eraser", key: "E", digit: "9" },
   { id: "lasso", name: "Lasso", common: "lasso selection", key: "Q" },
   { id: "eyedropper", name: "Colour picker", common: "eyedropper", key: "I" },
+  { id: "tidy", name: "Shape tidy", common: "draw to shape", key: "S" },
+  { id: "pour", name: "Pour colour", common: "bucket fill", key: "B" },
+  { id: "embed", name: "Web card", common: "web embed", key: "W" },
+  { id: "laser", name: "Spotlight", common: "laser pointer", key: "X" },
 ];
 
 export interface ShortcutGroup {
@@ -93,6 +97,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { label: "Look-only mode", keys: ["Alt+R"] },
       { label: "Find text", keys: ["Mod+F"] },
       { label: "Measurements", keys: ["Alt+/"] },
+      { label: "Board overview", keys: ["Alt+M"] },
     ],
   },
   {

@@ -481,7 +481,7 @@ export const extractStyle = (el: SceneElement): Partial<ItemStyle> => {
 export const acceptsStyle = (el: SceneElement, k: keyof ItemStyle): boolean => {
   switch (k) {
     case "strokeColor":
-      return el.type !== "image" && el.type !== "frame";
+      return el.type !== "image" && el.type !== "frame" && el.type !== "embed";
     case "backgroundColor":
       return isFillable(el);
     case "fillStyle":

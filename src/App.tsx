@@ -47,6 +47,8 @@ import { TextEditor } from "./ui/TextEditor";
 import { ToolRail } from "./ui/ToolRail";
 import { ZoomStrip } from "./ui/ZoomStrip";
 import { TOOLS } from "./ui/shortcuts";
+import { Minimap } from "./ui/Minimap";
+import { WebCards } from "./ui/WebCards";
 import type { Theme } from "./scene/types";
 
 const THEME_KEY = "chalanamaya.theme";
@@ -63,6 +65,11 @@ const readPrefs = (storage: StorageLike | null): Preferences => {
           ? raw.inputPreference
           : DEFAULT_PREFERENCES.inputPreference,
       snapping: typeof raw.snapping === "boolean" ? raw.snapping : DEFAULT_PREFERENCES.snapping,
+      pencilPressure:
+        typeof raw.pencilPressure === "boolean"
+          ? raw.pencilPressure
+          : DEFAULT_PREFERENCES.pencilPressure,
+      minimap: typeof raw.minimap === "boolean" ? raw.minimap : DEFAULT_PREFERENCES.minimap,
     };
   } catch {
     return { ...DEFAULT_PREFERENCES };
@@ -180,6 +187,11 @@ const PathHint = () => {
   else if (tool === "lasso") text = "Draw a loop around the items to pick";
   else if (tool === "note") text = "Click to place a sticky note and start typing";
   else if (tool === "frame") text = "Drag to draw a page frame · items fully inside belong to it";
+  else if (tool === "laser") text = "Drag to point things out · the Spotlight trail fades away";
+  else if (tool === "tidy")
+    text = "Sketch a box, diamond or oval in one stroke · Shape tidy turns it into a shape";
+  else if (tool === "pour") text = "Click inside a closed shape to pour the current fill into it";
+  else if (tool === "embed") text = "Click where the web card should go, then paste its link";
   else if (empty && tool === "pick")
     text = "Pick a tool on the left to start drawing · press ? for shortcuts";
   if (!text) return null;
@@ -199,6 +211,7 @@ export const App = () => {
   const theme = useSyncTheme(store);
   const zen = useSyncExternalStore(store.subscribe, () => store.get().zenMode);
   const viewMode = useSyncExternalStore(store.subscribe, () => store.get().viewMode);
+  const minimap = useSyncExternalStore(store.subscribe, () => store.get().prefs.minimap);
 
   const services: AppServices = useMemo(() => {
     const saveFile = () => {
@@ -281,6 +294,11 @@ export const App = () => {
       if (e.altKey && !mod) {
         const code = e.code;
         if (code === "KeyZ") return (e.preventDefault(), store.set({ zenMode: !s.zenMode }));
+        if (code === "KeyM")
+          return (
+            e.preventDefault(),
+            store.set({ prefs: { ...s.prefs, minimap: !s.prefs.minimap } })
+          );
         if (code === "KeyR") {
           e.preventDefault();
           return store.set({
@@ -362,6 +380,7 @@ export const App = () => {
         if (e.key === "?") store.set({ dialog: { kind: "help" } });
         else if (e.shiftKey && e.code === "Digit1") fitToContent(store, false);
         else if (key === "h" || key === "v") setTool(store, key === "h" ? "hand" : "pick");
+        else if (key === "x") setTool(store, "laser");
         return;
       }
       if (e.key === "Enter") {
@@ -535,11 +554,13 @@ export const App = () => {
         data-testid="app"
       >
         <Canvas />
+        <WebCards />
         <TextEditor />
         <ToolRail />
         {zen ? null : <PropertiesPanel />}
         {zen ? null : <ZoomStrip />}
         {zen ? null : <StatsPanel />}
+        {zen || !minimap ? null : <Minimap />}
         <SearchBar />
         <ModeBanners />
         <PathHint />

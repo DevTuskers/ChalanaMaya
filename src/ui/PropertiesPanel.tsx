@@ -266,6 +266,8 @@ export const PropertiesPanel = () => {
     "freedraw",
     "text",
     "note",
+    "tidy",
+    "pour",
   ];
   const drawing = drawingTools.includes(tool);
   if (!subjects.length && !drawing) return null;
@@ -277,7 +279,8 @@ export const PropertiesPanel = () => {
   });
   // a stand-in element for "new item" style, so the same rules decide what is shown
   const proto = {
-    type: tool === "freedraw" ? "freedraw" : tool,
+    type:
+      tool === "freedraw" ? "freedraw" : tool === "tidy" || tool === "pour" ? "rectangle" : tool,
     containerId: null,
     closed: false,
     routing: style.routing,

@@ -887,3 +887,146 @@ kbd {
 .app.is-view-mode .stats {
   bottom: 70px;
 }
+
+/* ---- P2: board overview ---- */
+.minimap {
+  position: absolute;
+  left: 14px;
+  bottom: 66px;
+  padding: 6px;
+  z-index: 11;
+}
+.minimap canvas {
+  display: block;
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: none;
+}
+.minimap-empty {
+  position: absolute;
+  inset: 6px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ---- P2: web cards ---- */
+.webcards {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.webcard {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.webcard-body {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  overflow: hidden;
+  border-radius: 0 0 9px 9px;
+}
+.webcard-body iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: var(--surface);
+}
+.webcard.is-active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.webcard-blocked {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 14px;
+}
+.webcard-blocked p {
+  margin: 0;
+  max-width: 340px;
+}
+.webcard-blocked a {
+  pointer-events: auto;
+  text-decoration: none;
+}
+.webcard-hint {
+  position: absolute;
+  left: 0;
+  bottom: -26px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* ---- P2: chart preview ---- */
+.chart-preview-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 10px 0;
+}
+.chart-preview {
+  flex: 1 1 60%;
+  min-height: 160px;
+  max-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line, rgba(25, 58, 54, 0.15));
+  border-radius: 8px;
+  background: var(--canvas);
+  padding: 8px;
+}
+.chart-preview img {
+  max-width: 100%;
+  max-height: 240px;
+}
+.chart-summary {
+  flex: 1 1 40%;
+  font-size: 13px;
+}
+.chart-summary p {
+  margin: 0 0 6px;
+}
+.chart-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+.field textarea {
+  width: 100%;
+  font-family: var(--font-code, "IBM Plex Mono", monospace);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line, rgba(25, 58, 54, 0.2));
+  background: var(--surface);
+  color: var(--text);
+  box-sizing: border-box;
+  resize: vertical;
+}

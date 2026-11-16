@@ -7,9 +7,10 @@ import type { Theme } from "../scene/types";
 import type { Store } from "../store/store";
 import { useAppState, useServices } from "./context";
 import { Icon } from "./icons";
+import { ChartDialog, WebCardDialog } from "./ContentDialogs";
 import { SHORTCUT_GROUPS, formatKeys } from "./shortcuts";
 
-const Modal = ({
+export const Modal = ({
   title,
   onClose,
   children,
@@ -504,6 +505,15 @@ const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
           />
           Snap to nearby edges and centres (hold Alt to skip)
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            data-testid="pref-pressure"
+            checked={prefs.pencilPressure}
+            onChange={(e) => setPrefs({ pencilPressure: e.target.checked })}
+          />
+          Pencil pressure — a stylus draws thinner or thicker lines as you press
+        </label>
         <div className="dialog-actions">
           <button type="button" className="btn primary" onClick={onClose}>
             Done
@@ -576,6 +586,10 @@ export const Dialogs = () => {
       return <OpenLinkDialog url={dialog.url} onClose={close} />;
     case "settings":
       return <SettingsDialog onClose={close} />;
+    case "webcard":
+      return <WebCardDialog at={dialog.at} onClose={close} />;
+    case "chart":
+      return <ChartDialog text={dialog.text} onClose={close} />;
     case "clear":
       return (
         <ConfirmDialog

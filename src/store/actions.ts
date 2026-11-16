@@ -1,3 +1,6 @@
+import { buildChart, looksLikeSpreadsheet, type ChartData, type ChartKind } from "../scene/chart";
+import { resolveWebCard } from "../scene/webcard";
+import { createEmbed } from "../scene/elements";
 import { createFrame, createImage, createText, isLinear } from "../scene/elements";
 import { getCommonBounds } from "../scene/geometry";
 import {
@@ -9,7 +12,7 @@ import {
   withBoundTexts,
 } from "../scene/scene";
 import { layoutText } from "../scene/text";
-import type { ItemStyle, SceneElement, ShapeType } from "../scene/types";
+import type { ItemStyle, Point, SceneElement, ShapeType } from "../scene/types";
 import {
   alignElements,
   assignFrames,
@@ -55,7 +58,7 @@ export const blockedByViewMode = (store: Store) => {
 
 export const setTool = (store: Store, tool: ToolId) => {
   const s = store.get();
-  if (s.viewMode && tool !== "hand" && tool !== "pick") {
+  if (s.viewMode && tool !== "hand" && tool !== "pick" && tool !== "laser") {
     store.toast("Look-only mode is on. Leave it to draw or edit.");
     return;
   }
@@ -260,6 +263,10 @@ export const pasteContent = async (store: Store, content: PasteContent) => {
       store.toast(content.detail, "error");
       return;
     case "text":
+      if (looksLikeSpreadsheet(content.text)) {
+        store.set({ dialog: { kind: "chart", text: content.text } });
+        return;
+      }
       insertText(store, content.text);
       return;
     case "image":
@@ -292,6 +299,40 @@ export const pasteContent = async (store: Store, content: PasteContent) => {
       return;
     }
   }
+};
+
+/** Places a web card (DRAW-14) centred on `at`. Returns an error message for bad links. */
+export const insertWebCard = (store: Store, at: Point, raw: string): string | null => {
+  if (blockedByViewMode(store)) return "Look-only mode is on.";
+  const res = resolveWebCard(raw);
+  if (!res.ok) return res.error;
+  const el = createEmbed(at.x - 240, at.y - 150, res.target.url);
+  const s = store.get();
+  store.commit([...s.elements, el], {
+    selectedIds: new Set([el.id]),
+    tool: s.toolLocked ? s.tool : "pick",
+    dialog: null,
+  });
+  if (res.target.kind === "link") store.toast(res.target.reason, "info", 5000);
+  return null;
+};
+
+/** Adds a spreadsheet chart (FILE-09) as one undoable step, centred in the view. */
+export const insertChart = (store: Store, data: ChartData, kind: ChartKind) => {
+  if (blockedByViewMode(store)) return;
+  const p = pastePoint(store);
+  const els = buildChart(data, kind, { x: 0, y: 0 }, store.get().currentStyle);
+  const b = getCommonBounds(els);
+  if (!b) return;
+  const dx = p.x - (b.minX + b.maxX) / 2;
+  const dy = p.y - (b.minY + b.maxY) / 2;
+  const placed = els.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy }));
+  store.commit([...store.get().elements, ...placed], {
+    selectedIds: new Set(placed.map((e) => e.id)),
+    tool: "pick",
+    dialog: null,
+  });
+  store.toast("Chart added. Its bars, lines and words stay editable.", "success", 2500);
 };
 
 export const pasteWithApi = async (store: Store) => {

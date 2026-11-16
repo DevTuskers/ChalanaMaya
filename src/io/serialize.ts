@@ -41,6 +41,7 @@ const ELEMENT_TYPES = new Set([
   "image",
   "note",
   "frame",
+  "embed",
 ]);
 
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
@@ -137,8 +138,19 @@ export const parseElement = (raw: unknown): SceneElement => {
         startArrowhead: oneOf(raw.startArrowhead, ARROWHEADS, "none"),
         endArrowhead: oneOf(raw.endArrowhead, ARROWHEADS, type === "arrow" ? "arrow" : "none"),
       };
-    case "freedraw":
-      return { ...base, type, points: points(raw.points) };
+    case "freedraw": {
+      const pts = points(raw.points);
+      const pr = raw.pressures;
+      const pressures =
+        Array.isArray(pr) &&
+        pr.length === pts.length &&
+        pr.every((v) => typeof v === "number" && isFinite(v))
+          ? pr.map((v: number) => Math.max(0, Math.min(1, v)))
+          : null;
+      return { ...base, type, points: pts, ...(pressures ? { pressures } : {}) };
+    }
+    case "embed":
+      return { ...base, type, url: str(raw.url) };
     case "text": {
       const family = raw.fontFamily;
       const align = raw.textAlign;

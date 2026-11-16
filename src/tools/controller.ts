@@ -62,6 +62,23 @@ import {
 } from "../render/handles";
 import { pointInPolygon } from "../scene/geometry";
 import type { Store, ToolId } from "../store/store";
+import { pourTargetAt } from "../scene/hit";
+import { recognizeShape, SHAPE_NAMES } from "../scene/recognize";
+import { resolveWebCard } from "../scene/webcard";
+import { TRANSPARENT } from "../scene/constants";
+
+/**
+ * Pressures recorded for a stroke, or null when they carry no information
+ * (no stylus, or a pen that always reports the same value): those draw steadily.
+ */
+export const steadyPressure = (pressures: number[] | null, count: number): number[] | null => {
+  if (!pressures || !pressures.length) return null;
+  const list = pressures.slice(0, count);
+  while (list.length < count) list.push(list[list.length - 1]);
+  const min = Math.min(...list);
+  const max = Math.max(...list);
+  return max - min < 0.02 ? null : list;
+};
 
 export interface PointerInput {
   /** Screen position relative to the canvas, CSS px. */
@@ -74,6 +91,8 @@ export interface PointerInput {
   altKey: boolean;
   /** "mouse", "pen" or "touch". */
   pointerType?: string;
+  /** PointerEvent.pressure (0–1); only meaningful for pens. */
+  pressure?: number;
 }
 
 type Interaction =
@@ -83,7 +102,16 @@ type Interaction =
   | { kind: "frame"; id: string; origin: Point; before: Snapshot }
   | { kind: "trail"; mode: "lasso" | "eraser"; points: Point[] }
   | { kind: "arrow"; id: string; origin: Point; before: Snapshot }
-  | { kind: "freedraw"; id: string; points: Point[]; before: Snapshot }
+  | {
+      kind: "freedraw";
+      id: string;
+      points: Point[];
+      /** Stylus pressures, or null when the input has no pressure. */
+      pressures: number[] | null;
+      tidy: boolean;
+      before: Snapshot;
+    }
+  | { kind: "spotlight" }
   | {
       kind: "path";
       id: string;
@@ -142,6 +170,10 @@ const DRAW_TOOLS: ToolId[] = [
   "lasso",
   "eraser",
   "eyedropper",
+  "laser",
+  "tidy",
+  "pour",
+  "embed",
 ];
 
 /** Tools that create artwork (pen mode ignores touch for these). */
@@ -156,6 +188,9 @@ const CREATING_TOOLS: ToolId[] = [
   "note",
   "frame",
   "eraser",
+  "tidy",
+  "pour",
+  "embed",
 ];
 
 export class Controller {
@@ -221,6 +256,11 @@ export class Controller {
     let p = this.toScene(input);
     const tool = this.state.tool;
     const { viewMode, prefs } = this.state;
+    if (this.state.activeEmbedId) this.store.set({ activeEmbedId: null });
+    if (tool === "laser" && input.button === 0 && !this.spaceHeld) {
+      this.beginSpotlight(p);
+      return;
+    }
     if (viewMode && input.button === 0 && !this.spaceHeld) {
       const hit = elementAt(this.state.elements, p, this.tolerance());
       if (hit?.link) {
@@ -256,7 +296,14 @@ export class Controller {
         this.beginPath(input, p);
         return;
       case "freedraw":
-        this.beginFreedraw(p);
+      case "tidy":
+        this.beginFreedraw(p, input, tool === "tidy");
+        return;
+      case "pour":
+        this.pourAt(p);
+        return;
+      case "embed":
+        this.store.set({ dialog: { kind: "webcard", at: p } });
         return;
       case "text":
         this.textToolDown(p);
@@ -537,11 +584,90 @@ export class Controller {
     this.store.commitFrom(it.before, this.after(it.id));
   }
 
-  private beginFreedraw(p: Point) {
+  /** Pen pressure for this input, or null when it should draw a steady width. */
+  private pressureOf(input: PointerInput): number | null {
+    if (!this.state.prefs.pencilPressure || input.pointerType !== "pen") return null;
+    if (typeof input.pressure !== "number" || !Number.isFinite(input.pressure)) return null;
+    return Math.max(0.05, Math.min(1, input.pressure));
+  }
+
+  private beginFreedraw(p: Point, input: PointerInput, tidy = false) {
     const before = this.store.snapshot();
     const el = createFreedraw(p.x, p.y, this.state.currentStyle);
+    const pr = this.pressureOf(input);
     this.store.set({ elements: [...this.state.elements, el], selectedIds: new Set() });
-    this.interaction = { kind: "freedraw", id: el.id, points: [p], before };
+    this.interaction = {
+      kind: "freedraw",
+      id: el.id,
+      points: [p],
+      pressures: pr === null ? null : [pr],
+      tidy,
+      before,
+    };
+  }
+
+  /** Clock for Spotlight trails; replaceable in tests. */
+  now: () => number = () => Date.now();
+
+  private beginSpotlight(p: Point) {
+    const t = this.now();
+    this.interaction = { kind: "spotlight" };
+    this.store.set({ spotlight: [...this.state.spotlight, { points: [{ ...p, t }] }] });
+  }
+
+  /** Pour colour: fills the closed shape under the pointer with the current fill. */
+  private pourAt(p: Point) {
+    const hit = pourTargetAt(this.state.elements, p, this.tolerance());
+    if (hit.kind === "none") {
+      this.store.toast(
+        "Pour colour fills closed shapes. Click inside a box, diamond, oval, note or closed path.",
+      );
+      return;
+    }
+    if (hit.kind === "locked") return this.noticeLocked(hit.element);
+    if (hit.kind === "open") {
+      this.store.toast("That item isn't a closed shape, so it can't hold a fill.");
+      return;
+    }
+    const { backgroundColor, fillStyle } = this.state.currentStyle;
+    const el = hit.element;
+    const fill = backgroundColor === TRANSPARENT ? TRANSPARENT : backgroundColor;
+    const nextStyle = el.type === "note" ? {} : { fillStyle };
+    if (el.backgroundColor === fill && (el.type === "note" || el.fillStyle === fillStyle)) return;
+    if (el.type === "note" && fill === TRANSPARENT) {
+      this.store.toast("Notes always have a paper colour. Pick a fill colour first.");
+      return;
+    }
+    this.store.commit(
+      this.state.elements.map((e) =>
+        e.id === el.id ? ({ ...e, backgroundColor: fill, ...nextStyle } as SceneElement) : e,
+      ),
+    );
+  }
+
+  /** Shape tidy: turns a finished sketch into a box, diamond or oval when it is clearly one. */
+  private tidySketch(id: string) {
+    const el = this.find(id);
+    if (!el || el.type !== "freedraw") return;
+    const rec = recognizeShape(getAbsolutePoints(el));
+    if (!rec) {
+      this.store.toast("Shape tidy didn't recognise a box, diamond or oval, so it stays a sketch.");
+      return;
+    }
+    const style = this.state.currentStyle;
+    const shape = {
+      ...createShape(rec.type, rec.x, rec.y, style, rec.width, rec.height),
+      strokeColor: el.strokeColor,
+      opacity: el.opacity,
+      frameId: el.frameId,
+      groupIds: el.groupIds,
+    };
+    const keepTool = this.state.toolLocked;
+    this.store.commit(
+      this.state.elements.map((e) => (e.id === id ? shape : e)),
+      keepTool ? { selectedIds: new Set() } : { selectedIds: new Set([shape.id]) },
+    );
+    this.store.toast(`Shape tidy made it a ${SHAPE_NAMES[rec.type]}. Undo brings the sketch back.`);
   }
 
   private textToolDown(p: Point) {
@@ -689,6 +815,16 @@ export class Controller {
         this.store.set({ viewport: v });
         return;
       }
+      case "spotlight": {
+        const strokes = this.state.spotlight;
+        const cur = strokes[strokes.length - 1];
+        if (!cur) return;
+        const last = cur.points[cur.points.length - 1];
+        if (last && distance(last, p) * this.state.viewport.zoom < 1.5) return;
+        const next = { points: [...cur.points, { ...p, t: this.now() }] };
+        this.store.set({ spotlight: [...strokes.slice(0, -1), next] });
+        return;
+      }
       case "trail": {
         const last = it.points[it.points.length - 1];
         if (distance(last, p) * this.state.viewport.zoom < 2) return;
@@ -740,10 +876,15 @@ export class Controller {
         const last = it.points[it.points.length - 1];
         if (distance(last, p) * this.state.viewport.zoom < 1) return;
         it.points.push(p);
+        if (it.pressures) {
+          const pr = this.pressureOf(input);
+          it.pressures.push(pr ?? it.pressures[it.pressures.length - 1]);
+        }
         const el = this.find(it.id) as FreedrawElement;
+        const pressures = it.pressures ? [...it.pressures] : null;
         this.store.set({
           elements: this.state.elements.map((e) =>
-            e.id === it.id ? fromAbsolutePoints(el, it.points) : e,
+            e.id === it.id ? { ...fromAbsolutePoints(el, it.points), pressures } : e,
           ),
         });
         return;
@@ -869,6 +1010,9 @@ export class Controller {
     const it = this.interaction;
     const p = this.toScene(input);
     switch (it.kind) {
+      case "spotlight":
+        this.interaction = { kind: "none" };
+        return;
       case "pan":
         this.interaction = { kind: "none" };
         this.cursor = this.spaceHeld || this.state.tool === "hand" ? "grab" : "default";
@@ -929,16 +1073,20 @@ export class Controller {
         this.interaction = { kind: "none" };
         const el = this.find(it.id) as FreedrawElement | undefined;
         if (!el) return;
-        if (it.points.length === 1) {
-          const pts = [it.points[0], { x: it.points[0].x + 0.5, y: it.points[0].y + 0.5 }];
-          this.store.set({
-            elements: this.state.elements.map((e) =>
-              e.id === it.id ? fromAbsolutePoints(el, pts) : e,
-            ),
-          });
-        }
+        const pts =
+          it.points.length === 1
+            ? [it.points[0], { x: it.points[0].x + 0.5, y: it.points[0].y + 0.5 }]
+            : it.points;
+        const pressures = steadyPressure(it.pressures, pts.length);
+        const finished: FreedrawElement = { ...fromAbsolutePoints(el, pts), pressures };
+        if (!pressures) delete finished.pressures;
+        this.store.set({
+          elements: this.state.elements.map((e) => (e.id === it.id ? finished : e)),
+        });
         this.claimFrame(it.id);
-        this.store.commitFrom(it.before, this.after(it.id));
+        const after = this.after(it.id);
+        this.store.commitFrom(it.before, it.tidy ? { selectedIds: new Set() } : after);
+        if (it.tidy) this.tidySketch(it.id);
         return;
       }
       case "path": {
@@ -1014,6 +1162,12 @@ export class Controller {
     }
     if (hit?.type === "image") {
       this.store.set({ croppingId: hit.id, selectedIds: new Set([hit.id]) });
+      return;
+    }
+    if (hit?.type === "embed") {
+      if (resolveWebCard(hit.url).ok) {
+        this.store.set({ activeEmbedId: hit.id, selectedIds: new Set([hit.id]) });
+      }
       return;
     }
     if (hit) return;

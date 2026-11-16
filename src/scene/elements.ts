@@ -1,5 +1,6 @@
 import { DEFAULT_STYLE, NOTE_SWATCHES, TRANSPARENT } from "./constants";
 import type {
+  EmbedElement,
   FrameElement,
   FreedrawElement,
   ImageElement,
@@ -164,6 +165,25 @@ export const createFrame = (x: number, y: number, name = "Page"): FrameElement =
   name,
 });
 
+export const createEmbed = (
+  x: number,
+  y: number,
+  url: string,
+  width = 480,
+  height = 300,
+): EmbedElement => ({
+  ...base(DEFAULT_STYLE, x, y),
+  type: "embed",
+  strokeColor: "#52706b",
+  backgroundColor: TRANSPARENT,
+  strokeWidth: 1,
+  roughness: 0,
+  edges: "round",
+  width,
+  height,
+  url,
+});
+
 export const isShape = (el: SceneElement): el is ShapeElement =>
   el.type === "rectangle" || el.type === "diamond" || el.type === "ellipse";
 
@@ -195,6 +215,7 @@ export const supportsEdges = (el: SceneElement) =>
 export const isBindable = (el: SceneElement) =>
   isShape(el) ||
   el.type === "image" ||
+  el.type === "embed" ||
   el.type === "note" ||
   (el.type === "text" && !el.containerId);
 

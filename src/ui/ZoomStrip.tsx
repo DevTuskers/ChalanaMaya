@@ -12,6 +12,7 @@ export const ZoomStrip = () => {
   const hasSelection = useAppState((s) => s.selectedIds.size > 0);
   const empty = useAppState((s) => s.elements.length === 0);
   const viewMode = useAppState((s) => s.viewMode);
+  const minimap = useAppState((s) => s.prefs.minimap);
   const canUndo = store.history.canUndo && !viewMode;
   const canRedo = store.history.canRedo && !viewMode;
   const lookOnly = "Look-only mode is on";
@@ -92,6 +93,18 @@ export const ZoomStrip = () => {
           onClick={() => fitToContent(store, true)}
         >
           <Icon.fitSelection />
+        </HintButton>
+        <HintButton
+          label={minimap ? "Hide overview" : "Show overview"}
+          hint={minimap ? "Hide the board overview" : "Board overview — jump to any area"}
+          shortcut={formatKeys("Alt+M")}
+          side="top"
+          active={minimap}
+          aria-pressed={minimap}
+          data-testid="minimap-toggle"
+          onClick={() => store.set({ prefs: { ...store.get().prefs, minimap: !minimap } })}
+        >
+          <Icon.overview />
         </HintButton>
       </div>
     </div>
