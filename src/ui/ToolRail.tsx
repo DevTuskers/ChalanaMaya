@@ -28,7 +28,30 @@ export const ToolRail = () => {
         </HintButton>
         {menuOpen ? <MainMenu /> : null}
       </div>
-      {viewMode ? null : (
+      {viewMode ? (
+        <>
+          <div className="rail-sep" role="separator" />
+          <div
+            className="rail-tools"
+            role="toolbar"
+            aria-orientation="vertical"
+            aria-label="Look-only tools"
+          >
+            {TOOLS.filter((t) => t.id === "hand" || t.id === "laser").map((t) => (
+              <HintButton
+                key={t.id}
+                label={`${t.name} — ${t.common}`}
+                shortcut={t.key}
+                active={tool === t.id}
+                data-testid={`tool-${t.id}`}
+                onClick={() => setTool(store, t.id)}
+              >
+                <ToolIcon tool={t.id} />
+              </HintButton>
+            ))}
+          </div>
+        </>
+      ) : (
         <>
           <div className="rail-sep" role="separator" />
           <div

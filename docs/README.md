@@ -30,16 +30,17 @@ All features start as **planned**. Track implementation in issues using the feat
 
 ## Implementation status
 
-Phases P0 (MVP) and P1. Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0), `e2e/p1.spec.ts` (P1) and `e2e/revision.spec.ts` (P1 review fixes). All P2 features remain **planned**.
+Phases P0 (MVP), P1 and P2 (round 1). Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0), `e2e/p1.spec.ts` (P1), `e2e/revision.spec.ts` (P1 review fixes) and `e2e/p2.spec.ts` (P2).
 
-| Area | P0 feature IDs (done) | P1 feature IDs (done) |
-| --- | --- | --- |
-| Drawing | DRAW-01, DRAW-02, DRAW-03, DRAW-04, DRAW-07, DRAW-08, DRAW-10, DRAW-17, DRAW-21 | DRAW-05, DRAW-06, DRAW-11, DRAW-12, DRAW-13, DRAW-15, DRAW-20, DRAW-22 |
-| Styling | STYLE-01, STYLE-02, STYLE-05, STYLE-11, STYLE-12, STYLE-13 | STYLE-03, STYLE-04, STYLE-06, STYLE-07, STYLE-08, STYLE-09, STYLE-10, STYLE-14 |
-| Selecting and arranging | ARR-01, ARR-02, ARR-03, ARR-04, ARR-05 | ARR-06, ARR-07, ARR-08, ARR-09, ARR-10, ARR-11, ARR-12, ARR-13, ARR-14 |
-| Canvas and view | VIEW-01, VIEW-02, VIEW-03, VIEW-12, VIEW-13, VIEW-16 | VIEW-04, VIEW-06, VIEW-07, VIEW-08, VIEW-09, VIEW-10, VIEW-11, VIEW-14, VIEW-15 |
-| Save, open, and export | FILE-01, FILE-02, FILE-03, FILE-08, FILE-10 | FILE-04, FILE-05, FILE-06, FILE-07 |
-| Everything else (P2) | — | planned |
+| Area | P0 feature IDs (done) | P1 feature IDs (done) | P2 feature IDs (done) |
+| --- | --- | --- | --- |
+| Drawing | DRAW-01, DRAW-02, DRAW-03, DRAW-04, DRAW-07, DRAW-08, DRAW-10, DRAW-17, DRAW-21 | DRAW-05, DRAW-06, DRAW-11, DRAW-12, DRAW-13, DRAW-15, DRAW-20, DRAW-22 | DRAW-09, DRAW-14, DRAW-16, DRAW-18, DRAW-19 |
+| Styling | STYLE-01, STYLE-02, STYLE-05, STYLE-11, STYLE-12, STYLE-13 | STYLE-03, STYLE-04, STYLE-06, STYLE-07, STYLE-08, STYLE-09, STYLE-10, STYLE-14 | — |
+| Selecting and arranging | ARR-01, ARR-02, ARR-03, ARR-04, ARR-05 | ARR-06, ARR-07, ARR-08, ARR-09, ARR-10, ARR-11, ARR-12, ARR-13, ARR-14 | — |
+| Canvas and view | VIEW-01, VIEW-02, VIEW-03, VIEW-12, VIEW-13, VIEW-16 | VIEW-04, VIEW-06, VIEW-07, VIEW-08, VIEW-09, VIEW-10, VIEW-11, VIEW-14, VIEW-15 | VIEW-05 |
+| Save, open, and export | FILE-01, FILE-02, FILE-03, FILE-08, FILE-10 | FILE-04, FILE-05, FILE-06, FILE-07 | FILE-09 |
+
+P2 notes: new tools Shape tidy (S), Pour colour (B), Web card (W) and Spotlight (X, also in look-only mode); pencil pressure can be switched off in Settings; Board overview toggles from the zoom strip or Alt+M; pasting rows of numbers opens the chart preview. Web cards embed YouTube, Vimeo, Figma and CodePen in sandboxed frames; other sites show a safe open-in-new-tab link. Spotlight trails are never saved.
 
 P1 notes: pictures are inserted from the main menu ("Insert picture…"), by paste, or by drop; links accept only http(s), mailto and in-board `#el=` targets, and unsafe links are dropped when a file is opened; embedded board data in PNG (`tEXt` chunk) and SVG (`<metadata id="chalanamaya-scene">`) is validated, and damaged data is refused without touching the board; preferences (input preference, pen mode) are kept under `chalanamaya.prefs`.
 

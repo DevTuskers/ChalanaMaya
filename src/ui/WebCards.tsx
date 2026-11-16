@@ -54,7 +54,7 @@ export const WebCards = () => {
                   title={`${res.target.provider} web card`}
                   src={res.target.src}
                   sandbox={WEB_CARD_SANDBOX}
-                  referrerPolicy="no-referrer"
+                  referrerPolicy="strict-origin-when-cross-origin"
                   loading="lazy"
                   allow="fullscreen; picture-in-picture; encrypted-media"
                   data-testid="webcard-frame"

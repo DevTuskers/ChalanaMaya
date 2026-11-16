@@ -269,3 +269,20 @@ describe("Board overview (VIEW-05)", () => {
     expect(size.height / 2 / v.zoom - v.scrollY).toBeCloseTo(300);
   });
 });
+
+describe("Shape tidy with sparse pointer samples", () => {
+  it("recognises a box drawn with few, uneven points", () => {
+    const pts = [
+      { x: 300, y: 200 },
+      { x: 400, y: 202 },
+      { x: 500, y: 204 },
+      { x: 501, y: 270 },
+      { x: 502, y: 340 },
+      { x: 400, y: 339 },
+      { x: 298, y: 338 },
+      { x: 299, y: 270 },
+      { x: 300, y: 202 },
+    ];
+    expect(recognizeShape(pts)?.type).toBe("rectangle");
+  });
+});

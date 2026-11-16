@@ -17,7 +17,10 @@ const MAX_ERROR = 0.11;
  * Shape tidy (DRAW-18): decides whether a rough closed outline is a box, diamond
  * or oval. Returns null for anything that is not clearly one of them.
  */
-export const recognizeShape = (points: readonly Point[]): Recognized | null => {
+export const recognizeShape = (raw: readonly Point[]): Recognized | null => {
+  if (raw.length < 4) return null;
+  // judge the drawn path, not how fast the pointer moved: resample evenly by length
+  const points = resample(raw, 64);
   if (points.length < 8) return null;
   let minX = Infinity;
   let minY = Infinity;
@@ -68,6 +71,31 @@ export const recognizeShape = (points: readonly Point[]): Recognized | null => {
   // ambiguous: two candidates fit about equally well
   if (errors[1].error - best.error < 0.015) return null;
   return { type: best.type, x: minX, y: minY, width: w, height: h, error: best.error };
+};
+
+/** Resamples a polyline into `n` points spaced evenly along its length. */
+export const resample = (pts: readonly Point[], n: number): Point[] => {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++)
+    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  if (total === 0) return [pts[0]];
+  const step = total / (n - 1);
+  const out: Point[] = [{ ...pts[0] }];
+  let carried = 0;
+  for (let i = 1; i < pts.length && out.length < n; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    let along = step - carried;
+    while (along <= seg && out.length < n) {
+      const t = along / seg;
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      along += step;
+    }
+    carried = seg - (along - step);
+  }
+  while (out.length < n) out.push({ ...pts[pts.length - 1] });
+  return out;
 };
 
 export const SHAPE_NAMES: Record<ShapeType, string> = {
