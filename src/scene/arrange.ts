@@ -502,9 +502,8 @@ export const acceptsStyle = (el: SceneElement, k: keyof ItemStyle): boolean => {
       return true;
     case "fontFamily":
     case "fontSize":
-      return el.type === "text";
     case "textAlign":
-      return el.type === "text" && !el.containerId;
+      return el.type === "text";
     case "routing":
     case "startArrowhead":
     case "endArrowhead":
