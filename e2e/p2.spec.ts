@@ -179,3 +179,39 @@ test("pencil pressure can be switched off in settings", async ({ page }) => {
     .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("chalanamaya.prefs") ?? "{}")))
     .toMatchObject({ pencilPressure: false });
 });
+
+test("Board overview never covers the properties panel at 1280x800", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await freshBoard(page);
+  await page.getByTestId("minimap-toggle").click();
+  const topAtCentre = async () => {
+    const del = page.getByTestId("action-delete");
+    await del.scrollIntoViewIfNeeded();
+    return del.evaluate((node) => {
+      const r = node.getBoundingClientRect();
+      const hit = node.ownerDocument.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return !!hit && (hit === node || node.contains(hit));
+    });
+  };
+  const noOverlap = async () => {
+    const props = (await page.getByTestId("properties").boundingBox())!;
+    const map = (await page.getByTestId("minimap").boundingBox())!;
+    expect(props.y + props.height).toBeLessThanOrEqual(map.y);
+  };
+  // a box has the tallest panel
+  await page.keyboard.press("r");
+  await drag(page, { x: 300, y: 200 }, { x: 460, y: 320 });
+  await expect(page.getByTestId("properties")).toBeVisible();
+  await noOverlap();
+  expect(await topAtCentre()).toBe(true);
+  await page.getByTestId("action-delete").click();
+  await expectCount(page, 0);
+  // and a text item
+  await page.keyboard.press("t");
+  await clickBoard(page, { x: 400, y: 300 });
+  await page.keyboard.type("hello");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("properties")).toBeVisible();
+  await noOverlap();
+  expect(await topAtCentre()).toBe(true);
+});

@@ -40,8 +40,12 @@ export const Minimap = () => {
       minimapLayout(getCommonBounds(elements), viewport, store.viewSize, { width: W, height: H });
     layoutRef.current = layout;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // hatched fills turn into faint hairlines at overview scale, so draw them solid
+    const solid = elements.map((el) =>
+      "fillStyle" in el && el.fillStyle !== "solid" ? { ...el, fillStyle: "solid" as const } : el,
+    );
     renderScene(ctx, {
-      elements,
+      elements: solid,
       files,
       viewport: layout.viewport,
       theme,
@@ -79,11 +83,30 @@ export const Minimap = () => {
         style={{ width: W, height: H }}
         data-testid="minimap-canvas"
         role="img"
+        tabIndex={empty ? -1 : 0}
         aria-label={
           empty
             ? "Board overview: the board is empty"
-            : "Board overview. Click or drag to move the view."
+            : "Board overview. Click or drag to move the view, or use the arrow keys."
         }
+        onKeyDown={(e) => {
+          if (empty) return;
+          const step = {
+            ArrowLeft: [-1, 0],
+            ArrowRight: [1, 0],
+            ArrowUp: [0, -1],
+            ArrowDown: [0, 1],
+          }[e.key];
+          if (!step) return;
+          e.preventDefault();
+          e.stopPropagation();
+          // move the view by a quarter of its size (a full view with Shift)
+          const v = store.get().viewport;
+          const f = e.shiftKey ? 1 : 0.25;
+          const dx = (step[0] * f * store.viewSize.width) / v.zoom;
+          const dy = (step[1] * f * store.viewSize.height) / v.zoom;
+          store.set({ viewport: { ...v, scrollX: v.scrollX - dx, scrollY: v.scrollY - dy } });
+        }}
         onPointerDown={(e) => {
           if (empty) return;
           e.currentTarget.setPointerCapture(e.pointerId);

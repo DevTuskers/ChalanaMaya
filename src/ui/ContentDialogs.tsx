@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { insertChart, insertText, insertWebCard } from "../store/actions";
 import {
   buildChart,
@@ -9,6 +9,7 @@ import {
 } from "../scene/chart";
 import { resolveWebCard, WEB_CARD_PROVIDERS } from "../scene/webcard";
 import { exportToSvg } from "../io/svg";
+import { brandFontCss } from "../io/flows";
 import type { Point } from "../scene/types";
 import { useAppState, useServices } from "./context";
 import { Modal } from "./Dialogs";
@@ -80,6 +81,17 @@ export const ChartDialog = ({ text, onClose }: { text: string; onClose: () => vo
   const style = useAppState((s) => s.currentStyle);
   const [value, setValue] = useState(text);
   const [kind, setKind] = useState<ChartKind>("bar");
+  // the preview is an <img>, which can't see page fonts, so embed the brand fonts
+  const [fontCss, setFontCss] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void brandFontCss().then((css) => {
+      if (live) setFontCss(css);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const parsed = useMemo(() => parseSpreadsheet(value), [value]);
   const problem = parsed.ok ? chartKindProblem(kind, parsed.data) : parsed.error;
   const preview = useMemo(() => {
@@ -91,9 +103,10 @@ export const ChartDialog = ({ text, onClose }: { text: string; onClose: () => vo
         theme,
         background: null,
         padding: 12,
+        fontCss,
       },
     );
-  }, [parsed, kind, problem, theme, style]);
+  }, [parsed, kind, problem, theme, style, fontCss]);
   return (
     <Modal title="Chart from spreadsheet" onClose={onClose} testId="chart-dialog" wide>
       <form
@@ -110,7 +123,23 @@ export const ChartDialog = ({ text, onClose }: { text: string; onClose: () => vo
               type="button"
               role="radio"
               aria-checked={kind === k.id}
+              tabIndex={kind === k.id ? 0 : -1}
               data-testid={`chart-kind-${k.id}`}
+              onKeyDown={(e) => {
+                const i = KINDS.findIndex((x) => x.id === kind);
+                let next = -1;
+                if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % KINDS.length;
+                else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+                  next = (i - 1 + KINDS.length) % KINDS.length;
+                else if (e.key === "Home") next = 0;
+                else if (e.key === "End") next = KINDS.length - 1;
+                if (next < 0) return;
+                e.preventDefault();
+                setKind(KINDS[next].id);
+                const group = e.currentTarget.parentElement;
+                const btn = group?.querySelectorAll<HTMLButtonElement>("[role=radio]")[next];
+                btn?.focus();
+              }}
               className={kind === k.id ? "is-active" : ""}
               onClick={() => setKind(k.id)}
             >

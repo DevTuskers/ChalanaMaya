@@ -255,7 +255,9 @@ export class Store {
 
   toast(message: string, tone: Toast["tone"] = "info", ms = 4200, action?: Toast["action"]) {
     const id = ++this.toastId;
-    this.set({ toasts: [...this.state.toasts, { id, message, tone, action }] });
+    // a repeated message replaces the earlier copy instead of stacking
+    const rest = this.state.toasts.filter((t) => t.message !== message);
+    this.set({ toasts: [...rest, { id, message, tone, action }] });
     if (typeof window !== "undefined") {
       window.setTimeout(() => this.dismissToast(id), ms);
     }

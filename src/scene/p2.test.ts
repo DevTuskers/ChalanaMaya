@@ -189,6 +189,17 @@ describe("Spreadsheet charts (FILE-09)", () => {
     );
     expect(bars).toHaveLength(6);
   });
+  it("keeps the radar's top spoke label clear of the legend row", () => {
+    const r = parseSpreadsheet(sheet);
+    if (!r.ok) throw new Error("parse failed");
+    const els = buildChart(r.data, "radar", { x: 0, y: 0 });
+    const texts = els.filter((e) => e.type === "text");
+    const legend = texts.filter((e) => e.type === "text" && ["Sales", "Costs"].includes(e.text));
+    const top = texts.find((e) => e.type === "text" && e.text === "Jan")!;
+    const legendBottom = Math.max(...legend.map((e) => e.y + e.height));
+    expect(legend).toHaveLength(2);
+    expect(top.y).toBeGreaterThanOrEqual(legendBottom);
+  });
 });
 
 describe("Pencil pressure (DRAW-09)", () => {

@@ -284,7 +284,6 @@ export const buildDrawables = (el: SceneElement, theme: Theme): Drawable[] => {
   }
 };
 
-/** Outline polygon of a pencil stroke, relative to its centre. */
 /** True when the stroke carries real stylus pressure (DRAW-09). */
 export const hasPressure = (el: FreedrawElement) =>
   !!el.pressures && el.pressures.length === el.points.length && el.points.length > 0;
@@ -311,6 +310,7 @@ export const freedrawOptions = (el: FreedrawElement) => {
   };
 };
 
+/** Outline polygon of a pencil stroke, relative to its centre. */
 export const freedrawOutline = (el: FreedrawElement): number[][] => {
   const ox = -el.width / 2;
   const oy = -el.height / 2;

@@ -38,7 +38,7 @@ export const TOOLS: ToolDef[] = [
   { id: "note", name: "Sticky note", common: "note", key: "N" },
   { id: "frame", name: "Page frame", common: "frame", key: "F" },
   { id: "eraser", name: "Rubber", common: "eraser", key: "E", digit: "9" },
-  { id: "lasso", name: "Lasso", common: "lasso selection", key: "Q" },
+  { id: "lasso", name: "Loop select", common: "lasso selection", key: "Q" },
   { id: "eyedropper", name: "Colour picker", common: "eyedropper", key: "I" },
   { id: "tidy", name: "Shape tidy", common: "draw to shape", key: "S" },
   { id: "pour", name: "Pour colour", common: "bucket fill", key: "B" },

@@ -620,7 +620,7 @@ export class Controller {
     const hit = pourTargetAt(this.state.elements, p, this.tolerance());
     if (hit.kind === "none") {
       this.store.toast(
-        "Pour colour fills closed shapes. Click inside a box, diamond, oval, note or closed path.",
+        "Pour colour fills closed shapes. Click inside a box, diamond, oval, note or closed path. Sketch pencil strokes can't hold a fill.",
       );
       return;
     }
@@ -667,7 +667,9 @@ export class Controller {
       this.state.elements.map((e) => (e.id === id ? shape : e)),
       keepTool ? { selectedIds: new Set() } : { selectedIds: new Set([shape.id]) },
     );
-    this.store.toast(`Shape tidy made it a ${SHAPE_NAMES[rec.type]}. Undo brings the sketch back.`);
+    const name = SHAPE_NAMES[rec.type];
+    const article = /^[aeiou]/i.test(name) ? "an" : "a";
+    this.store.toast(`Shape tidy made it ${article} ${name}. Undo brings the sketch back.`);
   }
 
   private textToolDown(p: Point) {
@@ -1144,9 +1146,25 @@ export class Controller {
     }
   }
 
+  /** Lets the pointer and keyboard into a web card's live page (DRAW-14). */
+  activateWebCard(el: SceneElement) {
+    if (el.type !== "embed" || !resolveWebCard(el.url).ok) return false;
+    this.store.set({
+      activeEmbedId: el.id,
+      selectedIds: this.state.viewMode ? new Set() : new Set([el.id]),
+    });
+    return true;
+  }
+
   doubleClick(input: PointerInput) {
     if (this.interaction.kind === "path") {
       this.finishPath(false);
+      return;
+    }
+    if (this.state.viewMode && this.state.tool === "pick") {
+      // look-only boards can still use a web card's live page
+      const hit = elementAt(this.state.elements, this.toScene(input), this.tolerance());
+      if (hit?.type === "embed") this.activateWebCard(hit);
       return;
     }
     if (this.state.tool !== "pick" || this.state.viewMode) return;
@@ -1164,12 +1182,7 @@ export class Controller {
       this.store.set({ croppingId: hit.id, selectedIds: new Set([hit.id]) });
       return;
     }
-    if (hit?.type === "embed") {
-      if (resolveWebCard(hit.url).ok) {
-        this.store.set({ activeEmbedId: hit.id, selectedIds: new Set([hit.id]) });
-      }
-      return;
-    }
+    if (hit?.type === "embed") return this.activateWebCard(hit);
     if (hit) return;
     const locked = this.lockedUnder(p);
     if (locked) return this.noticeLocked(locked);

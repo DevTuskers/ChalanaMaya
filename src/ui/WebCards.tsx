@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { getElementBounds } from "../scene/geometry";
 import type { EmbedElement, Viewport } from "../scene/types";
 import { resolveWebCard, WEB_CARD_HEADER, WEB_CARD_SANDBOX } from "../scene/webcard";
@@ -14,7 +15,9 @@ const onScreen = (el: EmbedElement, v: Viewport, size: { width: number; height: 
 
 /**
  * Live content of web cards, laid over the board. The page frames are sandboxed and
- * ignore the pointer until a card is double-clicked, so they can't change the board.
+ * ignore the pointer until a card is double-clicked (or selected and Enter pressed),
+ * so they can't change the board. The layer sits above the board canvas, so a live
+ * card always shows on top of drawn items, selection handles and Spotlight trails.
  */
 export const WebCards = () => {
   const { store } = useServices();
@@ -25,9 +28,18 @@ export const WebCards = () => {
   const cards = elements.filter(
     (e): e is EmbedElement => e.type === "embed" && onScreen(e, viewport, store.viewSize),
   );
+  const layerRef = useRef<HTMLDivElement>(null);
+  // move keyboard focus into the page when a card starts being used
+  useEffect(() => {
+    if (!active) return;
+    const frame = layerRef.current?.querySelector<HTMLIFrameElement>(
+      `[data-id="${CSS.escape(active)}"] iframe`,
+    );
+    frame?.focus();
+  }, [active]);
   if (!cards.length) return null;
   return (
-    <div className="webcards" aria-hidden={editing ? true : undefined}>
+    <div className="webcards" ref={layerRef} aria-hidden={editing ? true : undefined}>
       {cards.map((el) => {
         const res = resolveWebCard(el.url);
         if (!res.ok) return null;
@@ -45,6 +57,7 @@ export const WebCards = () => {
             key={el.id}
             className={`webcard${isActive ? " is-active" : ""}`}
             data-testid="webcard"
+            data-id={el.id}
             data-kind={res.target.kind}
             style={{ width: el.width, height: el.height, transform, opacity: el.opacity / 100 }}
           >
@@ -58,6 +71,7 @@ export const WebCards = () => {
                   loading="lazy"
                   allow="fullscreen; picture-in-picture; encrypted-media"
                   data-testid="webcard-frame"
+                  tabIndex={isActive ? 0 : -1}
                   style={{ pointerEvents: isActive ? "auto" : "none" }}
                 />
               ) : (
@@ -77,7 +91,7 @@ export const WebCards = () => {
             </div>
             {isActive ? (
               <p className="webcard-hint" data-testid="webcard-active">
-                Using the page · click the board to return
+                Using the page · click the board or press Esc to return
               </p>
             ) : null}
           </div>

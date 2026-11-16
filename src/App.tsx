@@ -368,6 +368,7 @@ export const App = () => {
       if (e.key === "Escape") {
         if (s.tool === "eyedropper") setTool(store, s.toolBeforeEyedropper);
         else if (controller.isBusy()) controller.cancel();
+        else if (s.activeEmbedId) store.set({ activeEmbedId: null });
         else if (s.searchOpen) store.set({ searchOpen: false, searchHighlight: null });
         else if (s.editingPointsId || s.croppingId)
           store.set({ editingPointsId: null, croppingId: null, editingPointIndex: null });
@@ -391,6 +392,10 @@ export const App = () => {
         }
         if (s.selectedIds.size === 1) {
           const el = s.elements.find((x) => s.selectedIds.has(x.id));
+          if (el?.type === "embed" && controller.activateWebCard(el)) {
+            e.preventDefault();
+            return;
+          }
           if (
             el &&
             (el.type === "text" ||
@@ -548,7 +553,7 @@ export const App = () => {
   return (
     <AppContext.Provider value={services}>
       <div
-        className={`app theme-${theme}${viewMode ? " is-view-mode" : ""}`}
+        className={`app theme-${theme}${viewMode ? " is-view-mode" : ""}${!zen && minimap ? " has-minimap" : ""}`}
         data-theme={theme}
         ref={rootRef}
         data-testid="app"

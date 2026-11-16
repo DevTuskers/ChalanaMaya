@@ -166,7 +166,8 @@ export const buildChart = (
   if (kind === "radar") {
     const r = CHART_H / 2;
     const cx = ox + r + 40;
-    const cy = oy + r + 30;
+    // leave room above the top spoke label for the legend row
+    const cy = oy + r + 60;
     const n = data.labels.length;
     const at = (i: number, f: number) => {
       const a = -Math.PI / 2 + (i / n) * Math.PI * 2;

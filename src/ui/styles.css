@@ -896,6 +896,17 @@ kbd {
   padding: 6px;
   z-index: 11;
 }
+/* keep the properties panel clear of the overview (top of overview sits at
+   100% - 66px - 164px; leave a 10px gap below the panel) */
+.app.has-minimap .props {
+  max-height: calc(100% - 254px);
+}
+@media (max-width: 720px) {
+  .app.has-minimap .props {
+    bottom: 240px;
+    max-height: calc(100% - 320px);
+  }
+}
 .minimap canvas {
   display: block;
   border-radius: 6px;

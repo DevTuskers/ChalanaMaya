@@ -180,3 +180,47 @@ describe("Web card and chart actions", () => {
     expect(store.get().elements).toHaveLength(0);
   });
 });
+
+describe("P2 revision fixes", () => {
+  it("says 'an oval' when Shape tidy makes an oval", () => {
+    const { store, controller } = setup();
+    store.set({ tool: "tidy" });
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 48; i++) {
+      const a = (i / 48) * Math.PI * 2;
+      pts.push([200 + Math.cos(a) * 100, 150 + Math.sin(a) * 60]);
+    }
+    controller.pointerDown(input(...pts[0]));
+    for (const p of pts.slice(1)) controller.pointerMove(input(...p));
+    controller.pointerUp(input(...pts[pts.length - 1]));
+    expect(store.get().elements[0]?.type).toBe("ellipse");
+    expect(store.get().toasts.at(-1)?.message).toMatch(/^Shape tidy made it an oval\./);
+  });
+  it("replaces a repeated toast instead of stacking copies", () => {
+    const { store, controller } = setup();
+    store.set({ tool: "pour" });
+    for (let i = 0; i < 4; i++) {
+      controller.pointerDown(input(500, 500));
+      controller.pointerUp(input(500, 500));
+    }
+    expect(store.get().toasts).toHaveLength(1);
+    expect(store.get().toasts[0].message).toMatch(/Sketch pencil strokes can't hold a fill/);
+  });
+  it("lets a web card be used on a look-only board", () => {
+    const { store, controller } = setup();
+    insertWebCard(store, { x: 0, y: 0 }, "https://youtu.be/dQw4w9WgXcQ");
+    const card = store.get().elements[0];
+    store.set({ viewMode: true, tool: "pick", selectedIds: new Set() });
+    controller.doubleClick(input(card.x + card.width / 2, card.y + card.height / 2));
+    expect(store.get().activeEmbedId).toBe(card.id);
+    expect(store.get().elements).toHaveLength(1);
+  });
+  it("activates a selected web card from the keyboard path", () => {
+    const { store, controller } = setup();
+    insertWebCard(store, { x: 0, y: 0 }, "https://youtu.be/dQw4w9WgXcQ");
+    const card = store.get().elements[0];
+    expect(controller.activateWebCard(card)).toBe(true);
+    expect(store.get().activeEmbedId).toBe(card.id);
+    expect(controller.activateWebCard({ ...card, type: "rectangle" } as never)).toBe(false);
+  });
+});
