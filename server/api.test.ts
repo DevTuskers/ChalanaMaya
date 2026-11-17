@@ -15,6 +15,7 @@ import {
   rect,
   startServer,
   type TestServer,
+  upgradeStatus,
 } from "./test/helpers";
 
 let srv: TestServer;
@@ -432,6 +433,39 @@ describe("cross-site request guard", () => {
     ).toBe(204);
   });
 
+  it("non-canonical paths (/API, /Api, /mcp/, /MCP) are guarded too and create no session", async () => {
+    const before = sessionCount(srv);
+    const evil = { Origin: "https://evil.example", "Content-Type": "text/plain" };
+    for (const p of ["/API/sessions", "/Api/sessions", "/api/sessions/", "/API/sessions/"]) {
+      const r = await raw(srv.port, "POST", p, { headers: evil, body: "x" });
+      expect(r.status, p).toBe(403);
+      expect(r.json().error.code, p).toBe("cross_site_refused");
+    }
+    const site = await raw(srv.port, "POST", "/Api/sessions", {
+      headers: { "Sec-Fetch-Site": "cross-site", "Content-Type": "text/plain" },
+      body: "x",
+    });
+    expect(site.status).toBe(403);
+    // with no header at all a mis-cased path is still refused (needs X-ChalanaMaya)
+    expect(
+      (await raw(srv.port, "POST", "/API/sessions", { headers: { "Content-Type": "text/plain" } }))
+        .status,
+    ).toBe(403);
+    // the app's header on a mis-cased path passes the guard but routes nowhere
+    expect((await raw(srv.port, "POST", "/API/sessions", { headers: APP })).status).toBe(404);
+    for (const p of ["/mcp/", "/MCP", "/Mcp/", "/mcp?x=1"]) {
+      const r = await raw(srv.port, "POST", p, {
+        headers: { Origin: "https://evil.example", "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(r.status, p).toBe(403);
+      expect(r.json().jsonrpc, p).toBe("2.0");
+    }
+    // other paths: a state-changing request from another site is refused too
+    expect((await raw(srv.port, "POST", "/", { headers: evil, body: "x" })).status).toBe(403);
+    expect(sessionCount(srv)).toBe(before);
+  });
+
   it("/mcp: foreign Origin refused by default, ALLOWED_ORIGINS admits it for /mcp only", async () => {
     const inspector = { Origin: "http://localhost:6274", "Content-Type": "application/json" };
     const refused = await raw(srv.port, "POST", "/mcp", { headers: inspector, body: "{}" });
@@ -448,6 +482,25 @@ describe("cross-site request guard", () => {
     } finally {
       await s.close();
     }
+  });
+});
+
+describe("socket upgrades", () => {
+  it("refuses a foreign Host or Origin, and answers 404 otherwise (no sockets yet)", async () => {
+    expect(await upgradeStatus(srv.port, "/api/sessions/x/socket", { Host: "evil.example" })).toBe(
+      403,
+    );
+    expect(
+      await upgradeStatus(srv.port, "/api/sessions/x/socket", { Origin: "https://evil.example" }),
+    ).toBe(403);
+    expect(
+      await upgradeStatus(srv.port, "/api/sessions/x/socket", { "Sec-Fetch-Site": "cross-site" }),
+    ).toBe(403);
+    expect(
+      await upgradeStatus(srv.port, "/api/sessions/x/socket", {
+        Origin: `http://localhost:${srv.port}`,
+      }),
+    ).toBe(404);
   });
 });
 

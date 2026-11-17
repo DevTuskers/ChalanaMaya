@@ -1,6 +1,7 @@
 /** Test helpers: a real server on a random port in 5000–5999 with a temp DATA_DIR. */
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createApp, type AppHandle } from "../app";
@@ -57,6 +58,7 @@ export const startServer = async (
     );
     const handle = createApp(cfg);
     const server = http.createServer(handle.app);
+    server.on("upgrade", (req, socket, head) => handle.upgrade(server, server, req, socket, head));
     if (!(await listen(server, port))) {
       handle.close();
       continue;
@@ -123,6 +125,40 @@ export const raw = (
     req.on("error", reject);
     if (opts.body !== undefined) req.write(opts.body);
     req.end();
+  });
+
+/** Sends a WebSocket upgrade request and returns the status line's code. */
+export const upgradeStatus = (
+  port: number,
+  pathname: string,
+  headers: Record<string, string> = {},
+): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const sock = net.connect(port, "127.0.0.1");
+    let data = "";
+    sock.on("data", (c: Buffer) => {
+      data += c.toString("latin1");
+      const m = /^HTTP\/1\.1 (\d{3})/.exec(data);
+      if (m) {
+        sock.destroy();
+        resolve(Number(m[1]));
+      }
+    });
+    sock.on("error", reject);
+    sock.on("close", () => resolve(0));
+    const all: Record<string, string> = {
+      Host: `localhost:${port}`,
+      Connection: "Upgrade",
+      Upgrade: "websocket",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+      ...headers,
+    };
+    sock.write(
+      `GET ${pathname} HTTP/1.1\r\n${Object.entries(all)
+        .map(([k, v]) => `${k}: ${v}\r\n`)
+        .join("")}\r\n`,
+    );
   });
 
 export const APP = { "X-ChalanaMaya": "1" };

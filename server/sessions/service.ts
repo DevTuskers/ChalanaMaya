@@ -126,9 +126,14 @@ export const fileUrl = (sessionId: string, fileId: string) =>
 /** Fields a layout correction may change (§3.6): a text's box, a container's height. */
 const LAYOUT_FIELDS: Record<string, readonly string[]> = {
   text: ["x", "y", "width", "height"],
+  // the types that can hold a bound label and grow to fit it (syncBoundTexts)
+  rectangle: ["height"],
+  diamond: ["height"],
+  ellipse: ["height"],
+  note: ["height"],
 };
 const withoutLayoutFields = (el: Record<string, unknown>) => {
-  const omit = LAYOUT_FIELDS[el.type as string] ?? ["height"];
+  const omit = LAYOUT_FIELDS[el.type as string] ?? [];
   const copy: Record<string, unknown> = {};
   for (const k of Object.keys(el)) if (!omit.includes(k)) copy[k] = el[k];
   return JSON.stringify(copy);
@@ -162,7 +167,7 @@ export class SessionService {
         "SELECT id, version FROM elements WHERE session_id = ? AND deleted = 0",
       ),
       sceneBytes: db.prepare<[string], { n: number }>(
-        "SELECT COALESCE(SUM(length(data)), 0) AS n FROM elements WHERE session_id = ? AND deleted = 0",
+        "SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) AS n FROM elements WHERE session_id = ? AND deleted = 0",
       ),
       upsert: db.prepare(
         `INSERT INTO elements (session_id, id, idx, version, rev, deleted, needs_layout, data, updated_at)
@@ -411,7 +416,8 @@ export class SessionService {
           }
           const data = JSON.stringify(el);
           const nextCount = count + (live ? 0 : 1);
-          const nextBytes = bytes - (live ? row.data.length : 0) + data.length;
+          const nextBytes =
+            bytes - (live ? Buffer.byteLength(row.data) : 0) + Buffer.byteLength(data);
           if (nextCount > this.limits.maxElements || nextBytes > this.limits.maxSceneBytes) {
             rejected.push({
               id: el.id,
@@ -448,7 +454,7 @@ export class SessionService {
           const version = row.version + 1;
           this.q.tombstone.run(version, newRev, now, sessionId, op.id);
           count -= 1;
-          bytes -= row.data.length;
+          bytes -= Buffer.byteLength(row.data);
           versions[op.id] = version;
           applied.push({ t: "del", id: op.id, version });
           return;
@@ -642,11 +648,6 @@ export class SessionService {
       if (!blob && this.q.totalMedia.get()!.n + bytes.length > this.limits.maxTotalMediaBytes)
         throw storageFull("media storage limit");
       this.checkDbSize();
-      if (!fs.existsSync(blobPath)) {
-        const tmp = `${blobPath}.${randomId(6)}.tmp`;
-        fs.writeFileSync(tmp, bytes);
-        fs.renameSync(tmp, blobPath);
-      }
       if (blob) this.db.prepare("UPDATE blobs SET refs = refs + 1 WHERE sha256 = ?").run(sha);
       else
         this.db
@@ -663,6 +664,18 @@ export class SessionService {
       this.db
         .prepare("UPDATE sessions SET media_bytes = media_bytes + ?, updated_at = ? WHERE id = ?")
         .run(bytes.length, now, sessionId);
+      // written last, so a failed insert leaves no file behind; if writing fails the
+      // transaction rolls back. maintenance() sweeps anything a crash leaves behind.
+      if (!fs.existsSync(blobPath)) {
+        const tmp = `${blobPath}.${randomId(6)}.tmp`;
+        try {
+          fs.writeFileSync(tmp, bytes);
+          fs.renameSync(tmp, blobPath);
+        } catch (e) {
+          fs.rmSync(tmp, { force: true });
+          throw e;
+        }
+      }
       return this.q.file.get(sessionId, id)!;
     })();
     return this.fileOut(sessionId, row);
@@ -694,8 +707,7 @@ export class SessionService {
       .run(now - this.limits.tombstoneMaxAgeMs);
     const stale = this.db
       .prepare<[number], { id: string }>(
-        `SELECT id FROM sessions s WHERE created_at < ?
-           AND NOT EXISTS (SELECT 1 FROM elements e WHERE e.session_id = s.id)
+        `SELECT id FROM sessions s WHERE created_at < ? AND rev = 0
            AND NOT EXISTS (SELECT 1 FROM files f WHERE f.session_id = s.id)`,
       )
       .all(now - 24 * 3600_000)
@@ -710,5 +722,29 @@ export class SessionService {
         stale.push(r.id);
     }
     if (stale.length) this.deleteSessions([...new Set(stale)]);
+    this.sweepOrphanMedia(now);
+  }
+
+  /** Removes media files with no blobs row (left by a crash mid-upload), older than an hour. */
+  private sweepOrphanMedia(now: number) {
+    const known = this.db.prepare<[string], { n: number }>(
+      "SELECT COUNT(*) AS n FROM blobs WHERE sha256 = ?",
+    );
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.mediaDir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const sha = name.split(".")[0] ?? "";
+      if (name === sha && known.get(sha)!.n > 0) continue;
+      const file = path.join(this.mediaDir, name);
+      try {
+        if (now - fs.statSync(file).mtimeMs > 3600_000) fs.rmSync(file, { force: true });
+      } catch {
+        // gone already
+      }
+    }
   }
 }

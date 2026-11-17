@@ -1,5 +1,6 @@
 /** Security headers for the app pages (plan §7). */
 import type { NextFunction, Request, Response } from "express";
+import { normalHost } from "./host";
 
 const FRAME_SRC = [
   "https://www.youtube-nocookie.com",
@@ -9,8 +10,8 @@ const FRAME_SRC = [
 ];
 
 /**
- * The app's Content-Security-Policy. `host` is the request's Host header after
- * the host check accepted it, so it cannot inject into the header. Explicit
+ * The app's Content-Security-Policy. `host` is the request's Host header as
+ * normalised by normalHost (strictly host[:port]), so it cannot inject into the header. Explicit
  * ws:/wss: origins are needed because older WebKit does not match `ws:` against 'self'.
  */
 export const appCsp = (host: string, dev: boolean) =>
@@ -40,7 +41,11 @@ export const baseHeaders = (_req: Request, res: Response, next: NextFunction) =>
 
 /** The CSP for app pages and assets (not for /api, which sets its own). */
 export const appHeaders = (dev: boolean) => (req: Request, res: Response, next: NextFunction) => {
-  res.setHeader("Content-Security-Policy", appCsp(req.headers.host ?? "localhost", dev));
+  // normalHost only returns a strict host[:port], so nothing can be injected here
+  res.setHeader(
+    "Content-Security-Policy",
+    appCsp(normalHost(req.headers.host) ?? "localhost", dev),
+  );
   next();
 };
 

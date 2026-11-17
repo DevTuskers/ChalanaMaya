@@ -4,15 +4,16 @@
  */
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import fs from "node:fs";
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
+import type { Duplex } from "node:stream";
 import path from "node:path";
 import { apiRouter } from "./api/routes";
 import { appOrigins, ROOT_DIR, type Config } from "./config";
 import { openDatabase, type DB } from "./db/schema";
-import { crossSiteGuard } from "./security/csrf";
+import { crossSiteGuard, crossSiteReason } from "./security/csrf";
 import { appHeaders, baseHeaders } from "./security/headers";
-import { hostCheck, sendRefusal } from "./security/host";
-import { rateLimiters } from "./security/rateLimit";
+import { checkUpgradeHost, hostCheck, sendRefusal } from "./security/host";
+import { rateLimiters, redactIds } from "./security/rateLimit";
 import { SessionService } from "./sessions/service";
 import { isSessionId } from "../src/shared/ids";
 
@@ -30,6 +31,18 @@ export interface AppHandle {
   db: DB;
   /** call after the HTTP server exists (dev mode mounts Vite on it) */
   attach(server: Server): Promise<void>;
+  /**
+   * The socket-upgrade handler for every listening server. `primary` is the
+   * server passed to attach(); in dev mode Vite's HMR socket lives there, so the
+   * other servers forward HMR upgrades to it.
+   */
+  upgrade(
+    server: Server,
+    primary: Server,
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ): void;
   close(): void;
 }
 
@@ -44,6 +57,9 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
   app.disable("x-powered-by");
   app.set("trust proxy", cfg.trustProxy);
   app.set("etag", false);
+  // routes match exactly as written; the cross-site guard covers every path anyway
+  app.set("case sensitive routing", true);
+  app.set("strict routing", true);
 
   app.use(baseHeaders);
   app.use(hostCheck(cfg.allowedHosts));
@@ -110,7 +126,7 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
   });
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
-    console.error("server error:", (err as Error)?.stack ?? err);
+    console.error("server error:", redactIds(String((err as Error)?.stack ?? err)));
     res.status(500).type("text/plain").send("Something went wrong on the server.\n");
   });
 
@@ -125,7 +141,7 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
         try {
           service.maintenance({ sessionTtlDays: cfg.sessionTtlDays });
         } catch (e) {
-          console.error("maintenance failed:", (e as Error).message);
+          console.error("maintenance failed:", redactIds(String((e as Error).message)));
         }
       }, 60_000);
       timer.unref();
@@ -140,6 +156,19 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
         devMiddleware = v.middlewares as unknown as typeof devMiddleware;
         devHtml = (url, html) => v.transformIndexHtml(url, html);
       }
+    },
+    upgrade(server, primary, req, socket, head) {
+      if (!checkUpgradeHost(req, socket, cfg.allowedHosts)) return;
+      if (cfg.dev && req.url?.startsWith("/__vite_hmr")) {
+        if (server !== primary) primary.emit("upgrade", req, socket, head);
+        return;
+      }
+      if (crossSiteReason(req.headers, appOrigins(cfg))) {
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+      }
+      // no socket endpoints yet: live sync arrives in phase 3
+      socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
     },
     close() {
       if (timer) clearInterval(timer);

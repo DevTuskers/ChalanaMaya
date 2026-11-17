@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Config } from "../config";
 import { ServiceError } from "../errors";
 import { MEDIA_HEADERS } from "../security/headers";
-import type { rateLimiters } from "../security/rateLimit";
+import { redactIds, type rateLimiters } from "../security/rateLimit";
 import { fileUrl, type SessionService } from "../sessions/service";
 import { isSessionId } from "../../src/shared/ids";
 import { ID_RE, LIMITS } from "../../src/shared/limits";
@@ -37,7 +37,7 @@ export const apiRouter = (
   limiters: ReturnType<typeof rateLimiters>,
   version: string,
 ): Router => {
-  const r = express.Router();
+  const r = express.Router({ caseSensitive: true, strict: true });
   const L = cfg.limits;
   const json = (limit: number) => express.json({ limit, type: "application/json" });
 
@@ -154,7 +154,7 @@ export const apiRouter = (
         .status(e.status)
         .json({ error: { code: "invalid_request", message: e.message ?? "Bad request." } });
     } else {
-      console.error("api error:", (err as Error)?.stack ?? err);
+      console.error("api error:", redactIds(String((err as Error)?.stack ?? err)));
       res
         .status(500)
         .json({ error: { code: "internal", message: "Something went wrong on the server." } });

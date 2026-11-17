@@ -100,13 +100,15 @@ export const normalizeHostEntry = (entry: string): string => {
     const end = raw.indexOf("]");
     if (end < 0) throw new ConfigError(`"${entry}" has an unclosed IPv6 bracket`);
     const rest = raw.slice(end + 1);
-    if (rest && !/^:\d{1,5}$/.test(rest)) throw new ConfigError(`"${entry}" has a bad port`);
+    if (rest && !(/^:\d{1,5}$/.test(rest) && Number(rest.slice(1)) <= 65535))
+      throw new ConfigError(`"${entry}" has a bad port`);
     host = raw.slice(0, end + 1);
   } else if ((raw.match(/:/g) ?? []).length >= 2) {
     host = `[${raw}]`; // bare IPv6 literal such as ::1 or fe80::1
   } else {
     const m = /^([^:]+)(?::(\d{1,5}))?$/.exec(raw);
-    if (!m) throw new ConfigError(`"${entry}" has a bad port`);
+    if (!m || (m[2] !== undefined && Number(m[2]) > 65535))
+      throw new ConfigError(`"${entry}" has a bad port`);
     host = m[1];
   }
   let parsed: string;

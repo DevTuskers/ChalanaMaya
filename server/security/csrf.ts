@@ -4,11 +4,12 @@
  *  1. `Sec-Fetch-Site: cross-site` is refused;
  *  2. a present `Origin` must be the address the request came to (whose Host the host
  *     check accepted), PUBLIC_URL's origin, or, for /mcp, one of ALLOWED_ORIGINS;
- *  3. REST also needs `X-ChalanaMaya: 1`, which forces a CORS preflight that fails
- *     (the server sends no CORS headers), and which HTML forms cannot set.
+ *  3. every state-changing request except /mcp (REST, and any other path) also
+ *     needs `X-ChalanaMaya: 1`, which forces a CORS preflight that fails (the
+ *     server sends no CORS headers), and which HTML forms cannot set.
  */
 import type { NextFunction, Request, Response } from "express";
-import { sendRefusal } from "./host";
+import { normalHost, routeKind, sendRefusal } from "./host";
 
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -22,10 +23,8 @@ const sameOrigin = (origin: string, host: string | string[] | undefined) => {
   if (typeof host !== "string") return false;
   try {
     const u = new URL(origin);
-    return (
-      (u.protocol === "http:" || u.protocol === "https:") &&
-      u.host === new URL(`http://${host}`).host
-    );
+    const h = normalHost(host);
+    return (u.protocol === "http:" || u.protocol === "https:") && h !== null && u.host === h;
   } catch {
     return false;
   }
@@ -49,14 +48,15 @@ export const crossSiteReason = (
 export const crossSiteGuard =
   (opts: GuardOptions) => (req: Request, res: Response, next: NextFunction) => {
     if (!STATE_CHANGING.has(req.method)) return next();
-    const p = req.path;
-    const isMcp = p === "/mcp";
-    const isApi = p.startsWith("/api/");
-    if (!isMcp && !isApi) return next();
+    // Every state-changing request is guarded whatever its path, so a path that
+    // routes differently from how it reads (`/API/x`, `/mcp/`) cannot slip past.
+    // Only /mcp (matched like the router: any case, trailing slash) gets the
+    // looser rules for agent clients; everything else follows the REST rules.
+    const isMcp = routeKind(req.originalUrl || req.url) === "mcp";
     const origins = isMcp ? [...opts.appOrigins, ...opts.mcpOrigins] : opts.appOrigins;
     const reason = crossSiteReason(req.headers, origins);
     if (reason) return sendRefusal(req, res, 403, "cross_site_refused", reason);
-    if (isApi && req.headers["x-chalanamaya"] !== "1")
+    if (!isMcp && req.headers["x-chalanamaya"] !== "1")
       return sendRefusal(
         req,
         res,

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_LIMITS, type Limits } from "../config";
 import { openDatabase } from "../db/schema";
 import { ServiceError } from "../errors";
-import { createImage, createText } from "../../src/scene/elements";
+import { createImage, createLinear, createText } from "../../src/scene/elements";
+import path from "node:path";
 import { newPushId } from "../../src/shared/ids";
 import { injectionCorpus } from "../../src/shared/corpus";
 import { GIF, keys, PNG, put, rect, tempDir } from "../test/helpers";
@@ -241,6 +242,48 @@ describe("SessionService", () => {
     expect(s.snapshot(sessionId).elements[0].needsLayout).toBe(false);
   });
 
+  it("a layout correction may change a container's height but not other items' height", () => {
+    const s = make();
+    const { sessionId } = s.create();
+    const box = rect();
+    const line = createLinear("line", 0, 0, undefined, [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+    ]);
+    line.width = 10;
+    line.height = 10;
+    s.apply(sessionId, push([put(box, "a0"), put(line, "a1")]), { origin: BROWSER, atomic: false });
+    s.db.prepare("UPDATE elements SET needs_layout = 1").run();
+    const r = s.apply(
+      sessionId,
+      push([
+        { ...put({ ...box, height: box.height + 40 }, "a0", 1), layout: true },
+        { ...put({ ...line, height: 99 }, "a1", 1), layout: true },
+      ]),
+      { origin: BROWSER, atomic: false },
+    );
+    expect(r.ack.versions[box.id]).toBe(2);
+    expect(r.ack.rejected).toEqual([
+      expect.objectContaining({ id: line.id, reason: "layout_not_allowed" }),
+    ]);
+  });
+
+  it("the scene-bytes cap counts UTF-8 bytes, not characters", () => {
+    const text = (ch: string) => createText(0, 0, undefined, ch.repeat(2000));
+    const ascii = text("a");
+    const wide = text("\u0915"); // 3 bytes in UTF-8, 1 UTF-16 unit
+    const cap = JSON.stringify(ascii).length + 1000;
+    const s = make({ maxSceneBytes: cap });
+    const { sessionId } = s.create();
+    const ok = s.apply(sessionId, push([put(ascii)]), { origin: BROWSER, atomic: false });
+    expect(ok.ack.versions[ascii.id]).toBe(1);
+    const s2 = make({ maxSceneBytes: cap });
+    const b = s2.create().sessionId;
+    expect(JSON.stringify(wide).length).toBeLessThan(cap);
+    const r = s2.apply(b, push([put(wide)]), { origin: BROWSER, atomic: false });
+    expect(r.ack.rejected[0]?.reason).toBe("scene_too_large");
+  });
+
   it("pictures must reference this board's files; poster and fileMeta are set once", () => {
     const s = make();
     const { sessionId } = s.create();
@@ -389,5 +432,45 @@ describe("SessionService", () => {
     s.maintenance();
     expect(() => s.meta(empty)).toThrow(ServiceError);
     expect(s.meta(used).element_count).toBe(1);
+  });
+
+  it("maintenance keeps boards that were changed, even with no items left", () => {
+    const s = make();
+    const titled = s.create().sessionId;
+    s.apply(titled, push([{ t: "settings", settings: { title: "Only a title" } }]), {
+      origin: BROWSER,
+      atomic: false,
+    });
+    const emptied = s.create().sessionId;
+    const r = rect();
+    s.apply(emptied, push([put(r)]), { origin: BROWSER, atomic: false });
+    s.apply(emptied, push([{ t: "del", id: r.id, baseVersion: 1 }]), {
+      origin: BROWSER,
+      atomic: false,
+    });
+    clock += 40 * 24 * 3600_000; // past the tombstone purge too
+    s.maintenance();
+    expect(s.meta(titled).title).toBe("Only a title");
+    expect(s.meta(emptied).element_count).toBe(0);
+  });
+
+  it("an upload whose insert fails leaves no file; maintenance sweeps orphan files", () => {
+    const s = make();
+    const sid = s.create().sessionId;
+    s.db.exec(
+      "CREATE TRIGGER fail_files BEFORE INSERT ON files BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    expect(() => s.addFile(sid, PNG, "image/png")).toThrow(/boom/);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    s.db.exec("DROP TRIGGER fail_files");
+    const kept = s.addFile(sid, PNG, "image/png");
+    const orphan = path.join(dir, "f".repeat(64));
+    fs.writeFileSync(orphan, "x");
+    fs.writeFileSync(`${orphan}.abc.tmp`, "x");
+    const old = new Date(clock - 2 * 3600_000);
+    fs.utimesSync(orphan, old, old);
+    fs.utimesSync(`${orphan}.abc.tmp`, old, old);
+    s.maintenance();
+    expect(fs.readdirSync(dir)).toEqual([path.basename(s.fileForDownload(sid, kept.id).path)]);
   });
 });

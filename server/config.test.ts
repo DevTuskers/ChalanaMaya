@@ -12,7 +12,16 @@ describe("ALLOWED_HOSTS normalisation", () => {
   });
 
   it("refuses schemes, paths and wildcards", () => {
-    for (const bad of ["http://x.lan", "x.lan/path", "*.lan", "x.lan:abc", "a b", ""])
+    for (const bad of [
+      "http://x.lan",
+      "x.lan/path",
+      "*.lan",
+      "x.lan:abc",
+      "a b",
+      "",
+      "x.lan:65536",
+      "[::1]:70000",
+    ])
       expect(() => normalizeHostEntry(bad), bad).toThrow();
   });
 

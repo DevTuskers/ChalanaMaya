@@ -4,12 +4,9 @@
  * see docs/setup.md.
  */
 import http from "node:http";
-import type { Duplex } from "node:stream";
 import { createApp, VERSION } from "./app";
-import { appOrigins, ConfigError, loadConfig } from "./config";
+import { ConfigError, loadConfig } from "./config";
 import { runSmokeIsolated, SmokeError } from "./db/smoke";
-import { crossSiteReason } from "./security/csrf";
-import { checkUpgradeHost } from "./security/host";
 
 const fail = (msg: string): never => {
   console.error(`ChalanaMaya could not start: ${msg}`);
@@ -34,30 +31,13 @@ const main = async () => {
   }
   const handle = createApp(cfg);
   const servers: http.Server[] = [];
-  const onUpgrade = function (
-    this: http.Server,
-    req: http.IncomingMessage,
-    socket: Duplex,
-    head: Buffer,
-  ) {
-    if (!checkUpgradeHost(req, socket, cfg.allowedHosts)) return;
-    if (cfg.dev && req.url?.startsWith("/__vite_hmr")) {
-      // Vite's HMR socket listens on the first server; pass the others' upgrades to it
-      if (this !== servers[0]) servers[0]?.emit("upgrade", req, socket, head);
-      return;
-    }
-    if (crossSiteReason(req.headers, appOrigins(cfg))) {
-      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-      return;
-    }
-    // no socket endpoints yet: live sync arrives in phase 3
-    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-  };
   // Loopback only by default (127.0.0.1 and ::1); HOST picks one address instead.
   const addresses = cfg.host ? [cfg.host] : ["127.0.0.1", "::1"];
   for (const address of addresses) {
     const server = http.createServer(handle.app);
-    server.on("upgrade", onUpgrade);
+    server.on("upgrade", (req, socket, head) =>
+      handle.upgrade(server, servers[0] ?? server, req, socket, head),
+    );
     const ok = await new Promise<boolean>((resolve) => {
       server.once("error", (e: NodeJS.ErrnoException) => {
         if (e.code === "EADDRINUSE") fail(`port ${cfg.port} is already in use (set PORT)`);
