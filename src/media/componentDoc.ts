@@ -5,8 +5,10 @@
  * frame holding it has sandbox="" (no scripts, no same origin).
  */
 import type { DOMPurify as Purifier } from "dompurify";
+import { resolveColor } from "../render/shapes";
 import {
   DATA_IMAGE_RE,
+  PRESET_SURFACES,
   decodeCssEscapes,
   renderPreset,
   type ComponentSource,
@@ -80,8 +82,6 @@ const ALLOWED_TAGS = [
   "stop",
   "clippath",
   "mask",
-  "animate",
-  "animatetransform",
 ];
 const ALLOWED_ATTR = [
   "class",
@@ -134,13 +134,6 @@ const ALLOWED_ATTR = [
   "font-weight",
   "text-anchor",
   "dominant-baseline",
-  "attributename",
-  "from",
-  "to",
-  "values",
-  "dur",
-  "repeatcount",
-  "begin",
   "type",
   "colspan",
   "rowspan",
@@ -199,6 +192,11 @@ export const sanitizeHtml = (purify: Purifier, html: string): string => {
       "a",
       "use",
       "image",
+      // SMIL keeps running when the board pauses components, so it is refused
+      "animate",
+      "animatetransform",
+      "animatemotion",
+      "set",
     ],
     ALLOW_DATA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false,
@@ -207,8 +205,15 @@ export const sanitizeHtml = (purify: Purifier, html: string): string => {
   }) as string;
 };
 
-const BASE_CSS =
-  "*,*::before,*::after{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:#193a36;font-family:system-ui,sans-serif}";
+/**
+ * The frame is given a fixed light colour scheme (LiveMedia sets
+ * color-scheme: light on the iframe too). When the board page is dark and the
+ * frame's document is not, Chromium paints an opaque canvas behind the frame;
+ * with both light the frame stays see-through in either theme. Text colours
+ * follow the board theme instead, through baseCss and the preset surfaces.
+ */
+const baseCss = (theme: "light" | "dark") =>
+  `:root{color-scheme:light}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:${PRESET_SURFACES[theme].ink};font-family:system-ui,sans-serif}`;
 const PAUSED_CSS =
   "*,*::before,*::after{animation-play-state:paused!important;transition:none!important}";
 
@@ -217,14 +222,21 @@ export const buildComponentDoc = (
   purify: Purifier,
   source: ComponentSource,
   paused: boolean,
+  theme: "light" | "dark" = "light",
 ): string => {
   const { html, css } =
-    source.kind === "preset" ? renderPreset(source.preset, source.params) : source;
+    source.kind === "preset"
+      ? renderPreset(source.preset, source.params, {
+          theme,
+          ink: (c) => resolveColor(c, theme),
+        })
+      : source;
   return (
     "<!doctype html><html><head>" +
     `<meta http-equiv="Content-Security-Policy" content="${COMPONENT_CSP}">` +
     '<meta charset="utf-8">' +
-    `<style>${BASE_CSS}${paused ? PAUSED_CSS : ""}</style>` +
+    '<meta name="color-scheme" content="light">' +
+    `<style>${baseCss(theme)}${paused ? PAUSED_CSS : ""}</style>` +
     `<style>${filterCss(css)}</style>` +
     `</head><body>${sanitizeHtml(purify, html)}</body></html>`
   );

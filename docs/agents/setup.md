@@ -1,6 +1,6 @@
 # Running ChalanaMaya and connecting agents
 
-Status: the ChalanaMaya server runs, keeps every board, syncs open tabs live and has a built-in MCP server for agents (phases 1b–4 of the [agent canvas plan](../plans/agent-canvas.md)). Opening `/` starts a board at `/s/<id>`; the main menu copies the board link or id, and that id is all an agent needs. A board kept by the earlier browser-only version is offered for import on boards opened at the same address (`http://localhost:5183` by default; start once with `PORT=5184` for boards saved there).
+Status: the ChalanaMaya server runs, keeps every board, syncs open tabs live and has a built-in MCP server for agents; boards hold GIFs, videos, media links and sandboxed animated components, and can be deleted (all phases, 1a–6, of the [agent canvas plan](../plans/agent-canvas.md) are in). Opening `/` starts a board at `/s/<id>`; the main menu copies the board link or id, and that id is all an agent needs. A board kept by the earlier browser-only version is offered for import on boards opened at the same address (`http://localhost:5183` by default; start once with `PORT=5184` for boards saved there).
 
 ## Run the server
 

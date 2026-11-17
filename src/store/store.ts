@@ -185,8 +185,25 @@ export class Store {
   onSceneChange: (() => void) | null = null;
   /** Called after a history step (commit, undo, redo): the save path writes at once. */
   onCommit: (() => void) | null = null;
+  private _viewSize = { width: 1024, height: 768 };
+  private viewSizeListeners = new Set<Listener>();
   /** CSS-pixel size of the canvas, kept current by the canvas component. */
-  viewSize = { width: 1024, height: 768 };
+  get viewSize() {
+    return this._viewSize;
+  }
+  set viewSize(v: { width: number; height: number }) {
+    if (v.width === this._viewSize.width && v.height === this._viewSize.height) return;
+    this._viewSize = v;
+    for (const fn of this.viewSizeListeners) fn();
+  }
+  /** Listens for canvas size changes (the HTML layers over the board follow them). */
+  subscribeViewSize = (fn: Listener) => {
+    this.viewSizeListeners.add(fn);
+    return () => {
+      this.viewSizeListeners.delete(fn);
+    };
+  };
+  getViewSize = () => this._viewSize;
   /** Window hosting the app (set on mount), used for opening links. */
   ownerWindow: Window | null = null;
   /** Last pointer position over the canvas, in screen px. */

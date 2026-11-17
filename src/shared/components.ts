@@ -213,13 +213,31 @@ export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.cha
 
 const num = (v: ParamValue) => String(Number(v));
 
+/** The surface colours presets use for text and tracks, per board theme. */
+export const PRESET_SURFACES = {
+  light: { ink: "#193a36", track: "#e3ebe9", card: "#ffffff", line: "#e8eeec", sheen: "#f6f9f8" },
+  dark: { ink: "#edf8f3", track: "#2c4441", card: "#223533", line: "#2f4946", sheen: "#3d5a56" },
+} as const;
+
+export interface PresetLook {
+  theme?: "light" | "dark";
+  /** how a stored colour is shown in this theme (palette inks get a dark variant) */
+  ink?: (color: string) => string;
+}
+
 /** Builds a preset's HTML and CSS (our own markup; parameters already checked). */
 export const renderPreset = (
   name: string,
   params: Record<string, ParamValue>,
+  look: PresetLook = {},
 ): { html: string; css: string } => {
   const def = presetByName(name) ?? PRESETS[0];
-  const v = presetValues(def, params);
+  const ink = look.ink ?? ((x: string) => x);
+  const surf = PRESET_SURFACES[look.theme ?? "light"];
+  const raw = presetValues(def, params);
+  const v: Record<string, ParamValue> = {};
+  for (const p of def.params)
+    v[p.name] = p.type === "color" ? ink(String(raw[p.name])) : raw[p.name]!;
   const c = String(v.color ?? "#007f78");
   const s = num(v.speed ?? 1);
   const base =
@@ -244,14 +262,14 @@ export const renderPreset = (
       const label = String(v.label ?? "");
       return {
         html: `<div class="w">${label ? `<div class="l">${escapeHtml(label)}</div>` : ""}<div class="b"><div class="f"></div></div></div>`,
-        css: `${base}.w{width:88%}.l{font-size:14px;color:#193a36;margin-bottom:6px}.b{height:14px;border-radius:7px;background:#e3ebe9;overflow:hidden}.f{height:100%;width:${num(v.value ?? 0)}%;border-radius:7px;background:${c};background-image:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);background-size:50% 100%;background-repeat:no-repeat;animation:sheen 1.6s linear infinite}@keyframes sheen{from{background-position:-100% 0}to{background-position:200% 0}}`,
+        css: `${base}.w{width:88%}.l{font-size:14px;color:${surf.ink};margin-bottom:6px}.b{height:14px;border-radius:7px;background:${surf.track};overflow:hidden}.f{height:100%;width:${num(v.value ?? 0)}%;border-radius:7px;background:${c};background-image:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);background-size:50% 100%;background-repeat:no-repeat;animation:sheen 1.6s linear infinite}@keyframes sheen{from{background-position:-100% 0}to{background-position:200% 0}}`,
       };
     }
     case "shimmer-card": {
       const lines = Math.round(Number(v.lines ?? 3));
       return {
         html: `<div class="c"><div class="h"></div>${'<div class="ln"></div>'.repeat(lines)}</div>`,
-        css: `${base}.c{width:90%;padding:6%;box-sizing:border-box;border-radius:12px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12)}.h,.ln{height:12px;margin:8px 0;border-radius:6px;background:linear-gradient(90deg,#e8eeec 25%,#f6f9f8 50%,#e8eeec 75%);background-size:200% 100%;animation:sh 1.4s linear infinite}.h{width:45%;height:16px}.ln:last-child{width:70%}@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}`,
+        css: `${base}.c{width:90%;padding:6%;box-sizing:border-box;border-radius:12px;background:${surf.card};box-shadow:0 1px 4px rgba(0,0,0,.12)}.h,.ln{height:12px;margin:8px 0;border-radius:6px;background:linear-gradient(90deg,${surf.line} 25%,${surf.sheen} 50%,${surf.line} 75%);background-size:200% 100%;animation:sh 1.4s linear infinite}.h{width:45%;height:16px}.ln:last-child{width:70%}@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}`,
       };
     }
     case "marquee":
@@ -317,7 +335,7 @@ export interface ContentRule {
 const HTML_RULES: { re: RegExp; rule: string; message: string }[] = [
   { re: /<\s*script/i, rule: "no_scripts", message: "Scripts (<script>) are not allowed." },
   {
-    re: /<[^>]*\s(?:on[a-z]+)\s*=/i,
+    re: /<[^>]*[\s/](?:on[a-z]+)\s*=/i,
     rule: "no_event_attributes",
     message: "Event attributes such as onclick or onerror are not allowed.",
   },
@@ -341,6 +359,12 @@ const HTML_RULES: { re: RegExp; rule: string; message: string }[] = [
     re: /<\s*style\b/i,
     rule: "no_style_in_html",
     message: "Put CSS in the CSS box, not in a <style> element.",
+  },
+  {
+    re: /<\s*(?:animate|animateTransform|animateMotion|set)\b/i,
+    rule: "no_svg_animation",
+    message:
+      "SVG animation elements (<animate>, <animateTransform>, <animateMotion>, <set>) are not allowed; use CSS @keyframes, which pause with the board.",
   },
   {
     re: /<\s*foreignObject\b/i,
@@ -419,6 +443,7 @@ export const COMPONENT_RULES = [
   `HTML and CSS: at most ${COMPONENT_LIMITS.contentBytes / 1024} KB each.`,
   "No scripts, event attributes (onclick, onerror…) or javascript: links.",
   "No frames, objects, embeds, forms, <meta>, <link>, <base> or <style> in the HTML.",
+  "Animate with CSS @keyframes and transitions; SVG <animate>/<set> elements are not allowed (they would not pause).",
   "Nothing from the internet: url(), src and href may only hold data: pictures (PNG, JPEG, GIF, WebP); no @import.",
   "Components are look-only: they cannot be clicked, open windows or change the board.",
 ] as const;

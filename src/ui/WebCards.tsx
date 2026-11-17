@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getElementBounds } from "../scene/geometry";
 import type { EmbedElement, Viewport } from "../scene/types";
 import { resolveWebCard, WEB_CARD_HEADER, WEB_CARD_SANDBOX } from "../scene/webcard";
@@ -25,8 +25,9 @@ export const WebCards = () => {
   const viewport = useAppState((s) => s.viewport);
   const active = useAppState((s) => s.activeEmbedId);
   const editing = useAppState((s) => s.editingTextId);
+  const viewSize = useSyncExternalStore(store.subscribeViewSize, store.getViewSize);
   const cards = elements.filter(
-    (e): e is EmbedElement => e.type === "embed" && onScreen(e, viewport, store.viewSize),
+    (e): e is EmbedElement => e.type === "embed" && onScreen(e, viewport, viewSize),
   );
   const layerRef = useRef<HTMLDivElement>(null);
   const [trapped, setTrapped] = useState(false);

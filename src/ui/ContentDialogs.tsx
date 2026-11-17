@@ -329,6 +329,7 @@ export const ComponentDialog = ({ onClose }: { onClose: () => void }) => {
   const [html, setHtml] = useState(SAMPLE_HTML);
   const [css, setCss] = useState(SAMPLE_CSS);
   const [error, setError] = useState<string | null>(null);
+  const theme = useAppState((s) => s.theme);
   const def = presetByName(preset)!;
   const source: ComponentSource =
     mode === "preset" ? { kind: "preset", preset, params } : { kind: "custom", html, css };
@@ -342,9 +343,9 @@ export const ComponentDialog = ({ onClose }: { onClose: () => void }) => {
             : null;
         })();
   const doc = useMemo(
-    () => (problem ? "" : buildComponentDoc(DOMPurify, source, false)),
+    () => (problem ? "" : buildComponentDoc(DOMPurify, source, false, theme)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, preset, JSON.stringify(params), html, css, !!problem],
+    [mode, preset, JSON.stringify(params), html, css, !!problem, theme],
   );
   return (
     <Modal title="Animated component" onClose={onClose} testId="component-dialog">
@@ -495,6 +496,7 @@ export const ComponentDialog = ({ onClose }: { onClose: () => void }) => {
             title="Preview"
             sandbox=""
             referrerPolicy="no-referrer"
+            style={{ colorScheme: "light" }}
             srcDoc={doc}
           />
         )}

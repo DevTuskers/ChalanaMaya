@@ -15,7 +15,7 @@ import {
 import { validateStoredElement } from "../shared/validate";
 import { createComponent } from "../scene/elements";
 import { parseBoard, serializeBoard } from "../io/serialize";
-import { componentCardSvg } from "../render/componentCard";
+import { componentCardSvg, componentStill } from "../render/componentCard";
 
 const purify = DOMPurify;
 const parse = (html: string) => new DOMParser().parseFromString(html, "text/html");
@@ -38,6 +38,13 @@ const HTML_ATTACKS = [
   '<svg><foreignObject><body onload="alert(1)"></body></foreignObject></svg>',
   '<img src="https://evil.example/track.png">',
   '<div style="background:url(https://evil.example/t.png)">x</div>',
+  // event attributes after a slash instead of a space (HTML treats "/" as a separator)
+  '<img/onerror=alert(1) src="data:image/png;base64,AA">',
+  "<svg/onload=alert(1)>",
+  // SMIL would keep moving while the board pauses components
+  '<svg><circle r="1"><animate attributeName="r" from="1" to="5" dur="1s"/></circle></svg>',
+  '<svg><rect><animateTransform attributeName="transform" type="rotate"/></rect></svg>',
+  '<svg><set attributeName="fill" to="red"/></svg>',
 ];
 const CSS_ATTACKS = [
   '@import url("https://evil.example/a.css");',
@@ -88,7 +95,7 @@ describe("sanitiser and CSS filter", () => {
     for (const h of HTML_ATTACKS) {
       const out = sanitizeHtml(purify, h).toLowerCase();
       expect(out, h).not.toMatch(
-        /<script|onerror|onclick|onload|javascript:|<iframe|<object|<embed|<form|<meta|<link|<base|<style|foreignobject|https?:|<a[\s>]/,
+        /<script|onerror|onclick|onload|javascript:|<iframe|<object|<embed|<form|<meta|<link|<base|<style|foreignobject|https?:|<a[\s>]|<animate|<set[\s>/]/,
       );
     }
     for (const c of CSS_ATTACKS) {
@@ -136,9 +143,33 @@ describe("srcdoc shell", () => {
           d.querySelectorAll("script, iframe, object, embed, form, link, base, a"),
         ).toHaveLength(0);
         expect(d.querySelectorAll("style")).toHaveLength(2);
-        expect(d.querySelectorAll("meta")).toHaveLength(2);
+        expect(d.querySelectorAll("meta")).toHaveLength(3);
         expect(d.head.firstElementChild?.getAttribute("content")).toBe(COMPONENT_CSP);
       }
+  });
+
+  it("declares a light colour scheme so the frame stays see-through on a dark board", () => {
+    const src = { kind: "preset" as const, preset: "marquee" as const, params: {} };
+    for (const theme of ["light", "dark"] as const) {
+      const d = parse(buildComponentDoc(purify, src, false, theme));
+      expect(d.querySelector('meta[name="color-scheme"]')?.getAttribute("content")).toBe("light");
+      expect(d.head.textContent).toMatch(/:root\{color-scheme:light\}/);
+      expect(d.head.textContent).toMatch(/background:transparent/);
+    }
+    // text follows the board theme: the default ink is light on the dark board
+    const dark = buildComponentDoc(purify, src, false, "dark");
+    expect(dark).toMatch(/color:#edf8f3/);
+    expect(dark).not.toMatch(/#193a36/);
+    const bar = buildComponentDoc(
+      purify,
+      { kind: "preset", preset: "progress-bar", params: { label: "Build" } },
+      false,
+      "dark",
+    );
+    expect(bar).toMatch(/\.l\{font-size:14px;color:#edf8f3/);
+    // an explicit non-palette colour is kept as it is
+    const own = renderPreset("typing-dots", { color: "#ff00ff" }, { theme: "dark" });
+    expect(own.css).toMatch(/#ff00ff/);
   });
 
   it("paused (reduced motion) adds the paused rule", () => {
@@ -209,6 +240,46 @@ describe("component element", () => {
     expect(svg).toMatch(/Live/);
     expect(svg).toMatch(/Animated component/);
     expect(componentCardSvg(custom, "dark")).toMatch(/Custom component/);
+  });
+
+  it("export cards show a still picture of each preset, readable in both themes", () => {
+    for (const p of PRESETS) {
+      const c = createComponent(0, 0, { kind: "preset", preset: p.name, params: {} }, "");
+      const sized = { ...c, width: p.width, height: Math.max(p.height, 120) };
+      for (const theme of ["light", "dark"] as const) {
+        const still = componentStill(sized, theme);
+        expect(still.length, `${p.name} ${theme}`).toBeGreaterThan(0);
+        const svg = componentCardSvg(sized, theme);
+        expect(svg).toContain(`data-component-still="${p.name}"`);
+        if (theme === "dark") expect(svg, p.name).not.toMatch(/#193a36/);
+      }
+    }
+    // custom components and tiny cards have no picture
+    const custom = createComponent(0, 0, { kind: "custom", html: "<p>x</p>", css: "" }, "");
+    expect(componentStill(custom, "light")).toEqual([]);
+    const tiny = { ...el, width: 12, height: 12 };
+    expect(componentStill(tiny, "light")).toEqual([]);
+  });
+
+  it("a file with an unsafe component still opens, without that component", () => {
+    const shape = { ...el, id: "ok" };
+    const bad = {
+      ...el,
+      id: "bad",
+      source: { kind: "custom", html: "<script>x</script>", css: "" },
+    };
+    const text = JSON.stringify({
+      type: "chalana",
+      version: 2,
+      source: "test",
+      elements: [shape, bad],
+      files: {},
+      settings: {},
+    });
+    const back = parseBoard(text);
+    expect(back.elements.map((e) => e.id)).toEqual(["ok"]);
+    expect(back.skipped).toHaveLength(1);
+    expect(back.skipped![0]).toMatch(/source.html/);
   });
 });
 

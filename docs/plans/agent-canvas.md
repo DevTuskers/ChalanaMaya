@@ -790,6 +790,8 @@ Acceptance:
 - PNG/SVG exports show the static card; `.chalana` round trip keeps components; `prefers-reduced-motion` pauses component animations.
 - Deleting a board removes its rows and unreferenced media; its URL then shows the "does not exist" page; open tabs get `session_not_found`. Empty sessions older than 24 h are removed (integration test with a fake clock).
 - Docs index, status table and setup guides match the shipped behaviour.
+- Frames stay see-through and preset text readable on the dark board (dark-theme pixel check in `e2e/components.spec.ts`).
+- 5,000 elements seeded through MCP load in under 2 s, and a 200-op agent batch is applied in an open tab in under 100 ms (`e2e/perf-scale.spec.ts`).
 
 AGENT-12 (board preview PNG for agents) is not in these phases; see open question 7.
 

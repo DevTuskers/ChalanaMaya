@@ -84,7 +84,7 @@ A preset (see `list_component_presets` for each preset's `params`) and a custom 
 ] }
 ```
 
-No scripts, event attributes, outside `url()` or `@import`; HTML and CSS up to 20 KB each.
+No scripts, event attributes, outside `url()`, `@import` or SVG `<animate>`/`<set>` (use CSS `@keyframes`); HTML and CSS up to 20 KB each.
 
 ## Tidy
 

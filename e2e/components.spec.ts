@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { call, callError, httpClient } from "../server/mcp/testClient";
+import { PRESET_NAMES } from "../src/shared/components";
 import { boardBox, drag, freshBoard, serverBoard, sessionId, settled } from "./helpers";
 
 const BASE = "http://localhost:5184";
@@ -20,6 +21,9 @@ interface Item {
   y: number;
   width: number;
   height: number;
+  angle: number;
+  locked: boolean;
+  groupIds: string[];
   paused?: boolean;
 }
 const items = (page: Page): Promise<Item[]> =>
@@ -35,6 +39,9 @@ const items = (page: Page): Promise<Item[]> =>
         y: e.y,
         width: e.width,
         height: e.height,
+        angle: e.angle,
+        locked: e.locked,
+        groupIds: e.groupIds,
         paused: e.paused,
       })),
   );
@@ -186,6 +193,9 @@ const HTML_ATTACKS = [
   '<link rel="stylesheet" href="https://evil.example/link.css">',
   '<svg><foreignObject><img src="x" onerror="parent.document.title=\'pwned\'"></foreignObject></svg>',
   '<div style="background:url(https://evil.example/inline.png)">x</div>',
+  "<img/onerror=parent.document.title='pwned' src=\"data:image/png;base64,AA\">",
+  "<svg/onload=parent.document.title='pwned'>",
+  '<svg><rect width="9" height="9"><animate attributeName="width" to="90" dur="1s"/></rect></svg>',
 ];
 const CSS_ATTACKS = [
   '@import url("https://evil.example/import.css");',
@@ -305,4 +315,167 @@ test("deleting a board removes it and tells another open tab at once", async ({
   const e = await callError(client, "get_scene", { session_id: id });
   expect(e.code).toBe("session_not_found");
   await other.close();
+});
+
+/** The RGB of page pixels at screen points (one screenshot, read in the page). */
+const pixels = async (page: Page, pts: { x: number; y: number }[]) => {
+  const shot = (await page.screenshot()).toString("base64");
+  return page.evaluate(
+    async ({ b64, pts }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const c = new OffscreenCanvas(img.width, img.height);
+      const g = c.getContext("2d")!;
+      g.drawImage(img, 0, 0);
+      return pts.map((p) =>
+        Array.from(g.getImageData(Math.round(p.x), Math.round(p.y), 1, 1).data.slice(0, 3)),
+      );
+    },
+    { b64: shot, pts },
+  );
+};
+const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) <= 8);
+
+test("on the dark board live components stay see-through and their text is readable", async ({
+  page,
+}) => {
+  await freshBoard(page);
+  await connected(page);
+  const id = sessionId(page);
+  const r = await call(client, "add_elements", {
+    session_id: id,
+    elements: [
+      { type: "component", preset: "pulse", x: 100, y: 100, width: 160, height: 160 },
+      { type: "component", preset: "typing-dots", x: 400, y: 100, width: 200, height: 100 },
+      { type: "component", preset: "marquee", x: 100, y: 400, width: 360, height: 60 },
+      {
+        type: "component",
+        preset: "progress-bar",
+        params: { label: "Build" },
+        x: 500,
+        y: 400,
+        width: 320,
+        height: 80,
+      },
+    ],
+  });
+  const ids = (r.created as { id: string }[]).map((c) => c.id);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("menu-theme").click();
+  await expect(page.getByTestId("app")).toHaveAttribute("data-theme", "dark");
+  for (const eid of ids) {
+    const f = page.locator(`[data-testid="live-component"][data-id="${eid}"]`);
+    await expect(f).toBeVisible();
+    await expect(f).toHaveAttribute("data-theme", "dark");
+    await expect(f).toHaveCSS("color-scheme", "light");
+  }
+  await page.waitForTimeout(400);
+  const box = await boardBox(page);
+  const at = async (x: number, y: number) => {
+    const s = await toScreen(page, { x, y });
+    return { x: box.x + s.x, y: box.y + s.y };
+  };
+  // corners inside each frame (away from the animation) and the board next to them
+  const probes = [
+    await at(108, 108), // inside the pulse frame, outside the dot and its ring
+    await at(90, 90), // the board beside it
+    await at(406, 106), // typing-dots corner
+    await at(394, 94),
+    await at(104, 452), // under the marquee frame, below its text line
+    await at(480, 452), // the board between the marquee and the progress bar
+  ];
+  const px = await pixels(page, probes);
+  const board = px[1];
+  // the dark paper, not a white box
+  expect(board[0] + board[1] + board[2]).toBeLessThan(200);
+  expect(near(px[0], board), `pulse ${px[0]} vs ${board}`).toBe(true);
+  expect(near(px[2], px[3]), `typing-dots ${px[2]} vs ${px[3]}`).toBe(true);
+  expect(near(px[4], px[5]), `marquee ${px[4]} vs ${px[5]}`).toBe(true);
+
+  // text follows the theme: light ink on the dark board
+  const ink = "rgb(237, 248, 243)";
+  const marquee = page.frameLocator(`[data-testid="live-component"][data-id="${ids[2]}"]`);
+  await expect(marquee.locator(".m span")).toHaveCSS("color", ink);
+  const bar = page.frameLocator(`[data-testid="live-component"][data-id="${ids[3]}"]`);
+  await expect(bar.locator(".l")).toHaveText("Build");
+  await expect(bar.locator(".l")).toHaveCSS("color", ink);
+  const dots = page.frameLocator(`[data-testid="live-component"][data-id="${ids[1]}"]`);
+  await expect(dots.locator(".t i").first()).toHaveCSS("background-color", ink);
+});
+
+test("every preset can be added from the dialog and shows live", async ({ page }) => {
+  await freshBoard(page);
+  await connected(page);
+  for (const name of PRESET_NAMES) {
+    await page.getByTestId("menu-button").click();
+    await page.getByTestId("menu-insert-component").click();
+    await page.getByTestId("component-preset").selectOption(name);
+    await expect(page.getByTestId("component-preview")).toHaveAttribute("sandbox", "");
+    await page.getByTestId("component-save").click();
+    await expect(page.getByTestId("component-dialog")).toBeHidden();
+  }
+  const b = await serverBoard(page);
+  expect(
+    b.elements.map((e) => (e as unknown as { source: { preset: string } }).source.preset),
+  ).toEqual([...PRESET_NAMES]);
+  await expect(page.locator('[data-testid="live-component"]')).toHaveCount(PRESET_NAMES.length);
+  for (const f of await page.locator('[data-testid="live-component"]').all())
+    await expect(f).toHaveAttribute("sandbox", "");
+});
+
+test("components rotate, group, lock and undo like other items", async ({ page }) => {
+  await freshBoard(page);
+  await connected(page);
+  const id = sessionId(page);
+  await call(client, "add_elements", {
+    session_id: id,
+    elements: [
+      { type: "component", preset: "spinner", x: 200, y: 200, width: 120, height: 120 },
+      { type: "component", preset: "pulse", x: 500, y: 200, width: 120, height: 120 },
+    ],
+  });
+  await expect.poll(async () => (await items(page)).length).toBe(2);
+  const [a, b] = await items(page);
+  const frameA = page.locator(`[data-testid="live-component"][data-id="${a.id}"]`);
+  await expect(frameA).toBeVisible();
+
+  // select the first and rotate it from the handle above it
+  const c = await toScreen(page, { x: a.x + a.width / 2, y: a.y + a.height / 2 });
+  await page.mouse.click(c.box.x + c.x, c.box.y + c.y);
+  const top = await toScreen(page, { x: a.x + a.width / 2, y: a.y - 26 });
+  const right = await toScreen(page, { x: a.x + a.width + 80, y: a.y + a.height / 2 });
+  await drag(page, { x: top.x, y: top.y }, { x: right.x, y: right.y });
+  await expect.poll(async () => Math.abs((await items(page))[0].angle)).toBeGreaterThan(0.5);
+  expect(await frameA.evaluate((f) => (f as HTMLElement).style.transform)).toMatch(/rotate\(/);
+  // undo and redo the rotation
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(async () => (await items(page))[0].angle).toBe(0);
+  await page.keyboard.press(`${mod}+Shift+z`);
+  await expect.poll(async () => Math.abs((await items(page))[0].angle)).toBeGreaterThan(0.5);
+
+  // group both, then lock the group
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press(`${mod}+g`);
+  await expect
+    .poll(async () => {
+      const [x, y] = await items(page);
+      return x.groupIds.length === 1 && x.groupIds[0] === y.groupIds[0];
+    })
+    .toBe(true);
+  await page.keyboard.press(`${mod}+Shift+l`);
+  await expect.poll(async () => (await items(page)).every((e) => e.locked)).toBe(true);
+  // a locked component does not move when dragged
+  await page.keyboard.press("Escape");
+  const cb = await toScreen(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  await drag(page, { x: cb.x, y: cb.y }, { x: cb.x + 100, y: cb.y + 60 });
+  await page.waitForTimeout(200);
+  expect((await items(page))[1].x).toBe(b.x);
+  // undo the lock, then the group
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(async () => (await items(page)).some((e) => e.locked)).toBe(false);
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(async () => (await items(page)).every((e) => !e.groupIds.length)).toBe(true);
+  const saved = await serverBoard(page);
+  expect(saved.elements.every((e) => (e as unknown as { locked: boolean }).locked)).toBe(false);
 });

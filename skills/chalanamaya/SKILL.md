@@ -140,7 +140,7 @@ gradient-wave, with `params` such as `color`, `text`, `speed` or `value`; see
 exports show a still card with the title and "Animated component". Components run in a sandboxed
 frame with no scripts and no network, so they are look-only: no `<script>`, `on…` attributes,
 `javascript:` links, `@import`, outside `url()` (only `data:` pictures and fonts), frames, forms,
-links, meta or `<style>` tags in the HTML. Unsafe content fails with `unsafe_component` and names
+links, meta or `<style>` tags in the HTML, and no SVG `<animate>`/`<set>` (use CSS `@keyframes`, which pause with the board). Unsafe content fails with `unsafe_component` and names
 the rule; over 20 KB fails with `too_large`. `paused: true` holds it still; it moves, resizes and
 rotates like any item.
 

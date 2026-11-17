@@ -867,9 +867,14 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
           zoom: 1,
         },
       });
-      const extra = r.failedPictures
-        ? ` ${r.failedPictures} picture${r.failedPictures === 1 ? "" : "s"} could not be uploaded and were left out.`
-        : "";
+      const skipped = file.skipped?.length ?? 0;
+      const extra =
+        (r.failedPictures
+          ? ` ${r.failedPictures} picture${r.failedPictures === 1 ? "" : "s"} could not be uploaded and were left out.`
+          : "") +
+        (skipped
+          ? ` ${skipped} component${skipped === 1 ? " was" : "s were"} left out because ${skipped === 1 ? "its" : "their"} content is not allowed.`
+          : "");
       store.toast(
         r.summary ? `Board opened. ${r.summary}${extra}` : `Board opened.${extra}`,
         "success",

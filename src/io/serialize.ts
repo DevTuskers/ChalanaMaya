@@ -28,6 +28,8 @@ export interface ChalanaFile {
   elements: SceneElement[];
   files: FileMap;
   settings: BoardSettings;
+  /** reasons for items left out when the file was read (not written) */
+  skipped?: string[];
 }
 
 export interface ClipboardPayload {
@@ -38,6 +40,8 @@ export interface ClipboardPayload {
 }
 
 export class FormatError extends Error {}
+/** An item that can't be used but does not spoil the rest of the file (it is skipped). */
+export class SkippableItemError extends FormatError {}
 
 const ELEMENT_TYPES = new Set([
   "rectangle",
@@ -189,7 +193,7 @@ export const parseElement = (raw: unknown): SceneElement => {
     case "component": {
       // the content is kept exactly (no repair): unsafe or oversized content is refused
       const bad = checkComponentSource(raw.source);
-      if (bad) throw new FormatError(`A component can't be used: ${bad.path} ${bad.reason}`);
+      if (bad) throw new SkippableItemError(`A component can't be used: ${bad.path} ${bad.reason}`);
       return {
         ...base,
         type,
@@ -271,9 +275,22 @@ export const parseFiles = (raw: unknown, opts: { sessionPaths?: boolean } = {}):
   return files;
 };
 
-const parseElements = (raw: unknown): SceneElement[] => {
+/**
+ * Parses the element list. An item with unsafe component content is skipped
+ * and reported (plan §3: unreadable items are reported and left out), so one
+ * bad component does not stop the whole file from opening.
+ */
+const parseElements = (raw: unknown, skipped: string[] = []): SceneElement[] => {
   if (!Array.isArray(raw)) throw new FormatError("The file has no element list.");
-  const els = raw.map(parseElement);
+  const els: SceneElement[] = [];
+  for (const r of raw) {
+    try {
+      els.push(parseElement(r));
+    } catch (err) {
+      if (!(err instanceof SkippableItemError)) throw err;
+      skipped.push(err.message);
+    }
+  }
   const ids = new Set<string>();
   for (const e of els) {
     if (ids.has(e.id)) throw new FormatError("The file contains duplicate element ids.");
@@ -325,11 +342,13 @@ export const parseBoardObject = (raw: unknown): ChalanaFile => {
     );
   }
   const settingsRaw = isObj(raw.settings) ? raw.settings : {};
+  const skipped: string[] = [];
   return {
     type: FILE_TYPE,
     version,
     source: typeof raw.source === "string" ? raw.source : "",
-    elements: parseElements(raw.elements),
+    elements: parseElements(raw.elements, skipped),
+    ...(skipped.length ? { skipped } : {}),
     files: parseFiles(raw.files),
     settings: {
       viewBackgroundColor: str(settingsRaw.viewBackgroundColor, PAPER.light),

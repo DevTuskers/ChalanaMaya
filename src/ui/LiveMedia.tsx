@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import DOMPurify from "dompurify";
 import { buildComponentDoc } from "../media/componentDoc";
-import type { ComponentElement } from "../scene/types";
+import type { ComponentElement, Theme } from "../scene/types";
 import {
   isMuted,
   isComponentPaused,
@@ -25,13 +25,14 @@ import { useAppState, useServices } from "./context";
  * never the /s/<id> path. They ignore the pointer (the board handles selection and
  * moves), and are left out of exports, which draw a placeholder card instead.
  */
-const docs = new WeakMap<ComponentElement["source"], Map<boolean, string>>();
+const docs = new WeakMap<ComponentElement["source"], Map<string, string>>();
 /** The srcdoc for a component, cached per source so the frame is not rebuilt on every paint. */
-const componentDoc = (el: ComponentElement, paused: boolean) => {
+const componentDoc = (el: ComponentElement, paused: boolean, theme: Theme) => {
   let m = docs.get(el.source);
   if (!m) docs.set(el.source, (m = new Map()));
-  let d = m.get(paused);
-  if (d === undefined) m.set(paused, (d = buildComponentDoc(DOMPurify, el.source, paused)));
+  const key = `${paused ? "p" : "r"}:${theme}`;
+  let d = m.get(key);
+  if (d === undefined) m.set(key, (d = buildComponentDoc(DOMPurify, el.source, paused, theme)));
   return d;
 };
 
@@ -48,9 +49,11 @@ export const LiveMedia = () => {
   const files = useAppState((s) => s.files);
   const viewport = useAppState((s) => s.viewport);
   const selected = useAppState((s) => s.selectedIds);
+  const theme = useAppState((s) => s.theme);
+  const viewSize = useSyncExternalStore(store.subscribeViewSize, store.getViewSize);
   useSyncExternalStore(subscribeMotion, reducedMotion, () => false);
   useSyncExternalStore(subscribePlayAnyway, playAnywayRevision, () => 0);
-  const items = liveMediaItems(elements, files, viewport, store.viewSize, selected);
+  const items = liveMediaItems(elements, files, viewport, viewSize, selected);
   const shownKey = items.map((el) => el.id).join(",");
   useEffect(() => {
     setLiveShown(shownKey ? shownKey.split(",") : []);
@@ -79,8 +82,17 @@ export const LiveMedia = () => {
               sandbox=""
               referrerPolicy="no-referrer"
               tabIndex={-1}
-              srcDoc={componentDoc(el, paused)}
-              style={{ width: el.width, height: el.height, transform, opacity: el.opacity / 100 }}
+              loading="lazy"
+              data-theme={theme}
+              srcDoc={componentDoc(el, paused, theme)}
+              style={{
+                width: el.width,
+                height: el.height,
+                transform,
+                opacity: el.opacity / 100,
+                // must match the srcdoc's own scheme, or Chromium paints the frame opaque on a dark page
+                colorScheme: "light",
+              }}
             />
           );
         }
