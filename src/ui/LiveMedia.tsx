@@ -1,10 +1,21 @@
-import { isMuted, isPlaying, isVideoFile, liveMediaItems, mediaKind } from "../render/media";
+import { useEffect } from "react";
+import {
+  isMuted,
+  isPlaying,
+  isVideoFile,
+  liveMediaItems,
+  markLiveLoaded,
+  mediaKind,
+  setLiveShown,
+} from "../render/media";
 import { useAppState, useServices } from "./context";
 
 /**
  * Remote media links (MEDIA-05), shown by the browser in HTML over the board
- * so they work without CORS. The server never fetches them; they are loaded
- * with no referrer, ignore the pointer (the board handles selection and
+ * so they work without CORS. The server never fetches them; pictures are
+ * loaded with no referrer, and videos (HTML gives <video> no referrerpolicy)
+ * with the page's strict-origin-when-cross-origin, which sends the origin but
+ * never the /s/<id> path. They ignore the pointer (the board handles selection and
  * moves), and are left out of exports, which draw a placeholder card instead.
  */
 export const LiveMedia = () => {
@@ -14,6 +25,11 @@ export const LiveMedia = () => {
   const viewport = useAppState((s) => s.viewport);
   const selected = useAppState((s) => s.selectedIds);
   const items = liveMediaItems(elements, files, viewport, store.viewSize, selected);
+  const shownKey = items.map((el) => el.id).join(",");
+  useEffect(() => {
+    setLiveShown(shownKey ? shownKey.split(",") : []);
+  }, [shownKey]);
+  useEffect(() => () => setLiveShown([]), []);
   if (!items.length) return null;
   return (
     <div className="livemedia" aria-hidden="true">
@@ -47,6 +63,7 @@ export const LiveMedia = () => {
               playsInline
               preload="metadata"
               autoPlay={playing}
+              onLoadedData={() => markLiveLoaded(el.id, f.dataURL)}
               ref={(v) => {
                 if (!v) return;
                 v.muted = isMuted(el.id);
@@ -57,7 +74,15 @@ export const LiveMedia = () => {
           );
         }
         return (
-          <img key={el.id} {...common} src={f.dataURL} alt="" draggable={false} decoding="async" />
+          <img
+            key={el.id}
+            {...common}
+            src={f.dataURL}
+            alt=""
+            draggable={false}
+            decoding="async"
+            onLoad={() => markLiveLoaded(el.id, f.dataURL)}
+          />
         );
       })}
     </div>

@@ -233,7 +233,15 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
   let size: { width: number; height: number };
   try {
     dataURL = await blobToDataURL(blob);
-    size = isVideoMime(blob.type) ? await videoSize(dataURL) : await imageSize(dataURL);
+    if (isVideoMime(blob.type)) {
+      // a blob: URL, because the page CSP (media-src) refuses data: video
+      const probe = URL.createObjectURL(blob);
+      try {
+        size = await videoSize(probe);
+      } finally {
+        URL.revokeObjectURL(probe);
+      }
+    } else size = await imageSize(dataURL);
   } catch {
     store.toast("That image could not be read. The board was not changed.", "error");
     return;

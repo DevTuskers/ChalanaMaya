@@ -44,8 +44,14 @@ const withInlineFiles = async (r: ImageExportRequest): Promise<ImageExportReques
     ? { ...r, files: await inlineFiles(r.files, usedFileIds(r.elements)) }
     : r;
 
-export const exportPngBlob = async (req: ImageExportRequest): Promise<Blob> => {
-  const r = await withInlineFiles(req);
+/**
+ * A PNG is drawn from the board's own files (same-origin session paths), so a
+ * video uses the <video> already on the board: a data: URL copy would swap the
+ * board's element for one the page's CSP (media-src) refuses, leaving a
+ * placeholder in the export and a stalled video on the board. Files are only
+ * inlined for the scene embedded in the PNG.
+ */
+export const exportPngBlob = async (r: ImageExportRequest): Promise<Blob> => {
   const canvas = await exportToCanvas(r.elements, r.files, {
     background: r.background,
     scale: r.scale,
@@ -55,7 +61,7 @@ export const exportPngBlob = async (req: ImageExportRequest): Promise<Blob> => {
   const blob = await canvasToBlob(canvas);
   if (!r.embedScene) return blob;
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const embedded = embedInPng(bytes, sceneJson(r));
+  const embedded = embedInPng(bytes, sceneJson(await withInlineFiles(r)));
   return new Blob([embedded.slice().buffer], { type: "image/png" });
 };
 

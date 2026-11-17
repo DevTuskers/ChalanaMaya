@@ -951,7 +951,8 @@ kbd {
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  object-fit: fill;
+  /* a link placed with the wrong shape keeps its own proportions */
+  object-fit: contain;
   display: block;
 }
 .webcards {

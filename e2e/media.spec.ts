@@ -113,7 +113,12 @@ const decode = (page: Page, b64: string) =>
         if (want.every((v, k) => Math.abs(d[i + k] - v) <= tol)) n++;
       return n;
     };
-    return { red: count([220, 30, 30]), card: count([238, 243, 241], 3) };
+    return {
+      red: count([220, 30, 30]),
+      card: count([238, 243, 241], 3),
+      darkCard: count([31, 42, 41], 3),
+      white: count([255, 255, 255], 2),
+    };
   }, b64);
 
 let client: Client;
@@ -154,6 +159,13 @@ test("a remote static PNG shows live, exports as a placeholder and the eyedroppe
   expect(seen.every((s) => !s.referer)).toBe(true);
   const shot = await decode(page, (await page.screenshot()).toString("base64"));
   expect(shot.red).toBeGreaterThan(20000);
+  // once the link shows live, the board draws no card under it (a transparent
+  // picture must not show the label through)
+  await page.addStyleTag({ content: ".livemedia { visibility: hidden !important; }" });
+  await expect
+    .poll(async () => (await decode(page, (await page.screenshot()).toString("base64"))).card)
+    .toBeLessThan(500); // the 240x160 card would be ~36,000 pixels; the interface has a few
+  await page.addStyleTag({ content: ".livemedia { visibility: visible !important; }" });
 
   // PNG export succeeds and shows the placeholder card, not the picture
   await page.keyboard.press(`${mod}+Shift+e`);
@@ -191,6 +203,36 @@ test("a remote static PNG shows live, exports as a placeholder and the eyedroppe
     })
     .toMatch(/^#[0-9a-f]{6}$/);
   expect(errors).toEqual([]);
+});
+
+test("a remote picture placed with the wrong shape keeps its proportions", async ({ page }) => {
+  await serveRemote(page);
+  await freshBoard(page);
+  await connected(page);
+  const placed = await call(client, "place_media", {
+    session_id: sessionId(page),
+    source: { url: "https://media.example.com/wide.png" },
+    x: 100,
+    y: 100,
+    width: 300,
+    height: 300,
+  });
+  const live = page.locator(`[data-testid="live-media"][data-id="${placed.id}"]`);
+  await expect
+    .poll(() => live.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+    .toBe(120);
+  await expect(live).toHaveCSS("object-fit", "contain");
+  // 120x80 fitted into 300x300 is 300x200 of red (not 300x300 stretched)
+  const zoom = await page.evaluate(
+    () =>
+      (window as unknown as { __chalanaMedia: { view(): { zoom: number } } }).__chalanaMedia.view()
+        .zoom,
+  );
+  await expect
+    .poll(async () => (await decode(page, (await page.screenshot()).toString("base64"))).red)
+    .toBeGreaterThan(300 * 200 * zoom * zoom * 0.85);
+  const red = (await decode(page, (await page.screenshot()).toString("base64"))).red;
+  expect(red).toBeLessThan(300 * 300 * zoom * zoom * 0.8);
 });
 
 test("an uploaded GIF animates, pauses, moves and syncs to another tab", async ({
@@ -339,6 +381,10 @@ test("a media link can be added from the menu", async ({ page }) => {
 });
 
 test("dropping a WebM file adds a playing video, and PNG export still works", async ({ page }) => {
+  const csp: string[] = [];
+  page.on("console", (m) => {
+    if (/violates|Content Security Policy/i.test(m.text())) csp.push(m.text());
+  });
   await freshBoard(page);
   await connected(page);
   const webm = (await readFile("test-fixtures/media/clip.webm")).toString("base64");
@@ -387,4 +433,38 @@ test("dropping a WebM file adds a playing video, and PNG export still works", as
     page.getByTestId("export-confirm").click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/\.png$/);
+
+  // the export shows a video frame with the play badge, not the "Video" card
+  const exported = await decode(page, (await readFile(await download.path())).toString("base64"));
+  expect(exported.card).toBe(0);
+  expect(exported.darkCard).toBe(0);
+  expect(exported.white).toBeGreaterThan(30);
+  expect(csp).toEqual([]);
+
+  // and the board's video keeps playing after the export
+  const time = () =>
+    page.evaluate(
+      (eid) =>
+        (
+          window as unknown as {
+            __chalanaMedia: { video(id: string): { currentTime: number; paused: boolean } | null };
+          }
+        ).__chalanaMedia.video(eid),
+      vid.id,
+    );
+  await page.waitForTimeout(300);
+  const t0 = (await time())!;
+  await page.waitForTimeout(250);
+  const t1 = (await time())!;
+  expect(t1.paused).toBe(false);
+  // the clip is 1 s long and loops: about 0.25 s passed (a stalled video stays put)
+  const moved = (t1.currentTime - t0.currentTime + 1) % 1;
+  expect(moved).toBeGreaterThan(0.08);
+  expect(moved).toBeLessThan(0.7);
+  const shots = new Set<string>();
+  for (let i = 0; i < 5; i++) {
+    shots.add(await pixelsOf(page, vid));
+    await page.waitForTimeout(120);
+  }
+  expect(shots.size).toBeGreaterThan(1);
 });

@@ -20,6 +20,11 @@ describe("remote media link rules (MEDIA-05)", () => {
     ["https://fileserver/a.png", "full site name"],
     ["https://Media.Example.com/a.png", "canonical"],
     ["not a url", "valid"],
+    ["https://example.com./a.png", "dot"],
+    ["https://localhost./a.png", "dot"],
+    ["https://127.0.0.1.nip.io/a.png", "IP address"],
+    ["https://10-0-0-1.sslip.io/a.png", "IP address"],
+    ["https://app.lvh.me/a.png", "IP address"],
   ])("refuses %s", (url, why) => {
     const r = checkRemoteUrl(url);
     expect(r.ok).toBe(false);

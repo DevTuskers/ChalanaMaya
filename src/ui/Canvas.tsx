@@ -15,6 +15,7 @@ import {
   isVideoFile,
   needsFrames,
   pruneVideos,
+  setLiveListener,
   setMediaListener,
   setMediaNoticeListener,
   videoCount,
@@ -398,6 +399,7 @@ export const Canvas = () => {
     };
     setImageLoadListener(repaint);
     setMediaListener(mediaChanged);
+    setLiveListener(repaint);
     setMediaNoticeListener((text) => store.toast(text, "info", 6000));
     // MEDIA-09: following the system "reduce motion" setting without a reload
     const motion = win.matchMedia?.("(prefers-reduced-motion: reduce)");

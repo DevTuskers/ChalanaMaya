@@ -160,7 +160,10 @@ export const gifFrame = (el: ImageElement, file: BinaryFile, now: number): Image
 };
 /* ---------------------------------------------------------------- videos */
 
-const videos = new Map<string, { el: HTMLVideoElement; src: string; seen: number }>();
+const videos = new Map<
+  string,
+  { el: HTMLVideoElement; src: string; fileId: string; seen: number }
+>();
 /** At most this many videos play at once; the others hold their frame. */
 export const MAX_PLAYING_VIDEOS = 6;
 const playingCount = () => {
@@ -171,7 +174,11 @@ const playingCount = () => {
 
 export const getVideo = (el: ImageElement, file: BinaryFile): HTMLVideoElement => {
   let v = videos.get(el.id);
-  if (!v || v.src !== file.dataURL) {
+  // an inlined (data: URL) copy of the same file keeps the loaded element: the
+  // page CSP refuses data: media, and swapping would stall the board's video
+  const sameFileCopy =
+    !!v && v.fileId === file.id && file.dataURL.startsWith("data:") && !v.src.startsWith("data:");
+  if (!v || (v.src !== file.dataURL && !sameFileCopy)) {
     v?.el.pause();
     const video = document.createElement("video");
     video.muted = isMuted(el.id);
@@ -181,7 +188,7 @@ export const getVideo = (el: ImageElement, file: BinaryFile): HTMLVideoElement =
     video.addEventListener("seeked", () => onFrameReady());
     video.addEventListener("ended", () => onFrameReady());
     video.src = file.dataURL;
-    v = { el: video, src: file.dataURL, seen: 0 };
+    v = { el: video, src: file.dataURL, fileId: file.id, seen: 0 };
     videos.set(el.id, v);
   }
   v.seen = performance.now();
@@ -234,6 +241,38 @@ export const pruneVideos = (
   }
 };
 export const videoCount = () => videos.size;
+
+/* ---------------------------------------------------------------- live layer state */
+
+/** Links the live layer has on screen now, and those whose bytes have loaded. */
+let liveNow = new Set<string>();
+/** A full board repaint (the still layer holds the cards under links). */
+let onLiveChanged: () => void = () => {};
+export const setLiveListener = (fn: () => void) => {
+  onLiveChanged = fn;
+};
+const liveLoaded = new Set<string>();
+const liveKey = (id: string, url: string) => `${id}\n${url}`;
+/** The live layer reports the items it shows (after each render). */
+export const setLiveShown = (ids: readonly string[]) => {
+  const next = new Set(ids);
+  const changed = next.size !== liveNow.size || ids.some((id) => !liveNow.has(id));
+  liveNow = next;
+  if (changed) onLiveChanged();
+};
+/** The live layer reports a link that finished loading. */
+export const markLiveLoaded = (id: string, url: string) => {
+  const k = liveKey(id, url);
+  if (liveLoaded.has(k)) return;
+  liveLoaded.add(k);
+  onLiveChanged();
+};
+/**
+ * Is this link showing live over the board right now? Then the board draws
+ * nothing under it (a transparent picture must not show the card through).
+ */
+export const isLiveShown = (el: ImageElement, file: BinaryFile) =>
+  liveNow.has(el.id) && liveLoaded.has(liveKey(el.id, file.dataURL));
 
 /* ---------------------------------------------------------------- placeholders */
 

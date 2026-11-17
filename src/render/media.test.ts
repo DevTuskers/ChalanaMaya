@@ -5,16 +5,21 @@ import { exportToSvg } from "../io/svg";
 import { FORMAT_VERSION, parseBoard, serializeBoard } from "../io/serialize";
 import {
   FramePacer,
+  getVideo,
   isAnimated,
+  isLiveShown,
   isLoopPaused,
   isPlaying,
   isRemote,
   LIVE_MEDIA_CAP,
   liveMediaItems,
+  markLiveLoaded,
   mediaClip,
   mediaKind,
   needsFrames,
+  pruneVideos,
   screenRect,
+  setLiveShown,
   setLoopPaused,
   setPlayAnyway,
 } from "./media";
@@ -225,5 +230,71 @@ describe("export and file format", () => {
       },
     });
     expect(() => parseBoard(text)).toThrow(/public https/);
+  });
+});
+
+describe("board videos and export copies", () => {
+  it("keeps the loaded <video> when an export passes a data: URL copy of the same file", () => {
+    const made: { src: string; paused: boolean; pause(): void }[] = [];
+    const fake = () => {
+      const v = {
+        src: "",
+        paused: true,
+        muted: true,
+        loop: true,
+        ended: false,
+        playsInline: false,
+        preload: "",
+        addEventListener() {},
+        pause() {
+          v.paused = true;
+        },
+        play() {
+          v.paused = false;
+          return Promise.resolve();
+        },
+        removeAttribute() {},
+        load() {},
+      };
+      made.push(v);
+      return v;
+    };
+    const g = globalThis as { document?: unknown };
+    const had = g.document;
+    g.document = { createElement: fake };
+    try {
+      const el = img("vid");
+      const board = getVideo(el, files.vid);
+      expect(board.src).toBe(files.vid.dataURL);
+      const copy = { ...files.vid, dataURL: "data:video/mp4;base64,AAAA" };
+      expect(getVideo(el, copy)).toBe(board);
+      expect(made).toHaveLength(1);
+      expect(board.paused).toBe(false);
+      // a different file for the item does replace it
+      const other = {
+        ...files.vid,
+        id: "vid2",
+        dataURL: "/api/sessions/abcdefghijklmnopqrstuvwx/files/vid2",
+      };
+      expect(getVideo(el, other)).not.toBe(board);
+      pruneVideos([]);
+    } finally {
+      g.document = had;
+    }
+  });
+
+  it("draws no card under a link only while it shows live and has loaded", () => {
+    const el = img("link");
+    expect(isLiveShown(el, files.link)).toBe(false);
+    setLiveShown([el.id]);
+    expect(isLiveShown(el, files.link)).toBe(false);
+    markLiveLoaded(el.id, files.link.dataURL);
+    expect(isLiveShown(el, files.link)).toBe(true);
+    // a different link for the same item has to load first
+    expect(isLiveShown(el, { ...files.link, dataURL: "https://media.example.com/b.webm" })).toBe(
+      false,
+    );
+    setLiveShown([]);
+    expect(isLiveShown(el, files.link)).toBe(false);
   });
 });

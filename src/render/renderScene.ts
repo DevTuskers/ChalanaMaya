@@ -1,6 +1,7 @@
 import rough from "roughjs";
 import {
   drawMediaPlaceholder,
+  isLiveShown,
   getVideo,
   gifFrame,
   isGifFile,
@@ -245,7 +246,8 @@ export const drawElement = (
     let nat = { w: 0, h: 0 };
     if (file && isRemote(file)) {
       // links are shown by the live layer; the canvas and exports get a card
-      drawMediaPlaceholder(ctx, el, file, theme);
+      // (nothing on the board once the live item has loaded over it)
+      if (ctxInfo.still || !isLiveShown(el, file)) drawMediaPlaceholder(ctx, el, file, theme);
     } else if (isVideoFile(file)) {
       const v = getVideo(el, file!);
       if (v.readyState >= 2 && v.videoWidth) {

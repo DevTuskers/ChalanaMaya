@@ -16,6 +16,12 @@ const PRIVATE_SUFFIXES = [
   ".corp",
 ];
 
+/**
+ * Public wildcard-DNS services that map a name to any IP written inside it
+ * (127.0.0.1.nip.io → 127.0.0.1). Refused by name; others may exist.
+ */
+const WILDCARD_IP_DNS = ["nip.io", "sslip.io", "xip.io", "traefik.me", "localtest.me", "lvh.me"];
+
 export type RemoteUrlCheck =
   { ok: true; url: string; host: string } | { ok: false; reason: string };
 
@@ -36,10 +42,14 @@ export const checkRemoteUrl = (raw: unknown): RemoteUrlCheck => {
   if (u.protocol !== "https:") return { ok: false, reason: "must start with https://" };
   if (u.username || u.password)
     return { ok: false, reason: "must not contain a user name or password" };
-  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (u.hostname.endsWith("."))
+    return { ok: false, reason: "must not end the site name with a dot" };
+  const host = u.hostname.toLowerCase();
   if (isIpHost(host)) return { ok: false, reason: "must use a site name, not an IP address" };
   if (host === "localhost" || PRIVATE_SUFFIXES.some((s) => host === s.slice(1) || host.endsWith(s)))
     return { ok: false, reason: "must not point to this computer or a private network name" };
+  if (WILDCARD_IP_DNS.some((d) => host === d || host.endsWith(`.${d}`)))
+    return { ok: false, reason: "must not use a name that maps to an IP address (such as nip.io)" };
   if (!host.includes(".")) return { ok: false, reason: "must use a full site name (with a dot)" };
   // canonical form: what the URL parser gives back, so every replica stores the same text
   if (u.href !== raw) return { ok: false, reason: `must be written in canonical form (${u.href})` };
