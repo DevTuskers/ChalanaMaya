@@ -8,7 +8,7 @@ import { formatKeys } from "./shortcuts";
 
 /** The board session: title, id, new board, links and recent boards (plan §4.1). */
 const SessionSection = ({ close }: { close: () => void }) => {
-  const { session } = useServices();
+  const { session, store } = useServices();
   const info = useAppState((s) => s.session);
   const viewMode = useAppState((s) => s.viewMode);
   const [title, setTitle] = useState(info?.title ?? "");
@@ -74,6 +74,17 @@ const SessionSection = ({ close }: { close: () => void }) => {
           onClick={act(session.copyId)}
         >
           Copy board id
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="session-connect-agent"
+          onClick={() => {
+            close();
+            store.set({ dialog: { kind: "connectAgent" } });
+          }}
+        >
+          Connect an agent…
         </button>
       </div>
       {recent.length ? (

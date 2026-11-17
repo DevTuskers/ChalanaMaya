@@ -57,6 +57,7 @@ export type Dialog =
   | { kind: "link"; elementId: string }
   | { kind: "openLink"; url: string }
   | { kind: "settings" }
+  | { kind: "connectAgent" }
   | { kind: "clear" }
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
   | { kind: "webcard"; at: { x: number; y: number } }

@@ -1,6 +1,6 @@
 # Running ChalanaMaya and connecting agents
 
-Status: the ChalanaMaya server runs and keeps every board (phases 1b and 2 of the [agent canvas plan](../plans/agent-canvas.md)). Opening `/` starts a board at `/s/<id>`; the main menu copies the board link or id. The MCP endpoint that agents use arrives in phase 4, so agents cannot draw on a board yet; the sections below say what is already there. A board kept by the earlier browser-only version is offered for import on boards opened at the same address (`http://localhost:5183` by default; start once with `PORT=5184` for boards saved there).
+Status: the ChalanaMaya server runs, keeps every board, syncs open tabs live and has a built-in MCP server for agents (phases 1b–4 of the [agent canvas plan](../plans/agent-canvas.md)). Opening `/` starts a board at `/s/<id>`; the main menu copies the board link or id, and that id is all an agent needs. A board kept by the earlier browser-only version is offered for import on boards opened at the same address (`http://localhost:5183` by default; start once with `PORT=5184` for boards saved there).
 
 ## Run the server
 
@@ -63,8 +63,74 @@ curl -s http://localhost:5183/api/sessions/<id>/scene
 | `GET /api/sessions/:id/files/:fileId` | Download it (supports `Range`). |
 | `DELETE /api/sessions/:id` | Delete the board. |
 
-## Connecting agents (phase 4)
+## Connecting agents
 
-Agents such as Claude, Devin, ChatGPT or any MCP client will connect to `http://localhost:5183/mcp` (Streamable HTTP) or through the stdio bridge `node /absolute/path/to/ChalanaMaya/dist-server/stdio.js`, and only need a session id to draw. The endpoint is reserved and already protected by the host and Origin checks, but it does not answer MCP requests yet; this guide gets the exact client snippets when phase 4 ships.
+ChalanaMaya has a built-in MCP server. Agents such as Claude, Devin, ChatGPT or any MCP client connect once; after that they only need a **board id** (the 24 characters at the end of `/s/<id>`, or the whole board link) and a description of what to draw. Changes show up live in every open tab of that board, with a notice such as "Claude added 6 items · Show".
 
-Cloud agents cannot reach your `localhost`. To use one, ChalanaMaya has to be reachable from the internet (for example through a short-lived tunnel with `PUBLIC_URL` set). The session id is then the only protection: treat a board link like a password. See [security](../security.md).
+Two ways to connect:
+
+- **Streamable HTTP:** `http://localhost:5183/mcp` (stateless: every `POST` stands alone, so a server restart never breaks a client; `GET` and `DELETE` answer 405; request bodies up to 16 MB).
+- **stdio bridge** for desktop clients: `node /absolute/path/to/ChalanaMaya/dist-server/stdio.js` (built by `npm run build`; `npm run mcp:stdio` runs the same). It forwards everything to the server at `CHALANAMAYA_URL` (default `http://localhost:5183`) and never opens the database, so the server must be running (`npm start`). The bridge can start first: it answers the client at once, connects on the first request, reconnects after the server restarts and then tells the client the tools are available again. Writes without `agent_name` are labelled with the desktop client's name.
+
+The MCP protocol's own "session" (the `Mcp-Session-Id` header) has nothing to do with the board `session_id`; ChalanaMaya does not use MCP sessions at all.
+
+### Claude Desktop
+
+Settings → Developer → Edit Config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "chalanamaya": {
+      "command": "node",
+      "args": ["/absolute/path/to/ChalanaMaya/dist-server/stdio.js"],
+      "env": { "CHALANAMAYA_URL": "http://localhost:5183" }
+    }
+  }
+}
+```
+
+Restart Claude Desktop, then say for example: "Draw a login flowchart on ChalanaMaya board `Xy3…` (paste the id)".
+
+### Claude Code
+
+```bash
+claude mcp add --transport http chalanamaya http://localhost:5183/mcp
+# or through the bridge:
+claude mcp add chalanamaya -- node /absolute/path/to/ChalanaMaya/dist-server/stdio.js
+```
+
+The drawing guide is also a skill: copy `skills/chalanamaya/` into `~/.claude/skills/` (or the project's `.claude/skills/`).
+
+### Cursor, VS Code, Windsurf and other MCP clients
+
+Most clients take an HTTP server entry:
+
+```json
+{ "mcpServers": { "chalanamaya": { "url": "http://localhost:5183/mcp" } } }
+```
+
+or the same `command`/`args` as Claude Desktop for stdio.
+
+### MCP Inspector and other browser-based clients
+
+A browser page on another origin is refused unless its origin is listed: start the server with `ALLOWED_ORIGINS=http://localhost:6274 npm start`, then run `npx @modelcontextprotocol/inspector` and connect to `http://localhost:5183/mcp` (transport "Streamable HTTP"). `ALLOWED_ORIGINS` applies to `/mcp` only, never to the REST API or the board sockets.
+
+### ChatGPT, Devin and other cloud agents
+
+Cloud agents run on someone else's computer and cannot reach your `localhost`. ChalanaMaya has to be reachable over public HTTPS, for example through a short-lived tunnel:
+
+```bash
+npm start &
+cloudflared tunnel --url http://localhost:5183          # prints https://<random>.trycloudflare.com
+# restart with the public address so its host is accepted:
+PUBLIC_URL=https://<random>.trycloudflare.com npm start
+```
+
+Then add `https://<random>.trycloudflare.com/mcp` as a remote MCP server (ChatGPT: Settings → Connectors / developer mode; Devin: Settings → MCP servers, transport HTTP). Anyone who has a board id can change that board, and the server has no sign-in: **treat a board link like a password** and stop the tunnel when you are done. See [security](../security.md).
+
+### What agents can do
+
+The tools, their inputs and errors are listed in [MCP tools](mcp-tools.md). The drawing guide (`skills/chalanamaya/SKILL.md`, also served as the `chalanamaya://guide` resource and the `chalanamaya_guide` prompt) teaches the coordinate system, spacing, colours and recipes. In this version agents can place uploaded pictures (PNG, JPEG, GIF as a still picture, WebP) sent as `data_base64`; links to pictures on other sites, GIF and video players and animated components arrive later and are refused with `links_not_supported_yet` or `kind_not_supported_yet`.
+
+Board sync is not full collaboration: there are no accounts, cursors or presence; each item keeps its latest change; a person's undo never reverts an agent's change (an agent's **clear** shows a notice with **Restore**).

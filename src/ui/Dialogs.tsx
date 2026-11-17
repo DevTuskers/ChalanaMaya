@@ -89,6 +89,100 @@ export const Modal = ({
   );
 };
 
+/** AGENT-13: what to give an agent (plan §4.1). */
+const ConnectAgentDialog = ({ onClose }: { onClose: () => void }) => {
+  const { store } = useServices();
+  const info = useAppState((s) => s.session);
+  const origin = window.location.origin;
+  const id = info?.id ?? "";
+  const mcp = `${origin}/mcp`;
+  const snippets = [
+    {
+      key: "http",
+      title: "HTTP (Claude Code, Cursor, VS Code, ChatGPT, Devin…)",
+      text: JSON.stringify({ mcpServers: { chalanamaya: { url: mcp } } }, null, 2),
+    },
+    {
+      key: "stdio",
+      title: "Desktop apps through the stdio bridge (Claude Desktop)",
+      text: JSON.stringify(
+        {
+          mcpServers: {
+            chalanamaya: {
+              command: "node",
+              args: ["/absolute/path/to/ChalanaMaya/dist-server/stdio.js"],
+              env: { CHALANAMAYA_URL: origin },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+    {
+      key: "prompt",
+      title: "Then tell the agent",
+      text: `On the ChalanaMaya board ${id}, draw a flowchart of …`,
+    },
+  ];
+  const copy = (text: string, what: string) => {
+    const p = navigator.clipboard?.writeText(text) ?? Promise.reject(new Error("no clipboard"));
+    p.then(
+      () => store.toast(`${what} copied.`, "success"),
+      () => store.toast("The clipboard is not available here, so nothing was copied.", "error"),
+    );
+  };
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+  return (
+    <Modal title="Connect an agent" onClose={onClose} testId="connect-agent-dialog" wide>
+      <p>
+        Agents such as Claude, Devin or ChatGPT draw on this board through ChalanaMaya&apos;s MCP
+        server. Set it up once, then give the agent this board&apos;s id.
+      </p>
+      <p>
+        MCP address <code data-testid="connect-mcp-url">{mcp}</code>{" "}
+        <button type="button" className="btn" onClick={() => copy(mcp, "MCP address")}>
+          Copy
+        </button>
+      </p>
+      <p>
+        Board id <code data-testid="connect-session-id">{id}</code>{" "}
+        <button
+          type="button"
+          className="btn"
+          data-testid="connect-copy-id"
+          onClick={() => copy(id, "Board id")}
+        >
+          Copy
+        </button>
+      </p>
+      {snippets.map((s) => (
+        <section key={s.key}>
+          <h3>{s.title}</h3>
+          <pre data-testid={`connect-snippet-${s.key}`}>{s.text}</pre>
+          <button
+            type="button"
+            className="btn"
+            data-testid={`connect-copy-${s.key}`}
+            onClick={() => copy(s.text, "Setup")}
+          >
+            Copy
+          </button>
+        </section>
+      ))}
+      {local ? (
+        <p>
+          Cloud agents (ChatGPT, Devin) cannot reach this computer&apos;s localhost: they need a
+          public HTTPS address for ChalanaMaya, see the setup guide.
+        </p>
+      ) : null}
+      <p className="warning" data-testid="connect-warning">
+        Anyone with the board id can change this board. Treat it like a password.
+      </p>
+    </Modal>
+  );
+};
+
 const HelpDialog = ({ onClose }: { onClose: () => void }) => (
   <Modal title="Keyboard shortcuts" onClose={onClose} testId="help-dialog" wide>
     <div className="help-grid">
@@ -586,6 +680,8 @@ export const Dialogs = () => {
       return <OpenLinkDialog url={dialog.url} onClose={close} />;
     case "settings":
       return <SettingsDialog onClose={close} />;
+    case "connectAgent":
+      return <ConnectAgentDialog onClose={close} />;
     case "webcard":
       return <WebCardDialog at={dialog.at} onClose={close} />;
     case "chart":

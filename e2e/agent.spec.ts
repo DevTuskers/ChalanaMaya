@@ -269,3 +269,22 @@ test("an uploaded PNG renders, exports and works with the eyedropper; links are 
   // the picture (200×100) plus the sampled box fill, at export scale ≥ 1
   expect(found).toBeGreaterThan(15000);
 });
+
+test("the Connect an agent dialog shows the MCP address, the board id and snippets", async ({
+  page,
+}) => {
+  await freshBoard(page);
+  const id = sessionId(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("session-connect-agent").click();
+  const dialog = page.getByTestId("connect-agent-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("connect-mcp-url")).toHaveText(`${BASE}/mcp`);
+  await expect(page.getByTestId("connect-session-id")).toHaveText(id);
+  await expect(page.getByTestId("connect-snippet-http")).toContainText(`"url": "${BASE}/mcp"`);
+  await expect(page.getByTestId("connect-snippet-stdio")).toContainText("dist-server/stdio.js");
+  await expect(page.getByTestId("connect-snippet-prompt")).toContainText(id);
+  await expect(page.getByTestId("connect-warning")).toContainText("Anyone with the board id");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});

@@ -39,7 +39,7 @@ Acceptance criteria:
 
 ## SESS-04 — Live board sync
 
-**Priority: P1** · **Status: done** (phase 3, between tabs; agent writes over REST show up live, MCP comes with phase 4; evidence `e2e/sync.spec.ts`, `src/sync/convergence.test.ts`, `server/socket.test.ts`)
+**Priority: P1** · **Status: done** (phase 3, between tabs; agent writes over REST show up live, MCP agents since phase 4; evidence `e2e/sync.spec.ts`, `src/sync/convergence.test.ts`, `server/socket.test.ts`)
 
 Changes from any tab or agent on the same session show up everywhere without reloading.
 
@@ -97,7 +97,7 @@ Acceptance criteria:
 There are no accounts yet: the session id works like a password.
 
 Acceptance criteria:
-- Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog (phase 4) and `docs/security.md`.
+- Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog and `docs/security.md`.
 - The id never appears in full in server logs and is not sent to other websites (only the site origin is sent as referrer).
 - Every item written by a browser or an agent is checked against one strict set of rules (colour format, id format, number ranges, size limits) and refused with a clear message when it breaks one, so nothing written by one person can break or attack another person's board or exports. Large changes such as moving 1,000 items at once are saved in parts and never lost; a single item over 256 KB is refused with a notice.
 - Saving the same change twice (for example after a reload) never undoes a newer change made by someone else.
