@@ -1,6 +1,12 @@
 import { parseClipboard, type ClipboardPayload } from "./serialize";
 
 export const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/** What can be pasted or dropped onto the board as media (MEDIA-04). */
+export const SUPPORTED_MEDIA_TYPES = [...SUPPORTED_IMAGE_TYPES, "video/mp4", "video/webm"];
+
+/** The first droppable media file in a drop, if any. */
+export const droppedMedia = (data: DataTransfer | null): File | null =>
+  [...(data?.files ?? [])].find((f) => SUPPORTED_MEDIA_TYPES.includes(f.type)) ?? null;
 
 export type PasteContent =
   | { kind: "image"; blob: Blob }
@@ -21,7 +27,7 @@ export const classifyText = (text: string): PasteContent => {
 export const readPasteEvent = (data: DataTransfer | null): PasteContent => {
   if (!data) return { kind: "unsupported", detail: "The clipboard could not be read." };
   const files = [...data.files];
-  const image = files.find((f) => SUPPORTED_IMAGE_TYPES.includes(f.type));
+  const image = files.find((f) => SUPPORTED_MEDIA_TYPES.includes(f.type));
   if (image) return { kind: "image", blob: image };
   const text = data.getData("text/plain");
   if (text) return classifyText(text);
@@ -91,4 +97,21 @@ export const imageSize = (dataURL: string) =>
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
     img.onerror = () => reject(new Error("The image could not be decoded."));
     img.src = dataURL;
+  });
+
+/** A video's picture size from its metadata; 480 x 270 (16:9) when it can't be read. */
+export const videoSize = (src: string) =>
+  new Promise<{ width: number; height: number }>((resolve) => {
+    const v = document.createElement("video");
+    const done = (w: number, h: number) => {
+      clearTimeout(timer);
+      v.removeAttribute("src");
+      resolve(w > 0 && h > 0 ? { width: w, height: h } : { width: 480, height: 270 });
+    };
+    const timer = setTimeout(() => done(0, 0), 4000);
+    v.preload = "metadata";
+    v.muted = true;
+    v.onloadedmetadata = () => done(v.videoWidth, v.videoHeight);
+    v.onerror = () => done(0, 0);
+    v.src = src;
   });

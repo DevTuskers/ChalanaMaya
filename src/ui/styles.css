@@ -928,6 +928,32 @@ kbd {
 }
 
 /* ---- P2: web cards ---- */
+/* selection frames and handles, above live items (plan §6.3) */
+.board-top {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 2;
+}
+/* remote media links (MEDIA-05): live HTML over the board, never under the pointer */
+.livemedia {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.livemedia-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  object-fit: fill;
+  display: block;
+}
 .webcards {
   position: absolute;
   inset: 0;
@@ -1147,4 +1173,10 @@ kbd {
   padding: 24px;
   font-family: "Source Sans 3", system-ui, sans-serif;
   color: var(--text, #193a36);
+}
+
+.prop-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted, #5c7d78);
 }

@@ -32,8 +32,7 @@ import {
   type BuildContext,
   freeSpace,
   INPUT_TYPES,
-  kindRefused,
-  linksRefused,
+  linkFile,
   mediaSize,
   place,
   STYLE_FIELDS,
@@ -52,6 +51,8 @@ export interface ToolContext {
   /** absolute origin for board links, e.g. http://localhost:5183 */
   baseUrl: string;
   maxImageBytes: number;
+  /** largest video upload; defaults to maxImageBytes */
+  maxVideoBytes?: number;
 }
 
 export const DEFAULT_AGENT = "An agent";
@@ -98,7 +99,7 @@ const elementFields = {
   type: z
     .enum(INPUT_TYPES)
     .describe(
-      "rectangle | diamond | ellipse | text | note | frame | arrow | line | freedraw | image | web_card. (gif, video and component arrive in a later version and are refused for now.)",
+      "rectangle | diamond | ellipse | text | note | frame | arrow | line | freedraw | image | gif | video | web_card. (component arrives in a later version and is refused for now.)",
     ),
   key: z
     .string()
@@ -156,7 +157,7 @@ const elementFields = {
     .string()
     .optional()
     .describe(
-      "web_card: the page address. image: links to pictures arrive in a later version and are refused for now (use file_id).",
+      "web_card: the page address. image, gif, video: an https link to the media (shown live by browsers, never fetched by the server); or use file_id.",
     ),
   ...styleShape,
 };
@@ -291,15 +292,19 @@ const upload = (ctx: ToolContext, sid: string, data: unknown, mime: unknown, bas
   // "" for upload_media's own arguments, "source" inside place_media
   const path = (k: string) => (base ? `${base}.${k}` : k);
   const mimeType = mime === undefined ? undefined : str(mime, path("mime_type"), 100).toLowerCase();
-  if (mimeType?.startsWith("video/")) throw kindRefused(path("mime_type"), "video");
-  const buf = decodeBase64(data, path("data_base64"), ctx.maxImageBytes);
+  const isVideo = mimeType?.startsWith("video/") ?? false;
+  const buf = decodeBase64(
+    data,
+    path("data_base64"),
+    isVideo ? (ctx.maxVideoBytes ?? ctx.maxImageBytes) : ctx.maxImageBytes,
+  );
   try {
     return ctx.service.addFile(sid, buf, mimeType);
   } catch (e) {
     if (e instanceof ServiceError && e.code === "unsupported_type")
       throw new ToolError(
         "unsupported_type",
-        `${path("data_base64")}: ${e.message} Upload a PNG, JPEG, GIF or WebP picture.`,
+        `${path("data_base64")}: ${e.message} Upload a PNG, JPEG, GIF or WebP picture or an MP4 or WebM video.`,
       );
     throw e;
   }
@@ -322,6 +327,13 @@ const created = (els: readonly SceneElement[], ids: { id: string; key?: string }
   });
 };
 
+/** Records remote media links for one board (the server never fetches them). */
+const linkerFor =
+  (service: SessionService) =>
+  (sid: string): BuildContext["addLink"] =>
+  (url, mime) =>
+    service.addRemoteFile(sid, url, mime);
+
 const sessionUrl = (ctx: ToolContext, id: string) => `${ctx.baseUrl}/s/${id}`;
 
 /** Builds the items of add_elements into `elements` (shared with place_media). */
@@ -331,6 +343,7 @@ const addItems = (
   inputs: unknown[],
   warnings: string[],
   paths: Map<string, string>,
+  addLink?: BuildContext["addLink"],
 ) => {
   const ctx: BuildContext = {
     byId: new Map(elements.map((e) => [e.id, e])),
@@ -339,6 +352,7 @@ const addItems = (
     warnings,
     groups: new Map(),
     cursor: freeSpace(elements),
+    addLink,
   };
   const built: {
     el: SceneElement;
@@ -427,6 +441,7 @@ const addItems = (
 
 export const registerTools = (server: McpServer, ctx: ToolContext) => {
   const { service } = ctx;
+  const linker = linkerFor(service);
   const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 
   server.registerTool(
@@ -632,7 +647,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
         const r = service.applyAgentChange(
           sid,
           (els, snap) => {
-            const a = addItems(els, fileMap(snap.files), inputs, warnings, paths);
+            const a = addItems(els, fileMap(snap.files), inputs, warnings, paths, linker(sid));
             return { next: a.next, touched: a.touched, result: a.ids };
           },
           agent(args.agent_name),
@@ -676,6 +691,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
               warnings,
               groups: new Map(),
               cursor: freeSpace(els),
+              addLink: linker(sid),
             };
             const touched = new Set<string>();
             const updated: string[] = [];
@@ -1078,13 +1094,16 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
   server.registerTool(
     "upload_media",
     {
-      title: "Upload a picture",
+      title: "Upload a picture or video",
       description:
-        "Uploads a PNG, JPEG, GIF or WebP picture (≤ 10 MB decoded) to the board and returns its file_id for place_media or an image item. Videos arrive in a later version.",
+        "Uploads a PNG, JPEG, GIF or WebP picture (≤ 10 MB decoded) or an MP4 or WebM video (≤ 25 MB decoded) to the board and returns its file_id for place_media or an image / gif / video item.",
       inputSchema: {
         session_id: sessionArg,
         data_base64: z.string().describe("The file as base64 (a data: URL prefix is accepted)."),
-        mime_type: z.string().optional().describe("image/png, image/jpeg, image/gif or image/webp"),
+        mime_type: z
+          .string()
+          .optional()
+          .describe("image/png, image/jpeg, image/gif, image/webp, video/mp4 or video/webm"),
         filename: z.string().optional(),
         agent_name: agentArg,
       },
@@ -1111,17 +1130,22 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
   server.registerTool(
     "place_media",
     {
-      title: "Place a picture",
+      title: "Place a picture, GIF or video",
       description:
-        'Places an uploaded picture on the board. source is {file_id} (from upload_media) or {data_base64, mime_type}. Links ({url}) to pictures on other sites arrive in a later version and are refused for now; so are kind "gif" and "video".',
+        'Places a picture, GIF or video on the board. source is {file_id} (from upload_media), {data_base64, mime_type} or {url} (an https link to the media file; browsers show it live and the server never fetches it; links are left out of PNG exports and shown as a placeholder). kind is "image" (default), "gif" or "video"; videos start muted and looping (autoplay, loop).',
       inputSchema: {
         session_id: sessionArg,
-        kind: z.string().optional().describe('"image" (gif and video arrive in a later version)'),
+        kind: z.string().optional().describe('"image" (default), "gif" or "video"'),
         source: z.looseObject({
           file_id: z.string().optional(),
           data_base64: z.string().optional(),
           mime_type: z.string().optional(),
-          url: z.string().optional().describe("Refused for now: links_not_supported_yet."),
+          url: z
+            .string()
+            .optional()
+            .describe(
+              "https link to the file (public site names only; no IP addresses or local names). Give mime_type when the address has no file extension.",
+            ),
         }),
         x: n.optional(),
         y: n.optional(),
@@ -1144,22 +1168,42 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
         const sid = sessionId(args.session_id);
         const kind =
           args.kind === undefined ? "image" : oneOf(args.kind, "kind", ["image", "gif", "video"]);
-        if (kind !== "image") throw kindRefused("kind", kind);
         const src = args.source as Obj;
-        if (src.url !== undefined) throw linksRefused("source.url");
         const warnings: string[] = [];
-        if (args.autoplay !== undefined) warnings.push("autoplay: only videos play; ignored");
-        if (args.loop !== undefined) warnings.push("loop: only videos loop; ignored");
+        if (kind !== "video") {
+          if (args.autoplay !== undefined) warnings.push("autoplay: only videos autoplay; ignored");
+          if (args.loop !== undefined) warnings.push("loop: only videos loop; ignored");
+        }
         service.meta(sid);
         let fileId: string;
+        const given = ["file_id", "data_base64", "url"].filter((k) => src[k] !== undefined);
+        if (given.length > 1) throw invalid("source", `give only one of ${given.join(", ")}`);
         if (src.file_id !== undefined) fileId = str(src.file_id, "source.file_id", 128);
         else if (src.data_base64 !== undefined)
           fileId = upload(ctx, sid, src.data_base64, src.mime_type, "source").id;
-        else
-          throw invalid("source", "give {file_id} from upload_media or {data_base64, mime_type}");
-        const item: Obj = { type: "image", file_id: fileId };
+        else if (src.url !== undefined) {
+          warnings.push(
+            "source.url: links are shown live in the browser and as a placeholder card in PNG/SVG exports; upload the file (upload_media) for full support",
+          );
+          fileId = linkFile(
+            { files: new Map(), addLink: linker(sid) } as unknown as BuildContext,
+            src.url,
+            src.mime_type,
+            kind,
+            "source",
+          ).id;
+        } else
+          throw invalid(
+            "source",
+            "give {file_id} from upload_media, {data_base64, mime_type} or {url} (an https link)",
+          );
+        const item: Obj = { type: kind, file_id: fileId };
         for (const k of ["x", "y", "width", "height"] as const)
           if (args[k] !== undefined) item[k] = args[k];
+        if (kind === "video")
+          for (const k of ["autoplay", "loop"] as const)
+            if (args[k] !== undefined)
+              item[k] = typeof args[k] === "string" ? args[k] === "true" : args[k];
         const r = service.applyAgentChange(
           sid,
           (els, snap) => {

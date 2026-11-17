@@ -401,6 +401,51 @@ describe("SessionService", () => {
     );
   });
 
+  it("stores videos with their metadata and the video size limit (MEDIA-02)", () => {
+    const fx = (n: string) =>
+      fs.readFileSync(new URL(`../../test-fixtures/media/${n}`, import.meta.url));
+    const s = make({ maxVideoBytes: 10_000 });
+    const sid = s.create().sessionId;
+    expect(s.addFile(sid, fx("clip.mp4"), "video/mp4")).toMatchObject({
+      mime: "video/mp4",
+      width: 320,
+      height: 180,
+      durationMs: 1000,
+      source: "upload",
+    });
+    // 16 KB WebM is over this board's 10 KB video limit
+    expect(() => s.addFile(sid, fx("clip.webm"), "video/webm")).toThrow(/Videos can be at most/);
+    expect(() => s.addFile(sid, fx("clip.mp4"), "video/webm")).toThrow(
+      expect.objectContaining({ status: 415 }),
+    );
+  });
+
+  it("records remote links without fetching them; elements may use them (MEDIA-05)", () => {
+    const s = make();
+    const sid = s.create().sessionId;
+    const f = s.addRemoteFile(sid, "https://media.example.com/clip.mp4", "video/mp4");
+    expect(f).toMatchObject({
+      source: "remote",
+      url: "https://media.example.com/clip.mp4",
+      size: 0,
+    });
+    expect(s.addRemoteFile(sid, "https://media.example.com/clip.mp4", "video/mp4").id).toBe(f.id);
+    expect(() => s.addRemoteFile(sid, "https://192.168.1.2/x.png", "image/png")).toThrow(
+      expect.objectContaining({ code: "invalid_url" }),
+    );
+    expect(() => s.addRemoteFile(sid, "https://media.example.com/x.svg", "image/svg+xml")).toThrow(
+      expect.objectContaining({ status: 415 }),
+    );
+    const el = { ...createImage(0, 0, 480, 270, f.id), id: "v1", loop: true, autoplay: true };
+    const ack = s.apply(sid, push([put(el, "a0")]), { origin: BROWSER, atomic: false }).ack;
+    expect(ack.rejected).toEqual([]);
+    const snap = s.snapshot(sid);
+    expect(snap.files).toEqual([expect.objectContaining({ id: f.id, source: "remote" })]);
+    expect(() => s.fileForDownload(sid, f.id)).toThrow(expect.objectContaining({ status: 404 }));
+    expect(fs.readdirSync(dir)).toHaveLength(0);
+    s.deleteSession(sid);
+  });
+
   it("uploads check type and magic bytes; same bytes are stored once across boards", () => {
     const s = make();
     const a = s.create().sessionId;

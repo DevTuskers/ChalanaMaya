@@ -59,7 +59,8 @@ curl -s http://localhost:5183/api/sessions/<id>/scene
 | `GET /api/sessions/:id/scene` | The whole board: items with layer keys and versions, board settings, file list, tombstones. |
 | `POST /api/sessions/:id/ops` | A batch of changes (`{pushId, baseRev, ops}`, add `?atomic=1` for all-or-nothing). Every item is strictly validated; the answer lists the new revision, versions and any refused change. A repeated `pushId` is answered with the stored answer and `duplicate: true`. |
 | `POST /api/sessions/:id/import` | A whole board in one step (`{importId, mode: "add" \| "replace", elements}`), saved as one revision or not at all. |
-| `POST /api/sessions/:id/files` | Upload a picture (PNG, JPEG, GIF or WebP; the bytes must match the type). |
+| `POST /api/sessions/:id/files` | Upload a picture, GIF or video (PNG, JPEG, GIF or WebP up to 10 MB; MP4 or WebM up to 25 MB, `MAX_VIDEO_BYTES`; the bytes must match the type). |
+| `POST /api/sessions/:id/links` | Add an https link to a picture, GIF or video (`{url, mime?, width?, height?}`); stored as a link, never fetched by the server. |
 | `GET /api/sessions/:id/files/:fileId` | Download it (supports `Range`). |
 | `DELETE /api/sessions/:id` | Delete the board. |
 
@@ -131,6 +132,6 @@ Then add `https://<random>.trycloudflare.com/mcp` as a remote MCP server (ChatGP
 
 ### What agents can do
 
-The tools, their inputs and errors are listed in [MCP tools](mcp-tools.md). The drawing guide (`skills/chalanamaya/SKILL.md`, also served as the `chalanamaya://guide` resource and the `chalanamaya_guide` prompt) teaches the coordinate system, spacing, colours and recipes. In this version agents can place uploaded pictures (PNG, JPEG, GIF as a still picture, WebP) sent as `data_base64`; links to pictures on other sites, GIF and video players and animated components arrive later and are refused with `links_not_supported_yet` or `kind_not_supported_yet`.
+The tools, their inputs and errors are listed in [MCP tools](mcp-tools.md). The drawing guide (`skills/chalanamaya/SKILL.md`, also served as the `chalanamaya://guide` resource and the `chalanamaya_guide` prompt) teaches the coordinate system, spacing, colours and recipes. Agents can place pictures, animated GIFs and MP4/WebM videos with `place_media`, from an `upload_media` file id, from `data_base64` bytes, or from an https link (`source: {url}`). Uploaded media is drawn in the board and exported; links are shown live by the browser (without a referrer, never fetched by the server) and appear as a placeholder card in exports. Videos start muted and looping. Animated components arrive later and are refused with `kind_not_supported_yet`.
 
 Board sync is not full collaboration: there are no accounts, cursors or presence; each item keeps its latest change; a person's undo never reverts an agent's change (an agent's **clear** shows a notice with **Restore**).

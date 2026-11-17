@@ -35,7 +35,13 @@ export const importIntoSession = async (
   const { elements: canonical, report } = canonicalizeElements(file.elements);
   const upload = store.uploadFile;
   const adopted = upload
-    ? await adoptFiles(canonical, file.files, store.get().files, upload)
+    ? await adoptFiles(
+        canonical,
+        file.files,
+        store.get().files,
+        upload,
+        store.linkFile ?? undefined,
+      )
     : { elements: canonical, files: file.files, failed: 0 };
   const state = store.get();
   let incoming = adopted.elements;

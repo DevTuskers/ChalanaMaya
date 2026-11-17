@@ -7,6 +7,7 @@
 import type { SceneElement } from "../scene/types";
 import { SESSION_FILE_PATH_RE } from "./ids";
 import { normalizeLink } from "./links";
+import { checkRemoteUrl } from "./urls";
 import { ID_RE, LIMITS, isColor } from "./limits";
 
 export type ValidationResult<T> = { ok: true; el: T } | { ok: false; path: string; reason: string };
@@ -148,7 +149,10 @@ const TYPE_KEYS: Record<string, { required: string[]; optional: string[] }> = {
     required: ["text", "fontFamily", "fontSize", "textAlign", "containerId", "autoWidth"],
     optional: [],
   },
-  image: { required: ["fileId", "crop", "flipX", "flipY"], optional: [] },
+  image: {
+    required: ["fileId", "crop", "flipX", "flipY"],
+    optional: ["paused", "loop", "autoplay"],
+  },
   embed: { required: ["url"], optional: [] },
 };
 
@@ -249,6 +253,7 @@ const checkElement = (raw: unknown): SceneElement => {
       }
       bool(raw, "flipX");
       bool(raw, "flipY");
+      for (const k of ["paused", "loop", "autoplay"]) if (k in raw) bool(raw, k);
       break;
     }
     case "embed": {
@@ -320,14 +325,24 @@ export interface FileMeta {
   url: string;
 }
 
-/** File rows: id rule, allowed type, same-origin file path (remote links arrive in phase 5). */
+/**
+ * File rows: id rule, allowed type, and either this server's file path or a
+ * remote https link that passes the link rules (plan §6.2).
+ */
 export const validateFileMeta = (raw: unknown): ValidationResult<FileMeta> => {
   try {
     if (!isObj(raw)) return fail("", "a file must be an object");
     id(raw.id, "id");
     oneOf(raw, "mime", ALLOWED_MIME);
-    if (typeof raw.url !== "string" || !SESSION_FILE_PATH_RE.test(raw.url))
-      fail("url", "must be this server's /api/sessions/<id>/files/<fileId> path");
+    if (typeof raw.url !== "string") fail("url", "must be a file path or https link");
+    if (!SESSION_FILE_PATH_RE.test(raw.url as string)) {
+      const r = checkRemoteUrl(raw.url);
+      if (!r.ok)
+        fail(
+          "url",
+          `must be this server's /api/sessions/<id>/files/<fileId> path or a link that ${r.reason}`,
+        );
+    }
     return { ok: true, el: raw as unknown as FileMeta };
   } catch (e) {
     if (e instanceof Invalid) return { ok: false, path: e.path, reason: e.reason };

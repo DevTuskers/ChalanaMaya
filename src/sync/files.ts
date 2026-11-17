@@ -6,8 +6,32 @@
  */
 import type { FileMap, SceneElement } from "../scene/types";
 import { isSessionFilePath } from "../shared/ids";
+import type { StoredFile } from "../shared/protocol";
+import { checkRemoteUrl } from "../shared/urls";
 
 export type Uploader = (blob: Blob) => Promise<{ id: string; url: string; mime: string }>;
+/** Records a remote media link in the board (POST /links); the server does not fetch it. */
+export type Linker = (
+  url: string,
+  mime: string,
+) => Promise<{ id: string; url: string; mime: string }>;
+
+/** A board file row (snapshot / live sync) as a file map entry. */
+export const fileFromStored = (f: StoredFile): FileMap[string] => ({
+  id: f.id,
+  mimeType: f.mime,
+  dataURL: f.url,
+  source: f.source,
+  width: f.width,
+  height: f.height,
+  durationMs: f.durationMs,
+  posterFileId: f.posterFileId,
+});
+
+/** Is this file a remote link (shown live, never drawn on a canvas)? */
+export const isRemoteFile = (f: FileMap[string] | undefined) =>
+  !!f &&
+  (f.source === "remote" || (!f.dataURL.startsWith("data:") && !isSessionFilePath(f.dataURL)));
 
 export const dataUrlToBlob = (dataURL: string): Blob => {
   const m = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(dataURL);
@@ -49,6 +73,7 @@ export const adoptFiles = async (
   files: FileMap,
   current: FileMap,
   upload: Uploader,
+  link?: Linker,
 ): Promise<AdoptResult> => {
   const remap = new Map<string, string | null>();
   const added: FileMap = {};
@@ -66,9 +91,17 @@ export const adoptFiles = async (
       continue;
     }
     try {
+      if (isRemoteFile(src)) {
+        // a link is recorded again in this board (rules checked), never downloaded
+        if (!link || !checkRemoteUrl(src.dataURL).ok) throw new Error("link refused");
+        const r = await link(src.dataURL, src.mimeType);
+        remap.set(el.fileId, r.id);
+        added[r.id] = { id: r.id, mimeType: r.mime, dataURL: r.url, source: "remote" };
+        continue;
+      }
       const up = await upload(await sourceBlob(src.dataURL, src.mimeType));
       remap.set(el.fileId, up.id);
-      added[up.id] = { id: up.id, mimeType: up.mime, dataURL: up.url };
+      added[up.id] = { id: up.id, mimeType: up.mime, dataURL: up.url, source: "upload" };
     } catch {
       remap.set(el.fileId, null);
     }
@@ -96,7 +129,8 @@ export const inlineFiles = async (files: FileMap, used?: ReadonlySet<string>): P
   const out: FileMap = {};
   for (const [id, f] of Object.entries(files)) {
     if (used && !used.has(id)) continue;
-    if (f.dataURL.startsWith("data:")) {
+    if (f.dataURL.startsWith("data:") || isRemoteFile(f)) {
+      // links stay links in a .chalana file (format 2)
       out[id] = f;
       continue;
     }

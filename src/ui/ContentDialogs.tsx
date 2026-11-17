@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { insertChart, insertText, insertWebCard } from "../store/actions";
+import { insertChart, insertMediaLink, insertText, insertWebCard } from "../store/actions";
+import { mimeFromUrl, normaliseRemoteUrl } from "../shared/urls";
 import {
   buildChart,
   chartKindProblem,
@@ -61,6 +62,78 @@ export const WebCardDialog = ({ at, onClose }: { at: Point; onClose: () => void 
           </button>
           <button type="submit" className="btn primary" data-testid="webcard-save">
             Add web card
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+/**
+ * Adds a picture, GIF or video by its link on another site (MEDIA-05). The
+ * link is shown live by this browser; the server only stores it.
+ */
+export const MediaLinkDialog = ({ onClose }: { onClose: () => void }) => {
+  const { store } = useServices();
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const check = value.trim() ? normaliseRemoteUrl(value) : null;
+  const mime = check?.ok ? mimeFromUrl(check.url) : undefined;
+  const [kind, setKind] = useState<"" | "image/png" | "image/gif" | "video/mp4">("");
+  return (
+    <Modal title="Media link" onClose={onClose} testId="medialink-dialog">
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setBusy(true);
+          void insertMediaLink(store, value, kind || undefined).then((ok) => {
+            setBusy(false);
+            if (ok) onClose();
+          });
+        }}
+      >
+        <label className="field">
+          <span>Link to a picture, GIF or video (https)</span>
+          <input
+            data-autofocus
+            data-testid="medialink-input"
+            value={value}
+            placeholder="https://media.example.com/clip.mp4"
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        {check?.ok && !mime ? (
+          <label className="field">
+            <span>What is it?</span>
+            <select
+              data-testid="medialink-kind"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as typeof kind)}
+            >
+              <option value="">Choose…</option>
+              <option value="image/png">Picture</option>
+              <option value="image/gif">GIF</option>
+              <option value="video/mp4">Video</option>
+            </select>
+          </label>
+        ) : null}
+        <p className="dialog-note" data-testid="medialink-note">
+          {check && !check.ok
+            ? `This link ${check.reason}.`
+            : "Shown live in the browser, never fetched by the server. Exports show a placeholder card instead; uploading the file gives full support."}
+        </p>
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="btn primary"
+            data-testid="medialink-save"
+            disabled={busy || !check?.ok || (!mime && !kind)}
+          >
+            Add media
           </button>
         </div>
       </form>

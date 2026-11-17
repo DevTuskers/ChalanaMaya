@@ -34,7 +34,7 @@ export const ELEMENTS_REFERENCE = {
   coordinates:
     "Board units; x grows right, y grows down; boxes by top-left corner; angle in degrees clockwise; path points absolute [x, y].",
   types: INPUT_TYPES,
-  later_versions: ["gif", "video", "component", "image url links"],
+  later_versions: ["component"],
   common_fields: {
     key: "name to refer to this item later in the same call",
     x: "number (±1,000,000); omit to place in free space",
@@ -78,7 +78,16 @@ export const ELEMENTS_REFERENCE = {
     freedraw: { points: "[x, y] or [x, y, pressure], ≤ 5,000" },
     image: {
       file_id: "from upload_media",
-      url: "refused in this version: links_not_supported_yet",
+      url: "or an https link to a picture (shown live, never fetched by the server)",
+      mime_type: "the link's type when its address has no extension",
+    },
+    gif: { file_id: "an uploaded image/gif", url: "or an https link", paused: "boolean" },
+    video: {
+      file_id: "an uploaded MP4/WebM",
+      url: "or an https link",
+      paused: "boolean",
+      loop: "boolean (default true)",
+      autoplay: "boolean (default true); videos are always muted at first",
     },
     web_card: { url: "http(s) page address" },
   },

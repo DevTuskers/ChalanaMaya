@@ -231,7 +231,7 @@ test("save and open a .chalana file, rejecting invalid files", async ({ page }, 
   await download.saveAs(path);
   const saved = JSON.parse(await readFile(path, "utf8"));
   expect(saved.type).toBe("chalana");
-  expect(saved.version).toBe(1);
+  expect(saved.version).toBe(2);
   expect(saved.elements).toHaveLength(2);
 
   // invalid file leaves the board unchanged

@@ -9,6 +9,8 @@ import { fileUrl, type SessionService } from "../sessions/service";
 import { isSessionId } from "../../src/shared/ids";
 import { ID_RE, LIMITS } from "../../src/shared/limits";
 import { importSchema, pushSchema } from "../../src/shared/protocol";
+import { mimeFromUrl } from "../../src/shared/urls";
+import { ALLOWED_MIME } from "../../src/shared/validate";
 
 const BROWSER = { kind: "browser" as const, name: "A browser" };
 
@@ -19,6 +21,13 @@ const createSchema = z.strictObject({
     // eslint-disable-next-line no-control-regex
     .refine((t) => !/[\u0000-\u001f\u007f]/.test(t), "must not contain control characters")
     .optional(),
+});
+
+const linkSchema = z.strictObject({
+  url: z.string().max(LIMITS.url),
+  mime: z.enum(ALLOWED_MIME).optional(),
+  width: z.number().int().positive().max(100_000).optional(),
+  height: z.number().int().positive().max(100_000).optional(),
 });
 
 const badRequest = (error: z.ZodError) => {
@@ -93,7 +102,7 @@ export const apiRouter = (
   r.post(
     "/sessions/:id/files",
     limiters.uploads,
-    express.raw({ type: () => true, limit: L.maxImageBytes }),
+    express.raw({ type: () => true, limit: Math.max(L.maxImageBytes, L.maxVideoBytes) }),
     (req, res) => {
       const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const f = service.addFile(req.params.id as string, bytes, req.headers["content-type"]);
@@ -105,9 +114,34 @@ export const apiRouter = (
         width: f.width,
         height: f.height,
         duration_ms: f.durationMs,
+        source: "upload",
       });
     },
   );
+
+  // a remote media link (MEDIA-05): stored as a file row, never fetched by the server
+  r.post("/sessions/:id/links", limiters.uploads, json(8 * 1024), (req, res) => {
+    const body = linkSchema.safeParse(req.body);
+    if (!body.success) throw badRequest(body.error);
+    const mime = body.data.mime ?? mimeFromUrl(body.data.url);
+    if (!mime)
+      throw new ServiceError(
+        415,
+        "unknown_type",
+        "Say what the link is (mime), for example image/png or video/mp4.",
+      );
+    const f = service.addRemoteFile(req.params.id as string, body.data.url, mime, body.data);
+    res.status(201).json({
+      file_id: f.id,
+      url: f.url,
+      mime: f.mime,
+      size: 0,
+      width: f.width,
+      height: f.height,
+      duration_ms: null,
+      source: "remote",
+    });
+  });
 
   r.get("/sessions/:id/files/:fileId", (req, res, next) => {
     const fileId = req.params.fileId as string;

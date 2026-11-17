@@ -22,6 +22,8 @@ export interface Limits {
   maxSessionMediaBytes: number;
   /** per picture or GIF upload */
   maxImageBytes: number;
+  /** Largest video upload (MP4/WebM). */
+  maxVideoBytes: number;
   /** per op batch (REST /ops and later the socket) */
   maxOpsPerPush: number;
   /** REST /ops JSON body */
@@ -75,6 +77,7 @@ export const DEFAULT_LIMITS: Limits = {
   maxSceneBytes: 10 * MB,
   maxSessionMediaBytes: 200 * MB,
   maxImageBytes: 10 * MB,
+  maxVideoBytes: 25 * MB,
   maxOpsPerPush: 500,
   opsBodyBytes: 2 * MB,
   importBodyBytes: 12 * MB,
@@ -230,6 +233,7 @@ export const loadConfig = (env: Env = process.env, overrides: Partial<Config> = 
       maxSceneBytes: int(env, "MAX_SCENE_BYTES", L.maxSceneBytes, 1),
       maxSessionMediaBytes: int(env, "MAX_SESSION_MEDIA_BYTES", L.maxSessionMediaBytes),
       maxImageBytes: int(env, "MAX_IMAGE_BYTES", L.maxImageBytes, 1),
+      maxVideoBytes: int(env, "MAX_VIDEO_BYTES", L.maxVideoBytes, 1),
     },
     sessionTtlDays: ttl > 0 ? ttl : null,
     dev: env.CHALANAMAYA_DEV === "1",

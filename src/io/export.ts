@@ -51,6 +51,7 @@ export const exportToCanvas = async (
     background: opts.background ? (opts.backgroundColor ?? PAPER[opts.theme]) : null,
     width: size.width / opts.scale,
     height: size.height / opts.scale,
+    still: true,
     viewport: {
       zoom: 1,
       scrollX: -size.bounds.minX + padding,

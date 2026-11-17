@@ -34,12 +34,14 @@ import type {
   ItemStyle,
   LinearElement,
   Point,
+  ImageElement,
   SceneElement,
   TextElement,
 } from "../../src/scene/types";
 import { LIMITS, wrapAngle } from "../../src/shared/limits";
 import { normalizeLink } from "../../src/shared/links";
-import { ARROWHEAD_NAMES } from "../../src/shared/validate";
+import { ALLOWED_MIME, ARROWHEAD_NAMES } from "../../src/shared/validate";
+import { isVideoMime, mimeFromUrl, normaliseRemoteUrl } from "../../src/shared/urls";
 import type { StoredFile } from "../../src/shared/protocol";
 import {
   bool,
@@ -116,16 +118,14 @@ const TYPE_FIELDS: Record<string, string[]> = {
   // full detail lists every path field for lines too; they are accepted and kept as they are
   line: ["points", "closed", "from", "to", "routing", "start_arrowhead", "end_arrowhead"],
   freedraw: ["points"],
-  image: ["file_id", "url", "crop", "flip_x", "flip_y"],
+  image: ["file_id", "url", "mime_type", "crop", "flip_x", "flip_y", "paused"],
+  gif: ["file_id", "url", "crop", "flip_x", "flip_y", "paused"],
+  video: ["file_id", "url", "mime_type", "paused", "loop", "autoplay"],
   web_card: ["url"],
 };
 /** fields update_elements and full detail add on top (round trip of get_scene full) */
 const UPDATE_EXTRA = ["id", "group_ids", "container", "label", "text", "name", "contains"];
 
-export const LINKS_REFUSED =
-  "Linking to pictures on other sites arrives in a later version of ChalanaMaya. Download the picture and use upload_media or place_media with data_base64 instead.";
-export const linksRefused = (path: string) =>
-  new ToolError("links_not_supported_yet", `${path}: ${LINKS_REFUSED}`);
 export const kindRefused = (path: string, kind: string) =>
   new ToolError(
     "kind_not_supported_yet",
@@ -147,6 +147,11 @@ export interface BuildContext {
   groups: Map<string, string>;
   /** where the next item without x/y goes */
   cursor: Point;
+  /**
+   * Records a remote media link as a board file (never fetched by the server).
+   * Absent in pure unit contexts, where links are refused.
+   */
+  addLink?: (url: string, mime: string) => StoredFile;
 }
 
 export const freeSpace = (elements: readonly SceneElement[]): Point => {
@@ -466,12 +471,56 @@ const freedrawPoints = (el: FreedrawElement, v: unknown, path: string): Freedraw
   };
 };
 
-const imageFile = (ctx: BuildContext, o: Obj, path: string): StoredFile => {
-  if (o.url !== undefined) throw linksRefused(`${path}.url`);
+export type MediaKind = "image" | "gif" | "video";
+
+/** Does a file's type fit the asked kind? image takes any picture (a GIF too). */
+export const kindFits = (kind: MediaKind, mime: string) =>
+  kind === "video"
+    ? isVideoMime(mime)
+    : kind === "gif"
+      ? mime === "image/gif"
+      : mime.startsWith("image/");
+
+/** A remote media link (MEDIA-05) as a board file: rules checked, type from mime_type or the extension. */
+export const linkFile = (
+  ctx: BuildContext,
+  rawUrl: unknown,
+  rawMime: unknown,
+  kind: MediaKind,
+  path: string,
+): StoredFile => {
+  const r = normaliseRemoteUrl(str(rawUrl, `${path}.url`, LIMITS.url));
+  if (!r.ok) throw invalid(`${path}.url`, `the link ${r.reason}`);
+  const mime =
+    rawMime !== undefined
+      ? oneOf(rawMime, `${path}.mime_type`, ALLOWED_MIME)
+      : (mimeFromUrl(r.url) ?? (kind === "gif" ? "image/gif" : null));
+  if (!mime)
+    throw invalid(
+      `${path}.mime_type`,
+      "cannot tell the link's type from its address; give mime_type (for example image/png or video/mp4)",
+    );
+  if (!kindFits(kind, mime)) throw invalid(`${path}.url`, `the link is ${mime}, not a ${kind}`);
+  if (!ctx.addLink) throw invalid(`${path}.url`, "links cannot be added here");
+  const f = ctx.addLink(r.url, mime);
+  ctx.files.set(f.id, f);
+  return f;
+};
+
+const imageFile = (
+  ctx: BuildContext,
+  o: Obj,
+  path: string,
+  kind: MediaKind = "image",
+): StoredFile => {
+  if (o.url !== undefined) {
+    if (o.file_id !== undefined) throw invalid(path, "give file_id or url, not both");
+    return linkFile(ctx, o.url, o.mime_type, kind, path);
+  }
   if (o.file_id === undefined)
     throw invalid(
       path,
-      "a picture needs file_id (from upload_media); or use place_media with data_base64",
+      `a ${kind === "image" ? "picture" : kind} needs file_id (from upload_media) or url (an https link); or use place_media`,
     );
   const fid = str(o.file_id, `${path}.file_id`, 128);
   const f = ctx.files.get(fid);
@@ -480,8 +529,11 @@ const imageFile = (ctx: BuildContext, o: Obj, path: string): StoredFile => {
       `${path}.file_id`,
       `no uploaded file "${fid}" in this board. Upload it with upload_media first`,
     );
-  if (!f.mime.startsWith("image/"))
-    throw invalid(`${path}.file_id`, `${fid} is ${f.mime}, not a picture`);
+  if (!kindFits(kind, f.mime))
+    throw invalid(
+      `${path}.file_id`,
+      `${fid} is ${f.mime}, not a ${kind === "image" ? "picture" : kind}${isVideoMime(f.mime) ? ' (use type "video")' : ""}`,
+    );
   return f;
 };
 
@@ -507,14 +559,43 @@ const crop = (
   };
 };
 
-/** Default size for a placed picture: 480 wide keeping its ratio. */
+/** Default size for placed media: 480 wide keeping its ratio (videos of unknown size: 16:9). */
 export const mediaSize = (f: StoredFile, o: { width?: number; height?: number }) => {
-  const ratio = f.width && f.height ? f.height / f.width : 0.75;
+  const ratio = f.width && f.height ? f.height / f.width : isVideoMime(f.mime) ? 9 / 16 : 0.75;
   if (o.width !== undefined && o.height !== undefined) return { width: o.width, height: o.height };
   if (o.width !== undefined) return { width: o.width, height: Math.max(1, o.width * ratio) };
   if (o.height !== undefined) return { width: Math.max(1, o.height / ratio), height: o.height };
   const width = f.width ? Math.min(480, f.width) : 480;
   return { width, height: Math.max(1, Math.round(width * ratio)) };
+};
+
+/**
+ * Playback fields (MEDIA-03): paused for GIFs and videos, loop and autoplay
+ * for videos. Fields that do not fit the file are dropped with a warning.
+ */
+const playback = (
+  o: Obj,
+  f: StoredFile,
+  path: string,
+  current?: ImageElement,
+): Partial<ImageElement> => {
+  const out: Partial<ImageElement> = {};
+  const video = isVideoMime(f.mime);
+  const animated = video || f.mime === "image/gif";
+  if (o.paused !== undefined) {
+    if (animated) out.paused = bool(o.paused, `${path}.paused`);
+    else throw invalid(`${path}.paused`, "only GIFs and videos play");
+  }
+  for (const k of ["loop", "autoplay"] as const)
+    if (o[k] !== undefined) {
+      if (video) out[k] = bool(o[k], `${path}.${k}`);
+      else throw invalid(`${path}.${k}`, "only videos have this");
+    }
+  if (video && !current) {
+    out.loop ??= true;
+    out.autoplay ??= true;
+  }
+  return out;
 };
 
 export interface Built {
@@ -530,8 +611,7 @@ export const buildElement = (raw: unknown, path: string, ctx: BuildContext): Bui
     throw invalid(path, "must be an object");
   const o = raw as Obj;
   const type = oneOf(o.type, `${path}.type`, INPUT_TYPES);
-  if (type === "gif" || type === "video" || type === "component")
-    throw kindRefused(`${path}.type`, type);
+  if (type === "component") throw kindRefused(`${path}.type`, type);
   warnUnknown(o, [...COMMON_FIELDS, ...TYPE_FIELDS[type]], path, ctx);
   const x0 = 0;
   let el: SceneElement;
@@ -584,8 +664,10 @@ export const buildElement = (raw: unknown, path: string, ctx: BuildContext): Bui
       if (o.points === undefined) throw invalid(`${path}.points`, "is required for freedraw");
       el = freedrawPoints(el, o.points, `${path}.points`);
       break;
-    case "image": {
-      const f = imageFile(ctx, o, path);
+    case "image":
+    case "gif":
+    case "video": {
+      const f = imageFile(ctx, o, path, type);
       const w =
         o.width === undefined
           ? undefined
@@ -596,6 +678,7 @@ export const buildElement = (raw: unknown, path: string, ctx: BuildContext): Bui
           : num(o.height, `${path}.height`, { min: 1, max: SIZE_MAX });
       const size = mediaSize(f, { width: w, height: h });
       el = createImage(0, 0, size.width, size.height, f.id);
+      el = { ...el, ...playback(o, f, path) };
       break;
     }
     case "web_card": {
@@ -680,7 +763,7 @@ export const updateElement = (
   ctx: BuildContext,
   label: TextElement | undefined,
 ): { el: SceneElement; label?: TextElement | null } => {
-  const type = inputType(current);
+  const type = inputType(current, ctx.files);
   if (o.type !== undefined && o.type !== type && o.type !== current.type)
     throw invalid(
       `${path}.type`,
@@ -693,7 +776,6 @@ export const updateElement = (
     );
   warnUnknown(o, [...COMMON_FIELDS, ...(TYPE_FIELDS[type] ?? []), ...UPDATE_EXTRA], path, ctx);
   if (o.id !== undefined && o.id !== current.id) throw invalid(`${path}.id`, "does not match");
-  if (type === "image" && o.url !== undefined) throw linksRefused(`${path}.url`);
   if (o.container !== undefined && current.type === "text" && o.container !== current.containerId)
     ctx.warnings.push(`${path}.container: a label cannot move to another item; ignored`);
   let el = applyStyle(current, o, path);
@@ -720,11 +802,14 @@ export const updateElement = (
     el = { ...el, url };
   }
   if (el.type === "image") {
-    if (o.file_id !== undefined && o.file_id !== el.fileId) {
-      const f = imageFile(ctx, o, path);
-      el = { ...el, fileId: f.id, crop: null };
+    const kind = type === "gif" || type === "video" ? type : "image";
+    if ((o.file_id !== undefined && o.file_id !== el.fileId) || o.url !== undefined) {
+      const f = imageFile(ctx, o, path, kind === "gif" ? "image" : kind);
+      if (f.id !== el.fileId) el = { ...el, fileId: f.id, crop: null };
     }
-    el = imageExtras(el, o, path, ctx);
+    const img = imageExtras(el, o, path, ctx) as ImageElement;
+    const f = ctx.files.get(img.fileId);
+    el = f ? { ...img, ...playback(o, f, path, img) } : img;
   }
   if (isLinear(el)) {
     if (o.points !== undefined || o.from !== undefined || o.to !== undefined) {
@@ -765,6 +850,18 @@ export const updateElement = (
 };
 
 /** The input-facing type name of a stored element. */
-export const inputType = (el: SceneElement): string => (el.type === "embed" ? "web_card" : el.type);
+/** The agent-facing type: web_card for embeds; gif / video for pictures whose file is one. */
+export const inputType = (
+  el: SceneElement,
+  files?: ReadonlyMap<string, { mime: string }>,
+): string => {
+  if (el.type === "embed") return "web_card";
+  if (el.type === "image" && files) {
+    const m = files.get(el.fileId)?.mime;
+    if (m === "image/gif") return "gif";
+    if (isVideoMime(m)) return "video";
+  }
+  return el.type;
+};
 
 export const NOTE_DEFAULT = NOTE_SWATCHES[0];

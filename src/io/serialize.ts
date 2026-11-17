@@ -1,11 +1,17 @@
 import { normalizeLink } from "../scene/arrange";
+import { checkRemoteUrl } from "../shared/urls";
 import { PAPER } from "../scene/constants";
 import { isSessionFilePath } from "../shared/ids";
 import { isColor } from "../shared/limits";
 import type { FileMap, SceneElement, Theme } from "../scene/types";
 
 export const FILE_TYPE = "chalana";
-export const FORMAT_VERSION = 1;
+/**
+ * 2: media (MEDIA-10). Files may be GIFs, MP4/WebM videos or https links
+ * (`source: "remote"`, kept as links, never inlined); pictures gained
+ * `paused`, `loop` and `autoplay`. Version 1 files still open.
+ */
+export const FORMAT_VERSION = 2;
 export const CLIPBOARD_TYPE = "chalana/clipboard";
 
 export interface BoardSettings {
@@ -203,6 +209,9 @@ export const parseElement = (raw: unknown): SceneElement => {
         crop,
         flipX: raw.flipX === true,
         flipY: raw.flipY === true,
+        ...(typeof raw.paused === "boolean" ? { paused: raw.paused } : {}),
+        ...(typeof raw.loop === "boolean" ? { loop: raw.loop } : {}),
+        ...(typeof raw.autoplay === "boolean" ? { autoplay: raw.autoplay } : {}),
       };
     }
   }
@@ -220,15 +229,30 @@ export const parseFiles = (raw: unknown, opts: { sessionPaths?: boolean } = {}):
   if (!isObj(raw)) throw new FormatError("The image list is invalid.");
   const files: FileMap = {};
   for (const [id, f] of Object.entries(raw)) {
+    const remote = isObj(f) && f.source === "remote";
     const ok =
       isObj(f) &&
       typeof f.dataURL === "string" &&
-      (f.dataURL.startsWith("data:") ||
-        (opts.sessionPaths === true && isSessionFilePath(f.dataURL)));
+      (remote
+        ? checkRemoteUrl(f.dataURL).ok
+        : f.dataURL.startsWith("data:") ||
+          (opts.sessionPaths === true && isSessionFilePath(f.dataURL)));
     if (!ok || !isObj(f) || typeof f.dataURL !== "string") {
-      throw new FormatError("An embedded image is damaged.");
+      throw new FormatError(
+        remote
+          ? "A media link in the file is not a public https link."
+          : "An embedded image is damaged.",
+      );
     }
-    files[id] = { id, mimeType: str(f.mimeType, "image/png"), dataURL: f.dataURL };
+    const dim = (v: unknown) => (typeof v === "number" && v > 0 && isFinite(v) ? v : undefined);
+    files[id] = {
+      id,
+      mimeType: str(f.mimeType, "image/png"),
+      dataURL: f.dataURL,
+      ...(remote ? { source: "remote" as const } : {}),
+      ...(dim(f.width) && dim(f.height) ? { width: dim(f.width), height: dim(f.height) } : {}),
+      ...(dim(f.durationMs) ? { durationMs: dim(f.durationMs) } : {}),
+    };
   }
   return files;
 };

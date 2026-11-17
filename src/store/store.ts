@@ -61,6 +61,7 @@ export type Dialog =
   | { kind: "clear" }
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
   | { kind: "webcard"; at: { x: number; y: number } }
+  | { kind: "mediaLink" }
   | { kind: "chart"; text: string }
   | null;
 
@@ -196,7 +197,23 @@ export class Store {
   /** Ids moved in the layer order since the save path last looked (reorder hint). */
   layerMoves = new Set<string>();
   /** Uploads a picture to the session; unset outside a session (data URLs). */
-  uploadFile: ((blob: Blob) => Promise<{ id: string; url: string; mime: string }>) | null = null;
+  uploadFile:
+    | ((blob: Blob) => Promise<{
+        id: string;
+        url: string;
+        mime: string;
+        width?: number | null;
+        height?: number | null;
+      }>)
+    | null = null;
+  /** session boards: records a remote media link on the server (never fetched there) */
+  linkFile:
+    | ((
+        url: string,
+        mime: string,
+        size?: { width: number; height: number },
+      ) => Promise<{ id: string; url: string; mime: string }>)
+    | null = null;
 
   /** Remote changes applied to this board, for lazy rebasing of older snapshots (Rule C). */
   readonly remoteLog = new RemoteLog();

@@ -144,6 +144,15 @@ export interface ImageElement extends BaseElement {
   crop: Crop | null;
   flipX: boolean;
   flipY: boolean;
+  /**
+   * Media playback (MEDIA-03), only for GIF and video files: synced with the
+   * board. Mute is never stored (it is personal to each tab).
+   */
+  paused?: boolean;
+  /** Videos only: play again from the start at the end (default true). */
+  loop?: boolean;
+  /** Videos only: start playing when shown (default true). */
+  autoplay?: boolean;
 }
 
 export type SceneElement =
@@ -159,7 +168,16 @@ export type SceneElement =
 export interface BinaryFile {
   id: string;
   mimeType: string;
+  /**
+   * A data URL, this server's board file path, or (source "remote") an https
+   * link that is only ever shown in the live layer, never drawn on a canvas.
+   */
   dataURL: string;
+  source?: "upload" | "remote";
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  posterFileId?: string | null;
 }
 
 export type FileMap = Record<string, BinaryFile>;

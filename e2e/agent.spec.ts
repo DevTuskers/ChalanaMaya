@@ -1,7 +1,8 @@
 // Phase 4: agents draw on an open board through MCP (plan §8). Edits show live
 // with a notice, user and agent edits mix without loss, connectors stay bound,
 // Restore undoes an agent's clear, and an uploaded picture renders, exports
-// and works with the eyedropper while links are refused.
+// and works with the eyedropper while unsafe links are refused (phase 5
+// allows public https links; see media.spec.ts).
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -182,7 +183,7 @@ test("an agent's diagram shows live; user and agent edits mix; Restore undoes a 
 const hex = (s: string) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
 const near = (a: number[], b: number[], tol = 6) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
 
-test("an uploaded PNG renders, exports and works with the eyedropper; links are refused", async ({
+test("an uploaded PNG renders, exports and works with the eyedropper; unsafe links are refused", async ({
   page,
 }) => {
   await freshBoard(page);
@@ -193,9 +194,9 @@ test("an uploaded PNG renders, exports and works with the eyedropper; links are 
   const refused = await callError(client, "place_media", {
     session_id: id,
     kind: "image",
-    source: { url: "https://example.com/pic.png" },
+    source: { url: "http://example.com/pic.png" },
   });
-  expect(refused.code).toBe("links_not_supported_yet");
+  expect(refused.code).toBe("invalid_input");
   const placed = await call(client, "place_media", {
     session_id: id,
     kind: "image",

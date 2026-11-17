@@ -80,8 +80,15 @@ describe("strict validation", () => {
         .ok,
     ).toBe(false);
     expect(
-      validateFileMeta({ id: "f1", mime: "image/png", url: "https://evil.test/x.png" }).ok,
-    ).toBe(false);
+      validateFileMeta({ id: "f1", mime: "image/png", url: "https://media.example.com/x.png" }).ok,
+    ).toBe(true);
+    for (const url of [
+      "http://media.example.com/x.png",
+      "https://localhost/x.png",
+      "https://10.0.0.1/x.png",
+      "javascript:alert(1)",
+    ])
+      expect(validateFileMeta({ id: "f1", mime: "image/png", url }).ok).toBe(false);
   });
 });
 

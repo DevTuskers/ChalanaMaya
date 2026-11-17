@@ -1,3 +1,4 @@
+import { isVideoMime, mimeFromUrl, normaliseRemoteUrl } from "../shared/urls";
 import { LIMITS } from "../shared/limits";
 import { adoptFiles } from "../sync/files";
 import { buildChart, looksLikeSpreadsheet, type ChartData, type ChartKind } from "../scene/chart";
@@ -39,6 +40,7 @@ import { clampZoom, fitBounds, screenToScene, zoomAt } from "../scene/viewport";
 import {
   blobToDataURL,
   imageSize,
+  videoSize,
   readClipboardApi,
   writeClipboardText,
   type PasteContent,
@@ -231,7 +233,7 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
   let size: { width: number; height: number };
   try {
     dataURL = await blobToDataURL(blob);
-    size = await imageSize(dataURL);
+    size = isVideoMime(blob.type) ? await videoSize(dataURL) : await imageSize(dataURL);
   } catch {
     store.toast("That image could not be read. The board was not changed.", "error");
     return;
@@ -246,6 +248,9 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
       fileId = up.id;
       src = up.url;
       mimeType = up.mime;
+      // the server read the video's own size from its header (MP4/WebM)
+      if (isVideoMime(mimeType) && up.width && up.height)
+        size = { width: up.width, height: up.height };
     } catch (e) {
       store.toast(
         `That picture could not be saved to the board${e instanceof Error && e.message ? `: ${e.message}` : "."}`,
@@ -259,17 +264,107 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
   const w = Math.max(1, size.width * s);
   const h = Math.max(1, size.height * s);
   const p = pastePoint(store);
-  const el = createImage(p.x - w / 2, p.y - h / 2, w, h, fileId);
+  let el = createImage(p.x - w / 2, p.y - h / 2, w, h, fileId);
+  // MEDIA-02: videos start muted and looping
+  if (isVideoMime(mimeType)) el = { ...el, loop: true, autoplay: true };
   if (store.get().viewMode) return; // turned on while the picture was loading
   const { elements, files } = store.get();
   store.history.record(store.snapshot());
   store.set({
-    files: { ...files, [fileId]: { id: fileId, mimeType, dataURL: src } },
+    files: {
+      ...files,
+      [fileId]: { id: fileId, mimeType, dataURL: src, source: "upload", ...size },
+    },
     elements: [...elements, el],
     selectedIds: new Set([el.id]),
     tool: "pick",
     historyVersion: store.get().historyVersion + 1,
   });
+};
+
+/**
+ * Adds a link to a picture, GIF or video on another site (MEDIA-05). The
+ * board stores the link only; this browser shows it live and exports draw
+ * a placeholder card. The server never fetches it.
+ */
+export const insertMediaLink = async (store: Store, raw: string, mime?: string) => {
+  if (blockedByViewMode(store)) return false;
+  const r = normaliseRemoteUrl(raw);
+  if (!r.ok) {
+    store.toast(`That link can't be added: it ${r.reason}.`, "error", 6000);
+    return false;
+  }
+  const type = mime ?? mimeFromUrl(r.url);
+  if (!type) {
+    store.toast(
+      "That link doesn't end in a picture or video type (.png, .jpg, .gif, .webp, .mp4 or .webm).",
+      "error",
+      6000,
+    );
+    return false;
+  }
+  // the browser reads the size itself (no CORS needed for that); the server never fetches
+  const video = isVideoMime(type);
+  const probe = video
+    ? videoSize(r.url)
+    : Promise.race([
+        imageSize(r.url).catch(() => null),
+        new Promise<null>((res) => setTimeout(() => res(null), 4000)),
+      ]);
+  const size = await probe;
+  const known = size && !(video && size.width === 480 && size.height === 270) ? size : null;
+  let fileId = `lnk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  if (store.linkFile) {
+    try {
+      fileId = (await store.linkFile(r.url, type, known ?? undefined)).id;
+    } catch (e) {
+      store.toast(
+        `That link could not be added to the board${e instanceof Error && e.message ? `: ${e.message}` : "."}`,
+        "error",
+      );
+      return false;
+    }
+  }
+  const max = 480 / store.get().viewport.zoom;
+  const nat = size ?? { width: 4, height: 3 };
+  const k = max / Math.max(nat.width, nat.height);
+  const w = Math.max(1, nat.width * k);
+  const h = Math.max(1, nat.height * k);
+  const p = pastePoint(store);
+  let el = createImage(p.x - w / 2, p.y - h / 2, w, h, fileId);
+  if (video) el = { ...el, loop: true, autoplay: true };
+  const { elements, files } = store.get();
+  store.history.record(store.snapshot());
+  store.set({
+    files: {
+      ...files,
+      [fileId]: { id: fileId, mimeType: type, dataURL: r.url, source: "remote", ...known },
+    },
+    elements: [...elements, el],
+    selectedIds: new Set([el.id]),
+    tool: "pick",
+    historyVersion: store.get().historyVersion + 1,
+  });
+  return true;
+};
+
+/** Playback commands for selected GIFs and videos (MEDIA-03). Pause and loop sync; mute is this tab's. */
+export const setMediaPlayback = (
+  store: Store,
+  patch: { paused?: boolean; loop?: boolean },
+  ids: ReadonlySet<string> = store.get().selectedIds,
+) => {
+  const { elements } = store.get();
+  let changed = false;
+  const next = elements.map((e) => {
+    if (e.type !== "image" || !ids.has(e.id) || e.locked) return e;
+    changed = true;
+    const out = { ...e, ...patch };
+    // pressing Play always plays, even a video placed with autoplay off
+    if (patch.paused === false && out.autoplay === false) out.autoplay = true;
+    return out;
+  });
+  if (changed) store.commit(next);
 };
 
 export const pasteContent = async (store: Store, content: PasteContent) => {
@@ -294,7 +389,13 @@ export const pasteContent = async (store: Store, content: PasteContent) => {
     case "scene": {
       let { elements, files } = content.payload;
       if (store.uploadFile && elements.some((e) => e.type === "image")) {
-        const adopted = await adoptFiles(elements, files, store.get().files, store.uploadFile);
+        const adopted = await adoptFiles(
+          elements,
+          files,
+          store.get().files,
+          store.uploadFile,
+          store.linkFile ?? undefined,
+        );
         if (adopted.failed)
           store.toast(
             `${adopted.failed} picture${adopted.failed === 1 ? "" : "s"} could not be copied to this board and were left out.`,

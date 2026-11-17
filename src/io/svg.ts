@@ -1,4 +1,6 @@
 import type { Drawable } from "roughjs/bin/core";
+import { isRemote, isVideoFile } from "../render/media";
+import { remoteHost } from "../shared/urls";
 import { FONT_FAMILIES } from "../scene/constants";
 import { getCenter } from "../scene/geometry";
 import { getTextLines, lineHeightPx } from "../scene/text";
@@ -81,7 +83,17 @@ const elementSvg = (el: SceneElement, files: FileMap, theme: Theme, onNote: bool
     body = `<path d="${attr(outlineToSvgPath(freedrawOutline(el)))}" fill="${attr(resolveColor(el.strokeColor, theme))}"/>`;
   } else if (el.type === "image") {
     const file = files[el.fileId];
-    if (file) {
+    if (file && (isRemote(file) || isVideoFile(file))) {
+      // links and videos can't be put in a still picture: a card stands in (MEDIA-05)
+      const stroke = "#8aa7a2";
+      const fill = theme === "dark" ? "#1f2a29" : "#eef3f1";
+      const ink = theme === "dark" ? "#c8d8d4" : "#3d5753";
+      const kind = isVideoFile(file) ? "Video" : file.mimeType === "image/gif" ? "GIF" : "Picture";
+      const label = isRemote(file) ? `${kind} · ${remoteHost(file.dataURL)}` : kind;
+      body =
+        `<rect x="${attr(n(-el.width / 2))}" y="${attr(n(-el.height / 2))}" width="${attr(n(el.width))}" height="${attr(n(el.height))}" fill="${attr(fill)}" stroke="${attr(stroke)}" stroke-dasharray="6 4" data-media-placeholder="1"/>` +
+        `<text x="0" y="0" font-family="'Source Sans 3', sans-serif" font-size="13" fill="${attr(ink)}" text-anchor="middle" dominant-baseline="central">${esc(label)}</text>`;
+    } else if (file) {
       const flip =
         el.flipX || el.flipY ? ` transform="scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})"` : "";
       const cr = el.crop;

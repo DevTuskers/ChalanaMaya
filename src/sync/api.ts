@@ -47,6 +47,12 @@ export interface Api {
   push(id: string, body: PushBody, opts?: { keepalive?: boolean }): Promise<Ack>;
   importScene(id: string, body: ImportBody): Promise<Ack>;
   upload(id: string, blob: Blob): Promise<UploadedFile>;
+  link(
+    id: string,
+    url: string,
+    mime: string,
+    size?: { width: number; height: number },
+  ): Promise<UploadedFile>;
 }
 
 const HEADERS = { "X-ChalanaMaya": "1", "Content-Type": "application/json" };
@@ -105,6 +111,16 @@ export const createHttpApi = (base = ""): Api => ({
       method: "POST",
       headers: { "X-ChalanaMaya": "1", "Content-Type": blob.type || "application/octet-stream" },
       body: blob,
+    }),
+  link: (id, url, mime, size) =>
+    call(`${base}/api/sessions/${enc(id)}/links`, {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({
+        url,
+        mime,
+        ...(size ? { width: Math.round(size.width), height: Math.round(size.height) } : {}),
+      }),
     }),
 });
 

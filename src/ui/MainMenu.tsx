@@ -200,10 +200,17 @@ export const MainMenu = () => {
     },
     {
       id: "insert-picture",
-      label: "Insert picture…",
+      label: "Insert picture or video…",
       icon: Icon.image,
       edits: true,
       onClick: insertPicture,
+    },
+    {
+      id: "insert-media-link",
+      label: "Add media link…",
+      icon: Icon.image,
+      edits: true,
+      onClick: () => store.set({ dialog: { kind: "mediaLink" } }),
     },
     { id: "save", label: "Save as .chalana", icon: Icon.save, keys: "Mod+S", onClick: saveFile },
     {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /** Integration: the official MCP SDK client against a real server over HTTP (plan §8). */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -335,7 +336,7 @@ describe("MCP over HTTP", () => {
     expect(stale.message).toMatch(/rev \d+ → \d+/);
   });
 
-  it("uploads and places pictures; refuses links, gif and video", async () => {
+  it("uploads and places pictures, links, GIFs and videos", async () => {
     const id = await newBoard();
     const png = makePng(40, 20, [200, 30, 30]);
     const placed = await call(client, "place_media", {
@@ -353,40 +354,50 @@ describe("MCP over HTTP", () => {
       w: 40,
       h: 20,
     });
-    const rev = sc.rev;
-    const link = await callError(client, "place_media", {
+    // a link to a picture on another site: stored as a remote file, never fetched
+    const link = await call(client, "place_media", {
       session_id: id,
       kind: "image",
-      source: { url: "https://example.com/a.png" },
+      source: { url: "https://media.example.com/a.png" },
     });
-    expect(link.code).toBe("links_not_supported_yet");
-    expect(link.message).toMatch(/upload_media/);
-    expect(
-      (
-        await callError(client, "add_elements", {
-          session_id: id,
-          elements: [{ type: "image", url: "https://e.com/a.png" }],
-        })
-      ).code,
-    ).toBe("links_not_supported_yet");
-    expect(
-      (
-        await callError(client, "update_elements", {
-          session_id: id,
-          updates: [{ id: placed.id, url: "https://e.com/b.png" }],
-        })
-      ).code,
-    ).toBe("links_not_supported_yet");
-    for (const kind of ["gif", "video"])
+    expect(link.warnings.join(" ")).toMatch(/placeholder.*upload_media/);
+    const linked = await call(client, "get_scene", { session_id: id, ids: [link.id] });
+    expect(linked.elements[0]).toMatchObject({
+      type: "image",
+      mime: "image/png",
+      source: "remote",
+      url: "https://media.example.com/a.png",
+    });
+    const added = await call(client, "add_elements", {
+      session_id: id,
+      elements: [{ type: "image", url: "https://media.example.com/a.png", x: 600, y: 0 }],
+    });
+    // the same link in the same board reuses the file
+    const again = await call(client, "get_scene", { session_id: id, ids: [added.created[0].id] });
+    expect(again.elements[0].file_id).toBe(link.file_id);
+    await call(client, "update_elements", {
+      session_id: id,
+      updates: [{ id: placed.id, url: "https://media.example.com/b.png" }],
+    });
+    const rev = (await call(client, "get_scene", { session_id: id })).rev;
+    for (const url of [
+      "http://media.example.com/a.png",
+      "https://127.0.0.1/a.png",
+      "https://nas.local/a.png",
+    ])
       expect(
-        (
-          await callError(client, "place_media", {
-            session_id: id,
-            kind,
-            source: { file_id: placed.file_id },
-          })
-        ).code,
-      ).toBe("kind_not_supported_yet");
+        (await callError(client, "place_media", { session_id: id, source: { url } })).message,
+      ).toMatch(/source\.url: the link must/);
+    // a picture is not a gif
+    expect(
+      (
+        await callError(client, "place_media", {
+          session_id: id,
+          kind: "gif",
+          source: { file_id: placed.file_id },
+        })
+      ).message,
+    ).toMatch(/not a gif/);
     expect(
       (
         await callError(client, "add_elements", {
@@ -396,6 +407,36 @@ describe("MCP over HTTP", () => {
       ).code,
     ).toBe("kind_not_supported_yet");
     expect((await call(client, "get_scene", { session_id: id })).rev).toBe(rev);
+    // an uploaded video: size and duration read from the file, muted loop by default
+    const mp4 = readFileSync(new URL("../../test-fixtures/media/clip.mp4", import.meta.url));
+    const vid = await call(client, "place_media", {
+      session_id: id,
+      kind: "video",
+      source: { data_base64: mp4.toString("base64"), mime_type: "video/mp4" },
+      loop: false,
+    });
+    const vsc = await call(client, "get_scene", { session_id: id, ids: [vid.id] });
+    expect(vsc.elements[0]).toMatchObject({
+      mime: "video/mp4",
+      w: 320,
+      h: 180,
+      duration_ms: 1000,
+      loop: false,
+    });
+    const full = await call(client, "get_scene", { session_id: id, ids: [vid.id], detail: "full" });
+    expect(full.elements[0]).toMatchObject({ type: "image", loop: false, autoplay: true });
+    const gif = await call(client, "place_media", {
+      session_id: id,
+      kind: "gif",
+      source: { url: "https://media.example.com/spin.gif" },
+    });
+    await call(client, "update_elements", {
+      session_id: id,
+      updates: [{ id: gif.id, paused: true }],
+    });
+    expect(
+      (await call(client, "get_scene", { session_id: id, ids: [gif.id] })).elements[0],
+    ).toMatchObject({ mime: "image/gif", paused: true });
     // a 10 MB picture fits; the board's file serves it
     const big = makePng(8, 8, [0, 0, 255], 10 * 1024 * 1024 - 400);
     expect(big.length).toBeLessThanOrEqual(10 * 1024 * 1024);

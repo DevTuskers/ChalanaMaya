@@ -7,7 +7,7 @@ import type { Theme } from "../scene/types";
 import type { Store } from "../store/store";
 import { useAppState, useServices } from "./context";
 import { Icon } from "./icons";
-import { ChartDialog, WebCardDialog } from "./ContentDialogs";
+import { ChartDialog, MediaLinkDialog, WebCardDialog } from "./ContentDialogs";
 import { SHORTCUT_GROUPS, formatKeys } from "./shortcuts";
 
 export const Modal = ({
@@ -682,6 +682,8 @@ export const Dialogs = () => {
       return <SettingsDialog onClose={close} />;
     case "connectAgent":
       return <ConnectAgentDialog onClose={close} />;
+    case "mediaLink":
+      return <MediaLinkDialog onClose={close} />;
     case "webcard":
       return <WebCardDialog at={dialog.at} onClose={close} />;
     case "chart":

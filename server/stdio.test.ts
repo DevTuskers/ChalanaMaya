@@ -106,10 +106,10 @@ describe("stdio bridge", () => {
         await callError(client, "place_media", {
           session_id: id,
           kind: "image",
-          source: { url: "https://e.com/a.png" },
+          source: { url: "https://127.0.0.1/a.png" },
         })
       ).code,
-    ).toBe("links_not_supported_yet");
+    ).toBe("invalid_input");
     // a 10 MB upload (≈ 13.4 MB of base64) fits through the 16 MB stdio buffer
     const big = makePng(8, 8, [0, 0, 255], 10 * 1024 * 1024 - 400);
     const up = await call(client, "upload_media", {

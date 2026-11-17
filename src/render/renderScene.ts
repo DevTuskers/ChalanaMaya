@@ -1,4 +1,12 @@
 import rough from "roughjs";
+import {
+  drawMediaPlaceholder,
+  getVideo,
+  gifFrame,
+  isGifFile,
+  isRemote,
+  isVideoFile,
+} from "./media";
 import type { Drawable } from "roughjs/bin/core";
 import { NOTE_INK } from "../scene/constants";
 import { isSessionFilePath } from "../shared/ids";
@@ -10,6 +18,7 @@ import type {
   EmbedElement,
   FileMap,
   FreedrawElement,
+  ImageElement,
   SceneElement,
   TextElement,
   Theme,
@@ -43,6 +52,12 @@ const freedrawPath = (el: FreedrawElement): Path2D => {
 };
 const pathCache = new WeakMap<FreedrawElement, Path2D>();
 
+/** The clock animated GIFs follow (replaced in tests). */
+export let mediaNow = () => performance.now();
+export const setMediaClock = (fn: () => number) => {
+  mediaNow = fn;
+};
+
 const imageCache = new Map<string, HTMLImageElement>();
 let onImageLoad: () => void = () => {};
 export const setImageLoadListener = (fn: () => void) => {
@@ -58,7 +73,8 @@ export const isLoadableImageSrc = (src: string) =>
 
 export const getImage = (fileId: string, files: FileMap): HTMLImageElement | null => {
   const file = files[fileId];
-  if (!file || !isLoadableImageSrc(file.dataURL)) return null;
+  if (!file || isRemote(file) || isVideoFile(file) || !isLoadableImageSrc(file.dataURL))
+    return null;
   let img = imageCache.get(fileId);
   if (!img || img.dataset.src !== file.dataURL.slice(0, 64) + file.dataURL.length) {
     img = new Image();
@@ -79,7 +95,18 @@ export const loadImages = async (elements: readonly SceneElement[], files: FileM
         (e) =>
           new Promise<void>((resolve) => {
             const file = files[(e as { fileId: string }).fileId];
-            if (!file) return resolve();
+            // remote links are never loaded for a canvas: exports draw a card
+            if (!file || isRemote(file)) return resolve();
+            if (isVideoFile(file)) {
+              // exports take the frame on screen (the first frame for a new video)
+              const v = getVideo(e as ImageElement, file);
+              if (v.readyState >= 2) return resolve();
+              const t = setTimeout(resolve, 3000);
+              const done = () => (clearTimeout(t), resolve());
+              v.addEventListener("loadeddata", done, { once: true });
+              v.addEventListener("error", done, { once: true });
+              return;
+            }
             getImage(file.id, files);
             const img = imageCache.get(file.id);
             if (!img) return resolve();
@@ -174,13 +201,29 @@ const drawWebCard = (ctx: CanvasRenderingContext2D, el: EmbedElement, theme: The
   );
 };
 
+/** A round play badge centred on the item (video stills in PNG exports). */
+const drawPlayBadge = (ctx: CanvasRenderingContext2D, r: number) => {
+  if (r < 6) return;
+  ctx.fillStyle = "rgba(15, 30, 28, 0.6)";
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.35, -r * 0.5);
+  ctx.lineTo(r * 0.55, 0);
+  ctx.lineTo(-r * 0.35, r * 0.5);
+  ctx.closePath();
+  ctx.fill();
+};
+
 export const drawElement = (
   ctx: CanvasRenderingContext2D,
   rc: ReturnType<typeof rough.canvas>,
   el: SceneElement,
   files: FileMap,
   theme: Theme,
-  ctxInfo: { onNote?: boolean; alpha?: number } = {},
+  ctxInfo: { onNote?: boolean; alpha?: number; still?: boolean } = {},
 ) => {
   const c = getCenter(el);
   ctx.save();
@@ -197,13 +240,32 @@ export const drawElement = (
     ctx.fillStyle = resolveColor(el.strokeColor, theme);
     ctx.fill(path);
   } else if (el.type === "image") {
-    const img = getImage(el.fileId, files);
+    const file = files[el.fileId];
+    let img: CanvasImageSource | null = null;
+    let nat = { w: 0, h: 0 };
+    if (file && isRemote(file)) {
+      // links are shown by the live layer; the canvas and exports get a card
+      drawMediaPlaceholder(ctx, el, file, theme);
+    } else if (isVideoFile(file)) {
+      const v = getVideo(el, file!);
+      if (v.readyState >= 2 && v.videoWidth) {
+        img = v;
+        nat = { w: v.videoWidth, h: v.videoHeight };
+      } else drawMediaPlaceholder(ctx, el, file, theme);
+    } else {
+      const still = getImage(el.fileId, files);
+      if (still) {
+        nat = { w: still.naturalWidth, h: still.naturalHeight };
+        // a PNG export shows a GIF's first frame (MEDIA-07)
+        img = (!ctxInfo.still && isGifFile(file) && gifFrame(el, file!, mediaNow())) || still;
+      }
+    }
     if (img) {
       if (el.flipX || el.flipY) ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
       const cr = el.crop;
       if (cr) {
-        const kx = img.naturalWidth / cr.naturalWidth;
-        const ky = img.naturalHeight / cr.naturalHeight;
+        const kx = nat.w / cr.naturalWidth;
+        const ky = nat.h / cr.naturalHeight;
         ctx.drawImage(
           img,
           cr.x * kx,
@@ -216,7 +278,11 @@ export const drawElement = (
           el.height,
         );
       } else ctx.drawImage(img, -el.width / 2, -el.height / 2, el.width, el.height);
-    } else {
+      if (ctxInfo.still && isVideoFile(file)) {
+        if (el.flipX || el.flipY) ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
+        drawPlayBadge(ctx, Math.min(28, el.width / 5, el.height / 5));
+      }
+    } else if (!file || !(isRemote(file) || isVideoFile(file))) {
       ctx.strokeStyle = "#8aa7a2";
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
@@ -261,6 +327,15 @@ export interface RenderOptions {
   fadeIds?: ReadonlySet<string>;
   /** Grid colour; when set a view-only grid is drawn under the artwork. */
   grid?: string | null;
+  /**
+   * Partial redraw (plan §6.3): repaint only this screen rectangle, drawing
+   * just the items that reach into it. Used for animation frames.
+   */
+  clip?: readonly { x: number; y: number; width: number; height: number }[] | null;
+  /** Paint over what the canvas already shows (no clear, no background). */
+  keep?: boolean;
+  /** A still picture (PNG export): videos get a play badge (MEDIA-07). */
+  still?: boolean;
 }
 
 export const GRID_SIZE = 20;
@@ -304,7 +379,13 @@ export const drawGrid = (
 export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) => {
   const { viewport: v } = opts;
   ctx.save();
-  ctx.clearRect(0, 0, opts.width, opts.height);
+  const clips = opts.clip?.length ? opts.clip : null;
+  if (clips) {
+    ctx.beginPath();
+    for (const c of clips) ctx.rect(c.x, c.y, c.width, c.height);
+    ctx.clip();
+    for (const c of clips) ctx.clearRect(c.x, c.y, c.width, c.height);
+  } else if (!opts.keep) ctx.clearRect(0, 0, opts.width, opts.height);
   if (opts.background) {
     ctx.fillStyle = opts.background;
     ctx.fillRect(0, 0, opts.width, opts.height);
@@ -317,6 +398,13 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
   const minY = -v.scrollY;
   const maxX = minX + opts.width / v.zoom;
   const maxY = minY + opts.height / v.zoom;
+  // world rectangles of a partial redraw
+  const worldClips = clips?.map((c) => ({
+    minX: c.x / v.zoom - v.scrollX,
+    minY: c.y / v.zoom - v.scrollY,
+    maxX: (c.x + c.width) / v.zoom - v.scrollX,
+    maxY: (c.y + c.height) / v.zoom - v.scrollY,
+  }));
   const notes = new Set(opts.elements.filter((e) => e.type === "note").map((e) => e.id));
   const linear = new Set(
     opts.elements.filter((e) => e.type === "arrow" || e.type === "line").map((e) => e.id),
@@ -327,6 +415,13 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
     const r = Math.hypot(el.width, el.height) / 2 + 40;
     const c = getCenter(el);
     if (c.x + r < minX || c.x - r > maxX || c.y + r < minY || c.y - r > maxY) continue;
+    if (
+      worldClips &&
+      !worldClips.some(
+        (w) => c.x + r >= w.minX && c.x - r <= w.maxX && c.y + r >= w.minY && c.y - r <= w.maxY,
+      )
+    )
+      continue;
     if (el.type === "text" && el.containerId && linear.has(el.containerId) && opts.background) {
       // knock the connector line out behind its label so the words stay readable
       ctx.fillStyle = opts.background;
@@ -335,6 +430,7 @@ export const renderScene = (ctx: CanvasRenderingContext2D, opts: RenderOptions) 
     drawElement(ctx, rc, el, opts.files, opts.theme, {
       onNote: el.type === "text" && !!el.containerId && notes.has(el.containerId),
       alpha: opts.fadeIds?.has(el.id) ? 0.3 : 1,
+      still: opts.still,
     });
   }
   ctx.restore();

@@ -76,7 +76,12 @@ export const compactElement = (
     if (f) {
       o.mime = f.mime;
       o.source = f.source;
+      if (f.source === "remote") o.url = f.url;
+      if (f.durationMs) o.duration_ms = f.durationMs;
     }
+    if (el.paused) o.paused = true;
+    if (el.loop === false) o.loop = false;
+    if (el.autoplay === false) o.autoplay = false;
   }
   return o;
 };
@@ -156,6 +161,9 @@ export const fullElement = (el: SceneElement, label: TextElement | undefined): O
           : null,
         flip_x: el.flipX,
         flip_y: el.flipY,
+        ...(el.paused !== undefined ? { paused: el.paused } : {}),
+        ...(el.loop !== undefined ? { loop: el.loop } : {}),
+        ...(el.autoplay !== undefined ? { autoplay: el.autoplay } : {}),
       });
       break;
     case "frame":

@@ -15,7 +15,9 @@ import { baseType, PICTURE_TYPES, pictureSize, sniffType, VIDEO_TYPES } from "..
 import { newSessionId, randomId } from "../../src/shared/ids";
 import { assignKeys, isValidKey, type LayerHint } from "../../src/shared/keys";
 import { finalizeScene } from "../../src/scene/scene";
-import { validateSettings, validateStoredElement } from "../../src/shared/validate";
+import { ALLOWED_MIME, validateSettings, validateStoredElement } from "../../src/shared/validate";
+import { checkRemoteUrl } from "../../src/shared/urls";
+import { videoMeta } from "../media/videoMeta";
 import type {
   Ack,
   IgnoreReason,
@@ -743,20 +745,20 @@ export class SessionService {
   addFile(sessionId: string, bytes: Buffer, contentType: string | undefined): StoredFile {
     this.requireSession(sessionId);
     const claimed = baseType(contentType);
-    if ((VIDEO_TYPES as readonly string[]).includes(claimed))
-      throw new ServiceError(415, "unsupported_type", "Videos can be added in a later version.");
-    if (!(PICTURE_TYPES as readonly string[]).includes(claimed))
+    const isVideo = (VIDEO_TYPES as readonly string[]).includes(claimed);
+    if (!isVideo && !(PICTURE_TYPES as readonly string[]).includes(claimed))
       throw new ServiceError(
         415,
         "unsupported_type",
-        "Only PNG, JPEG, GIF and WebP pictures can be uploaded (set Content-Type to the picture's type).",
+        "Only PNG, JPEG, GIF and WebP pictures and MP4 and WebM videos can be uploaded (set Content-Type to the file's type).",
       );
     if (bytes.length === 0) throw new ServiceError(400, "empty_file", "The upload is empty.");
-    if (bytes.length > this.limits.maxImageBytes)
+    const max = isVideo ? this.limits.maxVideoBytes : this.limits.maxImageBytes;
+    if (bytes.length > max)
       throw new ServiceError(
         413,
         "too_large",
-        `Pictures can be at most ${Math.round(this.limits.maxImageBytes / 1048576)} MB.`,
+        `${isVideo ? "Videos" : "Pictures"} can be at most ${Math.round(max / 1048576)} MB.`,
       );
     const real = sniffType(bytes);
     if (real !== claimed)
@@ -764,7 +766,10 @@ export class SessionService {
     const sha = createHash("sha256").update(bytes).digest("hex");
     const existing = this.q.fileBySha.get(sessionId, sha);
     if (existing) return this.fileOut(sessionId, existing);
-    const { width, height } = pictureSize(bytes);
+    const meta = isVideo
+      ? videoMeta(real, bytes)
+      : { ...pictureSize(bytes), durationMs: null as number | null };
+    const { width, height, durationMs } = meta;
     const blobPath = path.join(this.mediaDir, sha);
     const row = this.db.transaction(() => {
       const s = this.requireSession(sessionId);
@@ -784,9 +789,9 @@ export class SessionService {
       this.db
         .prepare(
           `INSERT INTO files (session_id, id, mime, size, sha256, width, height, duration_ms, source, url, poster_file_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'upload', NULL, NULL, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upload', NULL, NULL, ?)`,
         )
-        .run(sessionId, id, real, bytes.length, sha, width, height, now);
+        .run(sessionId, id, real, bytes.length, sha, width, height, durationMs, now);
       this.db
         .prepare("UPDATE sessions SET media_bytes = media_bytes + ?, updated_at = ? WHERE id = ?")
         .run(bytes.length, now, sessionId);
@@ -802,6 +807,52 @@ export class SessionService {
           throw e;
         }
       }
+      return this.q.file.get(sessionId, id)!;
+    })();
+    return this.fileOut(sessionId, row);
+  }
+
+  /**
+   * Records a remote media link (plan §6.2). The server never fetches it: the
+   * row only carries the canonical https link and the type the caller states,
+   * and browsers show it in the live layer. The same link in the same board
+   * gives the same file.
+   */
+  addRemoteFile(
+    sessionId: string,
+    url: string,
+    mime: string,
+    meta: { width?: number | null; height?: number | null } = {},
+  ): StoredFile {
+    this.requireSession(sessionId);
+    const check = checkRemoteUrl(url);
+    if (!check.ok) throw new ServiceError(400, "invalid_url", `The link ${check.reason}.`);
+    if (!(ALLOWED_MIME as readonly string[]).includes(mime))
+      throw new ServiceError(
+        415,
+        "unsupported_type",
+        "Links can be PNG, JPEG, GIF or WebP pictures or MP4 or WebM videos.",
+      );
+    const key = `remote:${mime}:${check.url}`;
+    const sha = createHash("sha256").update(key).digest("hex");
+    const existing = this.db
+      .prepare<[string, string], FileRow>(
+        "SELECT * FROM files WHERE session_id = ? AND sha256 = ? AND source = 'remote' LIMIT 1",
+      )
+      .get(sessionId, sha);
+    if (existing) return this.fileOut(sessionId, existing);
+    const dim = (v: number | null | undefined) =>
+      typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 100_000 ? v : null;
+    const row = this.db.transaction(() => {
+      this.requireSession(sessionId);
+      this.checkDbSize();
+      const id = `f${randomId(12)}`;
+      this.db
+        .prepare(
+          `INSERT INTO files (session_id, id, mime, size, sha256, width, height, duration_ms, source, url, poster_file_id, created_at)
+           VALUES (?, ?, ?, 0, ?, ?, ?, NULL, 'remote', ?, NULL, ?)`,
+        )
+        .run(sessionId, id, mime, sha, dim(meta.width), dim(meta.height), check.url, this.now());
       return this.q.file.get(sessionId, id)!;
     })();
     return this.fileOut(sessionId, row);

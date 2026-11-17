@@ -1,6 +1,6 @@
 # Media
 
-Status: all features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: MEDIA-01, MEDIA-02, MEDIA-04, MEDIA-07, MEDIA-08, MEDIA-09 and MEDIA-10 are done (agent canvas phase 5, round 1); MEDIA-03 is done except the play badge on paused items (see its note); MEDIA-05 and MEDIA-06 are planned (phase 6). Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 Moving content on the board: animated GIFs, videos and animated CSS components. They are normal board items: they can be moved, resized, rotated, selected, grouped, layered, locked, undone and redone, and they sync to every tab and agent on the session.
 
@@ -39,6 +39,8 @@ Acceptance criteria:
 - Sound plays only after the user turns it on, and only in that tab: other tabs and people stay muted.
 - Play/pause, loop and autoplay are saved with the board and synced; mute is personal to each tab.
 
+Status (phase 5, round 1): the properties panel controls, per-tab mute and synced pause/loop/autoplay are done. Not yet: the play badge on a paused item that starts it when clicked (use the panel's Play).
+
 ## MEDIA-04 — Add media from a file or a link
 
 **Priority: P1**
@@ -50,6 +52,8 @@ Acceptance criteria:
 - Uploaded files are stored by the ChalanaMaya server and drawn in the board, in layer order; links (pictures, GIFs and videos alike) are loaded by the browser without sending the board address, are never fetched by the server, and are shown as live items above drawn items (like web cards), with a note that uploading gives full support.
 - The colour picker (eyedropper) keeps working with any media on the board.
 - Agents can do the same through MCP ([AGENT-08](06-sessions-and-agents.md#agent-08--place-media)).
+
+Status (phase 5, round 1): files come from **Insert picture or video…**, paste or drop; links from **Add media link…** (with a type picker for addresses without a file extension). The link dialog explains that links are live only and that uploading gives full support.
 
 ## MEDIA-05 — Animated component presets
 
@@ -82,6 +86,8 @@ Acceptance criteria:
 - PNG export shows a GIF's first frame, a video's poster frame with a play badge, and a still card for components; SVG export keeps the GIF animated and uses the same still fallbacks for the rest.
 - A saved .chalana file contains the media and reopens with it (very large boards may keep videos as links, with a warning).
 - Media from links (pictures, GIFs and videos) is shown in PNG exports as a placeholder card with the site name, and never makes an export fail.
+
+Status (phase 5, round 1): done, with the `.chalana` format at version 2 (playback fields and links stored as links; version 1 files still open). Not yet: keeping videos of very large boards as links with a warning (every uploaded file is inlined when saving).
 
 ## MEDIA-08 — Media limits and safety
 

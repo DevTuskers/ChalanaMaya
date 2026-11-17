@@ -27,6 +27,7 @@ export const buildMcpServer = (opts: {
   peers(sessionId: string): number;
   baseUrl: string;
   maxImageBytes: number;
+  maxVideoBytes?: number;
   version: string;
 }) => {
   const server = new McpServer(
@@ -90,6 +91,7 @@ export const mcpRouter = (
       peers,
       baseUrl,
       maxImageBytes: cfg.limits.maxImageBytes,
+      maxVideoBytes: cfg.limits.maxVideoBytes,
       version,
     });
     const transport = new StreamableHTTPServerTransport({

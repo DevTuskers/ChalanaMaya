@@ -28,13 +28,13 @@ The built-in MCP server (`POST /mcp`, or the stdio bridge `dist-server/stdio.js`
 | `reorder_elements` | `ids`, `to: "front" \| "back" \| "forward" \| "backward"` | `{rev}` |
 | `arrange_elements` | `ids` (≥ 2), `align?`, `distribute?: "horizontal" \| "vertical"`, `gap?` | `{rev, bounds}` |
 | `clear_scene` | `confirm: true` | `{rev, deleted_count}`; open tabs get "… cleared the board · Restore" |
-| `upload_media` | `data_base64`, `mime_type`, `filename?` (≤ 10 MB decoded; PNG, JPEG, GIF, WebP) | `{file_id, mime_type, size, width, height}` |
-| `place_media` | `kind: "image"`, `source: {file_id} \| {data_base64, mime_type}`, `x?`, `y?`, `width?`, `height?` | `{rev, id, file_id, warnings}` |
+| `upload_media` | `data_base64`, `mime_type`, `filename?` (PNG, JPEG, GIF, WebP ≤ 10 MB decoded; MP4, WebM ≤ 25 MB) | `{file_id, mime_type, size, width, height, duration_ms}` (video size and duration read from the file header; `null` when unknown) |
+| `place_media` | `kind?: "image" \| "gif" \| "video"`, `source: {file_id} \| {data_base64, mime_type} \| {url, mime_type?}`, `x?`, `y?`, `width?`, `height?`, `autoplay?`, `loop?` (videos) | `{rev, id, file_id, warnings}`; a `url` is an https link the browser shows live (never fetched by the server; a placeholder card in exports), and the result warns that uploading gives full support |
 | `list_component_presets` | — | `{presets: []}` (animated components arrive later) |
 
 ### Element input (`add_elements`)
 
-Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `line`, `freedraw`, `image`, `web_card`. Common fields: `key`, `x`, `y`, `width`, `height`, `angle`, `locked`, `link`, `group`, `frame`, and style (`stroke`, `fill`, `fill_style`, `stroke_width`, `stroke_style`, `roughness`, `edges`, `opacity`, `font`, `font_size`, `text_align`). Per type: `label` (boxes and arrows), `text` (text, note), `color` (note), `name` and `contains` (frame), `from`/`to` (id, key or `[x, y]`), `points`, `routing`, `start_arrowhead`/`end_arrowhead` (arrow), `points` and `closed` (line), `file_id` (image), `url` (web card). Items without `x`/`y` go into free space to the right of the board. The full reference is the `chalanamaya://reference/elements` resource.
+Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `line`, `freedraw`, `image`, `gif`, `video`, `web_card`. Common fields: `key`, `x`, `y`, `width`, `height`, `angle`, `locked`, `link`, `group`, `frame`, and style (`stroke`, `fill`, `fill_style`, `stroke_width`, `stroke_style`, `roughness`, `edges`, `opacity`, `font`, `font_size`, `text_align`). Per type: `label` (boxes and arrows), `text` (text, note), `color` (note), `name` and `contains` (frame), `from`/`to` (id, key or `[x, y]`), `points`, `routing`, `start_arrowhead`/`end_arrowhead` (arrow), `points` and `closed` (line), `file_id` or `url` (image, gif, video), `paused` (image, gif, video), `autoplay`, `loop` (video), `url` (web card). Items without `x`/`y` go into free space to the right of the board. The full reference is the `chalanamaya://reference/elements` resource.
 
 ### Reading: compact and full
 
@@ -52,8 +52,8 @@ Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `lin
 | `locked` | `<id> is locked; unlock it first` (`update_elements` with `locked: false` unlocks) |
 | `stale_cursor` | the board changed since the cursor was made |
 | `too_large` / `storage_full` | over a size limit or the server is full |
-| `links_not_supported_yet` | an image `url` (in `place_media`, `add_elements` or `update_elements`): download the picture and send it as `data_base64` instead; nothing is changed |
-| `kind_not_supported_yet` | `place_media` with `kind: "gif"` or `"video"`, or a `component` item: these arrive in a later version |
+| `invalid_input` on a link | a `url` that is not https, has a user name or password, or names an IP address, `localhost`, a single-word host or a private name (`.local`, `.internal`, `.lan`, `.home.arpa`, …); or a `kind` that does not match the file (`kind: "video"` with a picture) |
+| `kind_not_supported_yet` | a `component` item: animated components arrive in a later version |
 
 ## Prompts and resources
 

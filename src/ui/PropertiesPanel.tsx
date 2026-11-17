@@ -15,6 +15,7 @@ import {
   reorderSelected,
   resetImageCrop,
   setFrameName,
+  setMediaPlayback,
   switchSelectedType,
   ungroupSelected,
 } from "../store/actions";
@@ -36,6 +37,7 @@ import type {
   FillStyle,
   FontFamily,
   FontSizeName,
+  ImageElement,
   ItemStyle,
   Routing,
   SceneElement,
@@ -45,6 +47,17 @@ import type {
 import { useState } from "react";
 import { resolveColor } from "../render/renderScene";
 import { useAppState, useServices } from "./context";
+import {
+  isAnimated,
+  isGifTooBig,
+  isMuted,
+  isPlaying,
+  isVideoFile,
+  reducedMotion,
+  restartMedia,
+  setMuted,
+  setPlayAnyway,
+} from "../render/media";
 import { HintButton } from "./Hint";
 import { Icon } from "./icons";
 import { formatKeys } from "./shortcuts";
@@ -111,6 +124,57 @@ const Select = <T extends string>({
     </select>
   </label>
 );
+
+/** Play/pause, restart, mute and loop for a GIF or video (MEDIA-03). */
+const MediaControls = ({ el }: { el: ImageElement }) => {
+  const { store } = useServices();
+  const file = useAppState((s) => s.files[el.fileId]);
+  const [, bump] = useState(0);
+  if (!isAnimated(file)) return null;
+  const video = isVideoFile(file);
+  const playing = isPlaying(el, file);
+  const muted = isMuted(el.id);
+  return (
+    <fieldset className="prop-group" data-testid="media-controls">
+      <legend>{video ? "Video" : "GIF"}</legend>
+      <div className="prop-actions wrap">
+        <Btn
+          label={playing ? "Pause" : "Play"}
+          testId="media-play"
+          onClick={() => {
+            if (!playing && reducedMotion()) setPlayAnyway(el.id, true);
+            setMediaPlayback(store, { paused: playing });
+            bump((n) => n + 1);
+          }}
+        />
+        <Btn label="Restart" testId="media-restart" onClick={() => restartMedia(el.id)} />
+        {video ? (
+          <>
+            <Btn
+              label={muted ? "Unmute" : "Mute"}
+              testId="media-mute"
+              onClick={() => {
+                setMuted(el.id, !muted);
+                bump((n) => n + 1);
+                store.set({});
+              }}
+            />
+            <Btn
+              label={el.loop === false ? "Loop: off" : "Loop: on"}
+              testId="media-loop"
+              onClick={() => setMediaPlayback(store, { loop: el.loop === false })}
+            />
+          </>
+        ) : null}
+      </div>
+      {!video && isGifTooBig(el.fileId) ? (
+        <p className="prop-note" data-testid="media-too-big">
+          Too many frames to animate here; it shows its first frame.
+        </p>
+      ) : null}
+    </fieldset>
+  );
+};
 
 const Btn = ({
   label,
@@ -539,6 +603,7 @@ export const PropertiesPanel = () => {
           </div>
         </fieldset>
       ) : null}
+      {single?.type === "image" ? <MediaControls el={single} /> : null}
       {single?.type === "image" ? (
         <fieldset className="prop-group">
           <legend>Picture</legend>

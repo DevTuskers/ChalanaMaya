@@ -109,6 +109,8 @@ const fakeApi = () => {
       return { rev, versions: {}, rejected: [], ignored: [] } as unknown as Ack;
     },
     upload: async () => ({ file_id: "f", url: "/u", mime: "image/png" }) as never,
+    link: async () =>
+      ({ file_id: "l", url: "https://media.example.com/a.png", mime: "image/png" }) as never,
   };
   return {
     api,

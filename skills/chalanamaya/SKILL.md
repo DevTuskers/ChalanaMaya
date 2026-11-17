@@ -120,15 +120,16 @@ one `add_elements` call.
 - **Wireframe:** a `frame` as the screen (e.g. 375×812), rectangles with `roughness: "tidy"` for
   controls, `text` for copy, `stroke_style: "dashed"` for placeholders.
 
-## Pictures
+## Pictures, GIFs and videos
 
-Upload pictures with `upload_media` (`data_base64`, `mime_type`; PNG, JPEG, GIF or WebP up to
-10 MB) and place them with `place_media` `{source: {file_id}}`, or in one step with
-`{source: {data_base64, mime_type}}`. Uploaded pictures render, export and work with every
-tool. In this version links to pictures on other sites (`{url}`) are refused with
-`links_not_supported_yet`, and `kind: "gif"`/`"video"` and animated components with
-`kind_not_supported_yet`: download the picture and upload it instead. Web cards
-(`type: "web_card"`, `url`) show a web page.
+Upload media with `upload_media` (`data_base64`, `mime_type`; PNG, JPEG, GIF or WebP up to
+10 MB, MP4 or WebM up to 25 MB) and place it with `place_media` `{kind, source: {file_id}}`, or
+in one step with `{source: {data_base64, mime_type}}`. `kind` is `"image"` (default), `"gif"` or
+`"video"`; videos start muted and looping (`autoplay`, `loop`), and `paused: true` holds a GIF or
+video still. A public https link works too: `{source: {url}}` (add `mime_type` when the address
+has no file extension). Links are shown live in the browser and as a placeholder card in
+exports, so upload the file when it must export. Media moves, resizes and rotates like any item
+(`update_elements`, `move_elements`). Web cards (`type: "web_card"`, `url`) show a web page.
 
 ## Limits and common errors
 

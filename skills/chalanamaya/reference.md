@@ -66,7 +66,12 @@ send it as `{"session_id": "SESSION", "updates": [ELEMENT]}` to `update_elements
 { "session_id": "SESSION", "kind": "image", "source": { "data_base64": "iVBORw0KGgo…", "mime_type": "image/png" }, "x": 900, "y": 80, "width": 240 }
 ```
 
-`{"source": {"url": "https://…"}}` is refused with `links_not_supported_yet` in this version.
+GIFs and videos use the same tool with `"kind": "gif"` or `"kind": "video"`; a link is
+`{"source": {"url": "https://media.example.com/clip.mp4"}}` (shown live, a placeholder in exports):
+
+```json
+{ "session_id": "SESSION", "kind": "video", "source": { "file_id": "FILE" }, "x": 80, "y": 400, "width": 480, "loop": true }
+```
 
 ## Tidy
 

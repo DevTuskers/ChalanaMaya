@@ -6,13 +6,14 @@ import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io
 import { httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
-import { inlineFiles, usedFileIds } from "./sync/files";
+import { LiveMedia } from "./ui/LiveMedia";
+import { fileFromStored, inlineFiles, usedFileIds } from "./sync/files";
 import { importIntoSession } from "./sync/importBoard";
 import { LiveChannel, socketUrl } from "./sync/live";
 import { PendingMirror, tabId } from "./sync/mirror";
 import { boardLabel, rememberBoard } from "./sync/recent";
 import type { FileMap } from "./scene/types";
-import { readPasteEvent } from "./io/clipboard";
+import { droppedMedia, readPasteEvent } from "./io/clipboard";
 import { downloadBlob, timestampName } from "./io/export";
 import { FormatError, parseBoard, serializeBoard, type ChalanaFile } from "./io/serialize";
 import { getCommonBounds } from "./scene/geometry";
@@ -116,9 +117,7 @@ const legacyBoard = (storage: StorageLike | null) => {
 
 /** The session's files as the board's file map (board-relative URLs). */
 const sessionFiles = (boot: SessionBoot): FileMap =>
-  Object.fromEntries(
-    boot.snapshot.files.map((f) => [f.id, { id: f.id, mimeType: f.mime, dataURL: f.url }]),
-  );
+  Object.fromEntries(boot.snapshot.files.map((f) => [f.id, fileFromStored(f)]));
 
 const createStore = (boot: SessionBoot) => {
   const storage = getStorage();
@@ -158,6 +157,11 @@ const createStore = (boot: SessionBoot) => {
     // media needs the server: refused while offline instead of queued (§3.6)
     if (store.get().saveStatus === "offline") throw new Error(OFFLINE_MEDIA);
     const up = await httpApi.upload(boot.id, blob);
+    return { id: up.file_id, url: up.url, mime: up.mime, width: up.width, height: up.height };
+  };
+  store.linkFile = async (url, mime, size) => {
+    if (store.get().saveStatus === "offline") throw new Error(OFFLINE_MEDIA);
+    const up = await httpApi.link(boot.id, url, mime, size);
     return { id: up.file_id, url: up.url, mime: up.mime };
   };
   return store;
@@ -402,7 +406,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             const fresh = files.filter((f) => !s.files[f.id]);
             if (fresh.length) {
               const map = { ...s.files };
-              for (const f of fresh) map[f.id] = { id: f.id, mimeType: f.mime, dataURL: f.url };
+              for (const f of fresh) map[f.id] = fileFromStored(f);
               patch.files = map;
             }
             store.applyRemote(elements, change, patch);
@@ -792,7 +796,30 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
       e.preventDefault();
       void pasteContent(store, readPasteEvent(e.clipboardData));
     };
+    // MEDIA-04: drop a picture, GIF, MP4 or WebM file onto the board
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files") || store.get().viewMode) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+      if (store.get().viewMode) return;
+      const f = droppedMedia(e.dataTransfer);
+      if (!f) {
+        store.toast(
+          "Only pictures, GIFs and MP4 or WebM videos can be dropped onto the board. The board was not changed.",
+          "error",
+          6000,
+        );
+        return;
+      }
+      void insertImageBlob(store, f);
+    };
     const win = doc.defaultView!;
+    doc.addEventListener("dragover", onDragOver);
+    doc.addEventListener("drop", onDrop);
     doc.addEventListener("keydown", onKey);
     doc.addEventListener("keyup", onKeyUp);
     win.addEventListener("blur", onBlur);
@@ -806,6 +833,8 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
       doc.removeEventListener("copy", onCopy);
       doc.removeEventListener("cut", onCut);
       doc.removeEventListener("paste", onPaste);
+      doc.removeEventListener("dragover", onDragOver);
+      doc.removeEventListener("drop", onDrop);
     };
   }, [store, controller, services]);
 
@@ -879,6 +908,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
         data-items={itemCount}
       >
         <Canvas />
+        <LiveMedia />
         <WebCards />
         <TextEditor />
         <ToolRail />
@@ -905,7 +935,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
         <input
           ref={pictureInput}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm"
           hidden
           data-testid="picture-input"
           onChange={(e) => {
@@ -913,9 +943,9 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             const f = input.files?.[0];
             input.value = "";
             if (!f) return;
-            if (!f.type.startsWith("image/")) {
+            if (!f.type.startsWith("image/") && f.type !== "video/mp4" && f.type !== "video/webm") {
               store.toast(
-                `“${f.name}” isn't a supported picture (PNG, JPEG, GIF, WebP or SVG). The board was not changed.`,
+                `“${f.name}” isn't a supported picture or video (PNG, JPEG, GIF, WebP, SVG, MP4 or WebM). The board was not changed.`,
                 "error",
                 6000,
               );

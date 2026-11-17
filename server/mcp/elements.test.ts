@@ -1,7 +1,8 @@
 /** Unit: forgiving input conversion, refusals and output shapes. */
 import { describe, expect, it } from "vitest";
 import { validateStoredElement } from "../../src/shared/validate";
-import { buildElement, freeSpace, place, type BuildContext } from "./elements";
+import { buildElement, freeSpace, inputType, place, type BuildContext } from "./elements";
+import type { StoredFile } from "../../src/shared/protocol";
 import { boardColor, color, colorName, num, ToolError } from "./palette";
 import { compactElement, fullElement, outlineLine } from "./view";
 import { ELEMENTS_REFERENCE, PALETTE_REFERENCE, guideText } from "./guide";
@@ -81,16 +82,60 @@ describe("buildElement", () => {
     expect(freeSpace([a])).toEqual({ x: 320, y: 80 });
   });
 
-  it("refuses links, later kinds and unknown types precisely", () => {
+  it("builds links, GIFs and videos; refuses later kinds and unknown types precisely", () => {
+    const files = new Map<string, StoredFile>();
+    const file = (id: string, mime: string, source: "upload" | "remote" = "upload") =>
+      files.set(id, {
+        id,
+        mime,
+        url: "",
+        size: 1,
+        width: 320,
+        height: 180,
+        durationMs: null,
+        source,
+        posterFileId: null,
+      });
+    file("fgif", "image/gif");
+    file("fvid", "video/mp4");
+    file("fpng", "image/png");
+    const c = {
+      ...ctx(),
+      files,
+      addLink: (url: string, mime: string) => {
+        file("flink", mime, "remote");
+        return { ...files.get("flink")!, url };
+      },
+    };
+    // no linker (pure context): links are refused as invalid input
     expect(
       err(() => buildElement({ type: "image", url: "https://e.com/a.png" }, "elements[2]", ctx())),
-    ).toMatchObject({
-      code: "links_not_supported_yet",
-    });
-    expect(err(() => buildElement({ type: "gif" }, "elements[0]", ctx())).code).toBe(
-      "kind_not_supported_yet",
+    ).toMatchObject({ code: "invalid_input" });
+    const link = buildElement({ type: "image", url: "https://E.com/a.png" }, "e[0]", c).el;
+    expect(link).toMatchObject({ type: "image", fileId: "flink" });
+    expect(
+      err(() => buildElement({ type: "image", url: "https://localhost/a.png" }, "e[0]", c)).message,
+    ).toMatch(/e\[0\]\.url: the link must not point to this computer/);
+    expect(
+      err(() => buildElement({ type: "video", url: "https://e.com/page" }, "e[0]", c)).message,
+    ).toMatch(/mime_type/);
+    const gif = buildElement({ type: "gif", file_id: "fgif", paused: true }, "e[0]", c).el;
+    expect(gif).toMatchObject({ type: "image", fileId: "fgif", paused: true });
+    const vid = buildElement({ type: "video", file_id: "fvid" }, "e[0]", c).el;
+    expect(vid).toMatchObject({ type: "image", fileId: "fvid", loop: true, autoplay: true });
+    expect(vid.height / vid.width).toBeCloseTo(180 / 320);
+    expect(inputType(vid, files)).toBe("video");
+    expect(inputType(gif, files)).toBe("gif");
+    expect(err(() => buildElement({ type: "gif", file_id: "fpng" }, "e[0]", c)).message).toMatch(
+      /not a gif/,
     );
-    expect(err(() => buildElement({ type: "video" }, "elements[0]", ctx())).code).toBe(
+    expect(err(() => buildElement({ type: "image", file_id: "fvid" }, "e[0]", c)).message).toMatch(
+      /use type "video"/,
+    );
+    expect(
+      err(() => buildElement({ type: "image", file_id: "fpng", loop: true }, "e[0]", c)).message,
+    ).toMatch(/only videos/);
+    expect(err(() => buildElement({ type: "component" }, "elements[0]", ctx())).code).toBe(
       "kind_not_supported_yet",
     );
     expect(err(() => buildElement({ type: "hexagon" }, "elements[3]", ctx())).message).toMatch(
@@ -123,7 +168,8 @@ describe("output", () => {
 describe("guide", () => {
   it("serves the skill and references", () => {
     expect(guideText()).toMatch(/^---\nname: chalanamaya/);
-    expect(ELEMENTS_REFERENCE.later_versions).toContain("gif");
+    expect(ELEMENTS_REFERENCE.later_versions).toEqual(["component"]);
+    expect(ELEMENTS_REFERENCE.types).toContain("video");
     expect(Object.keys(PALETTE_REFERENCE.fill)).toContain("mint");
   });
 });
