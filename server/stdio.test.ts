@@ -1,5 +1,6 @@
 /** Integration: the official SDK stdio client against the bridge process (plan §8). */
 import net from "node:net";
+import http from "node:http";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -73,6 +74,55 @@ const serve = async (port?: number) => {
 };
 
 describe("stdio bridge", () => {
+  it.each([403, 413, 429, 500])("reports HTTP %i without reconnecting", async (status) => {
+    const srv = await serve();
+    let refusal = false;
+    let requests = 0;
+    const proxy = http.createServer(async (req, res) => {
+      requests++;
+      if (refusal) {
+        res.writeHead(status).end("refused");
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const reply = await fetch(`${srv.base}/mcp`, {
+        method: req.method,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: req.method === "POST" ? Buffer.concat(chunks) : undefined,
+      });
+      res.writeHead(reply.status, { "content-type": reply.headers.get("content-type")! });
+      res.end(await reply.text());
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    cleanup.push(() => new Promise<void>((resolve) => proxy.close(() => resolve())));
+    const url = `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`;
+    const client = await bridge(url);
+    await client.listTools();
+    refusal = true;
+    const before = requests;
+    const meaning =
+      status === 403
+        ? "ALLOWED_HOSTS.*ALLOWED_ORIGINS"
+        : status === 413
+          ? "too large"
+          : status === 429
+            ? "Rate limited"
+            : "Server error";
+    await expect(client.listTools()).rejects.toThrow(new RegExp(`HTTP ${status}.*${meaning}`));
+    expect(requests - before).toBe(1);
+    // The same refusal during the initial upstream connection must not be called unreachable.
+    const fresh = await bridge(url);
+    const initial = requests;
+    await expect(fresh.listTools()).rejects.toThrow(new RegExp(`HTTP ${status}.*${meaning}`));
+    expect(requests - initial).toBe(1);
+    refusal = false;
+    expect((await client.listTools()).tools.length).toBe(17);
+  });
+
   it("forwards tools, prompts and resources and names the agent", async () => {
     const srv = await serve();
     const client = await bridge(srv.base);

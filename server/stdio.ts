@@ -11,7 +11,10 @@
  *   CHALANAMAYA_URL=http://localhost:5183 node dist-server/stdio.js
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -33,6 +36,37 @@ const NO_AGENT_NAME = new Set([
   "get_scene",
   "list_component_presets",
 ]);
+
+const isConnectionFailure = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  if (error instanceof McpError || error instanceof StreamableHTTPError) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return (
+    (typeof code === "string" &&
+      /^(ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|EPIPE|ETIMEDOUT|UND_ERR_)/.test(
+        code,
+      )) ||
+    (error instanceof TypeError && /fetch failed|failed to fetch|network/i.test(error.message)) ||
+    isConnectionFailure(error.cause)
+  );
+};
+
+const requestError = (error: unknown): never => {
+  if (error instanceof StreamableHTTPError) {
+    const meaning =
+      error.code === 403
+        ? "Host/Origin refused. Set ALLOWED_HOSTS to allow the server hostname and ALLOWED_ORIGINS to allow the MCP client's origin."
+        : error.code === 413
+          ? "Request too large. Reduce the request payload."
+          : error.code === 429
+            ? "Rate limited. Wait before trying again."
+            : error.code !== undefined && error.code >= 500
+              ? "Server error. Check the ChalanaMaya server logs."
+              : "The server refused the HTTP request.";
+    throw new McpError(-32603, `ChalanaMaya HTTP ${error.code}: ${meaning}`);
+  }
+  throw error;
+};
 
 export interface BridgeOptions {
   url: string;
@@ -96,7 +130,8 @@ export const createBridge = (opts: BridgeOptions) => {
     let client: Client;
     try {
       client = await connect();
-    } catch {
+    } catch (e) {
+      if (!isConnectionFailure(e)) requestError(e);
       wasDown = true;
       return null;
     }
@@ -106,8 +141,7 @@ export const createBridge = (opts: BridgeOptions) => {
         ResultSchema,
       )) as Record<string, unknown>;
     } catch (e) {
-      // a JSON-RPC error from the server is the answer; anything else means the link broke
-      if (e instanceof McpError && e.code !== -32001) throw e;
+      if (!isConnectionFailure(e)) requestError(e);
       upstream = null;
       wasDown = true;
       void client.close().catch(() => {});
@@ -119,7 +153,7 @@ export const createBridge = (opts: BridgeOptions) => {
           ResultSchema,
         )) as Record<string, unknown>;
       } catch (e2) {
-        if (e2 instanceof McpError && e2.code !== -32001) throw e2;
+        if (!isConnectionFailure(e2)) requestError(e2);
         upstream = null;
         wasDown = true;
         return null;
