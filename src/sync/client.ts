@@ -59,6 +59,15 @@ export interface SyncHost {
   /** Ids moved in the layer order since the last call (a reorder hint). */
   takeLayerMoves(): Iterable<string>;
   /**
+   * An agent changed the board: `before` is the board just before the change
+   * was applied, `ops` what the server sent (for notices and Restore).
+   */
+  agentChange?(change: {
+    name: string;
+    ops: readonly RemoteOp[];
+    before: ReadonlyMap<string, SceneElement>;
+  }): void;
+  /**
    * Applies a remote change (Rule B): `elements` is the new board, `change`
    * what the server sent (for the history's remote log). Without it the board
    * is replaced like `replaceElements`.
@@ -570,7 +579,12 @@ export class SyncClient {
       case "changes": {
         this.liveRev = Math.max(this.liveRev, msg.rev);
         this.rev = Math.max(this.rev, msg.rev);
+        const agent = msg.origin.kind === "agent" && this.host.agentChange;
+        const before = agent
+          ? new Map(this.host.scene().elements.map((e) => [e.id, e] as const))
+          : null;
         this.applyRemote(msg.ops, msg.files ?? []);
+        if (before) this.host.agentChange!({ name: msg.origin.name, ops: msg.ops, before });
         this.updateStatus();
         return;
       }

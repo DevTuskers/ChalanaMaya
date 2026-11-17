@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
 import { httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
-import { LOST_NOTICE, SyncClient, applyOpsToScene } from "./sync/client";
+import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
 import { inlineFiles, usedFileIds } from "./sync/files";
 import { importIntoSession } from "./sync/importBoard";
 import { LiveChannel, socketUrl } from "./sync/live";
@@ -320,6 +320,55 @@ const PathHint = () => {
   );
 };
 
+/**
+ * Notices for agent changes (plan §3.9): "<agent> added N items · Show" and,
+ * because a person's undo does not revert agent changes, "<agent> cleared the
+ * board · Restore", which puts the removed items back as one undoable step.
+ */
+const agentNotice = (
+  store: ReturnType<typeof createStore>,
+  change: Parameters<NonNullable<SyncHost["agentChange"]>>[0],
+) => {
+  const { name, ops, before } = change;
+  const now = store.get().elements;
+  const present = new Set(now.map((e) => e.id));
+  const removed = ops.flatMap((op) => {
+    if (op.t !== "del") return [];
+    const el = before.get(op.id);
+    return el && !present.has(op.id) ? [el] : [];
+  });
+  if (removed.length && !now.length) {
+    store.toast(`${name} cleared the board`, "info", 15000, {
+      label: "Restore",
+      testId: "agent-restore",
+      run: () => {
+        const cur = store.get().elements;
+        const ids = new Set(cur.map((e) => e.id));
+        store.commit([...cur, ...removed.filter((e) => !ids.has(e.id))]);
+      },
+    });
+    return;
+  }
+  const added = ops.filter(
+    (op) =>
+      op.t === "put" &&
+      !before.has(op.el.id) &&
+      present.has(op.el.id) &&
+      !(op.el.type === "text" && op.el.containerId),
+  );
+  if (!added.length) return;
+  const ids = new Set(added.map((op) => (op.t === "put" ? op.el.id : "")));
+  store.toast(`${name} added ${added.length} item${added.length === 1 ? "" : "s"}`, "info", 6000, {
+    label: "Show",
+    testId: "agent-show",
+    run: () => {
+      const targets = store.get().elements.filter((e) => ids.has(e.id));
+      const v = fitBounds(getCommonBounds(targets), store.viewSize.width, store.viewSize.height);
+      if (v) store.set({ viewport: v });
+    },
+  });
+};
+
 export const App = ({ boot }: { boot: SessionBoot }) => {
   const [store] = useState(() => createStore(boot));
   const [sync] = useState(
@@ -361,6 +410,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
           live: (liveSync) => store.set({ liveSync }),
           protection: (storageWarning) => store.set({ storageWarning }),
           notice: (message) => store.toast(message, "error", 8000),
+          agentChange: (change) => agentNotice(store, change),
           takeLayerMoves: () => {
             const ids = [...store.layerMoves];
             store.layerMoves.clear();
