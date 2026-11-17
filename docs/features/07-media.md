@@ -47,7 +47,7 @@ Put media on the board in familiar ways.
 
 Acceptance criteria:
 - **Insert media…** in the main menu accepts a file or an https link; dropping or pasting a GIF, MP4 or WebM file also works.
-- Uploaded files are stored by the ChalanaMaya server and drawn in the board, in layer order; links are loaded by the browser, are never fetched by the server, and are shown as live items above drawn items (like web cards), with a note that uploading gives full support.
+- Uploaded files are stored by the ChalanaMaya server and drawn in the board, in layer order; links (pictures, GIFs and videos alike) are loaded by the browser without sending the board address, are never fetched by the server, and are shown as live items above drawn items (like web cards), with a note that uploading gives full support.
 - The colour picker (eyedropper) keeps working with any media on the board.
 - Agents can do the same through MCP ([AGENT-08](06-sessions-and-agents.md#agent-08--place-media)).
 
@@ -69,7 +69,7 @@ Make an animated piece from your own HTML and CSS, safely.
 
 Acceptance criteria:
 - A dialog accepts HTML and CSS (each up to 20 KB) with a live preview and lists the rules.
-- Content never runs scripts: components are shown in a sandboxed frame without script permission, after cleaning; forbidden content (scripts, event attributes, `javascript:` links, `@import`, outside `url()` resources, frames, forms, meta tags) is refused with a message naming the rule.
+- Content never runs scripts: components are shown in a sandboxed frame without script permission, inside a fixed page that starts with a strict content policy, after cleaning the HTML and the CSS separately; forbidden content (scripts, event attributes, `javascript:` links, `@import`, outside `url()` resources, frames, forms, meta tags) is refused with a message naming the rule.
 - Components cannot load anything from the internet, open windows or change the board.
 
 ## MEDIA-07 — Media in exports and files
@@ -81,7 +81,7 @@ Exports and files stay useful with moving content.
 Acceptance criteria:
 - PNG export shows a GIF's first frame, a video's poster frame with a play badge, and a still card for components; SVG export keeps the GIF animated and uses the same still fallbacks for the rest.
 - A saved .chalana file contains the media and reopens with it (very large boards may keep videos as links, with a warning).
-- Media from links is shown in PNG exports as a placeholder card with the site name, and never makes an export fail.
+- Media from links (pictures, GIFs and videos) is shown in PNG exports as a placeholder card with the site name, and never makes an export fail.
 
 ## MEDIA-08 — Media limits and safety
 
@@ -113,6 +113,7 @@ Many moving items do not make the board slow.
 
 Acceptance criteria:
 - A board with 2,000 shapes, 4 GIFs and 3 videos in view stays smooth: drawing a moving frame takes under 16 ms on average, or the board lowers the animation rate by itself.
+- Dragging an item while the media plays stays responsive: no browser task longer than 50 ms during a one-second drag, and the item ends under the pointer.
 - When the device is too slow even at the lower rate, moving media pauses with a notice and a **Play** action.
 - At most 24 live items (components, web cards, linked media) are shown live at once; others, very small ones and all of them when zoomed far out show their still picture.
 - Selected live items show their selection frame and handles above them.
