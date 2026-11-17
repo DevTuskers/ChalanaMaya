@@ -7,7 +7,12 @@ export default defineConfig({
   server: { port: 5183, strictPort: true },
   preview: { port: 5184, strictPort: true },
   test: {
-    include: ["src/**/*.test.ts"],
-    environment: "node",
+    // one project per runtime; the server project joins in phase 1b
+    projects: [
+      {
+        extends: true,
+        test: { name: "app", include: ["src/**/*.test.ts"], environment: "node" },
+      },
+    ],
   },
 });

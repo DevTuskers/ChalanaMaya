@@ -1,3 +1,4 @@
+import { LIMITS } from "../shared/limits";
 import { DEFAULT_STYLE, NOTE_SWATCHES, TRANSPARENT } from "./constants";
 import type {
   EmbedElement,
@@ -107,7 +108,8 @@ export const createText = (
   type: "text",
   backgroundColor: TRANSPARENT,
   strokeStyle: "solid",
-  text,
+  // source limit: tools never produce text strict validation would refuse
+  text: text.slice(0, LIMITS.textChars),
   fontFamily: style.fontFamily,
   fontSize: style.fontSize,
   textAlign: containerId ? "center" : style.textAlign,

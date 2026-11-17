@@ -1,3 +1,4 @@
+import { LIMITS } from "../shared/limits";
 import { useEffect, useRef } from "react";
 import { FONT_FAMILIES, LINE_HEIGHT } from "../scene/constants";
 import { getCenter } from "../scene/geometry";
@@ -38,6 +39,7 @@ export const TextEditor = () => {
       aria-label={el.containerId ? "Text inside shape" : "Text"}
       data-testid="text-editor"
       value={el.text}
+      maxLength={LIMITS.textChars}
       spellCheck
       wrap={el.autoWidth ? "off" : "soft"}
       onChange={(e) => controller.updateText(el.id, e.target.value)}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getElementBounds } from "../scene/geometry";
 import type { EmbedElement, Viewport } from "../scene/types";
 import { resolveWebCard, WEB_CARD_HEADER, WEB_CARD_SANDBOX } from "../scene/webcard";
@@ -29,14 +29,38 @@ export const WebCards = () => {
     (e): e is EmbedElement => e.type === "embed" && onScreen(e, viewport, store.viewSize),
   );
   const layerRef = useRef<HTMLDivElement>(null);
-  // move keyboard focus into the page when a card starts being used
+  const [trapped, setTrapped] = useState(false);
+  // DRAW-14: focus the card wrapper, never the cross-origin page, so Esc still
+  // reaches the board's key handler. Leaving the card hands focus back.
   useEffect(() => {
     if (!active) return;
-    const frame = layerRef.current?.querySelector<HTMLIFrameElement>(
-      `[data-id="${CSS.escape(active)}"] iframe`,
-    );
-    frame?.focus();
+    const layer = layerRef.current;
+    const card = layer?.querySelector<HTMLElement>(`[data-id="${CSS.escape(active)}"]`);
+    card?.focus({ preventScroll: true });
+    // a click inside the page moves focus into it, where Esc can't be heard
+    const onBlur = () => {
+      // activeElement settles on the frame just after the blur/focusout event
+      setTimeout(() => {
+        if (document.activeElement instanceof HTMLIFrameElement) setTrapped(true);
+      }, 0);
+    };
+    layer?.addEventListener("focusout", onBlur);
+    const onFocus = () => setTrapped(false);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      layer?.removeEventListener("focusout", onBlur);
+      window.removeEventListener("focus", onFocus);
+      setTrapped(false);
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && layer?.contains(focused)) focused.blur();
+    };
   }, [active]);
+  // Done sits before the hint text so it doesn't shift when the text changes
+  const done = () => {
+    store.set({ activeEmbedId: null });
+  };
   if (!cards.length) return null;
   return (
     <div className="webcards" ref={layerRef} aria-hidden={editing ? true : undefined}>
@@ -59,6 +83,7 @@ export const WebCards = () => {
             data-testid="webcard"
             data-id={el.id}
             data-kind={res.target.kind}
+            tabIndex={-1}
             style={{ width: el.width, height: el.height, transform, opacity: el.opacity / 100 }}
           >
             <div className="webcard-body" style={{ top: WEB_CARD_HEADER, height: bodyH }}>
@@ -91,7 +116,20 @@ export const WebCards = () => {
             </div>
             {isActive ? (
               <p className="webcard-hint" data-testid="webcard-active">
-                Using the page · click the board or press Esc to return
+                <button
+                  type="button"
+                  className="btn webcard-done"
+                  data-testid="webcard-done"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={done}
+                >
+                  Done
+                </button>
+                <span data-testid="webcard-hint-text">
+                  {trapped
+                    ? "Click Done or the board to return"
+                    : "Using the page · press Esc or click Done to return"}
+                </span>
               </p>
             ) : null}
           </div>

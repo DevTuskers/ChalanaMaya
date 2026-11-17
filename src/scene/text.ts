@@ -3,22 +3,8 @@ import type { FontFamily, SceneElement, TextElement } from "./types";
 
 export type MeasureFn = (text: string, font: string) => number;
 
-let ctx: CanvasRenderingContext2D | null | undefined;
-
-/** Measures with a canvas when available; falls back to an estimate (tests, SSR). */
+/** Estimate used without a DOM (tests, server). The browser installs a canvas measurer (src/ui/measure.ts). */
 export const defaultMeasure: MeasureFn = (text, font) => {
-  if (ctx === undefined) {
-    try {
-      ctx =
-        typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
-    } catch {
-      ctx = null;
-    }
-  }
-  if (ctx) {
-    ctx.font = font;
-    return ctx.measureText(text).width;
-  }
   const size = parseFloat(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? "20");
   return text.length * size * 0.55;
 };

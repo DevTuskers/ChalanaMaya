@@ -1,4 +1,5 @@
 import { hasPoints, isLinear } from "./elements";
+import { wrapAngle } from "../shared/limits";
 import { getCenter, getCommonBounds, normalizePoints, rotatePoint } from "./geometry";
 import { withDependents } from "./arrange";
 import { withBoundTexts, type Elements } from "./scene";
@@ -193,7 +194,12 @@ export const rotateElements = (
   return elements.map((el) => {
     if (!rotating.has(el.id) || el.locked) return el;
     const c = rotatePoint(getCenter(el), center, delta);
-    return { ...el, x: c.x - el.width / 2, y: c.y - el.height / 2, angle: el.angle + delta };
+    return {
+      ...el,
+      x: c.x - el.width / 2,
+      y: c.y - el.height / 2,
+      angle: wrapAngle(el.angle + delta),
+    };
   });
 };
 

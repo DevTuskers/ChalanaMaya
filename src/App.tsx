@@ -1,3 +1,7 @@
+import { canonicalizeElements } from "./shared/canonical";
+import { isColor } from "./shared/limits";
+import { finalizeScene } from "./scene/scene";
+import { PAPER } from "./scene/constants";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   STORAGE_KEY,
@@ -501,19 +505,29 @@ export const App = () => {
     if (blockedByViewMode(store)) return;
     const view = store.viewSize;
     store.history.record(store.snapshot());
-    const b = getCommonBounds(file.elements);
+    // lenient file edge: canonicalise, then strict validation (plan §3.11)
+    const { elements, report } = canonicalizeElements(file.elements);
+    const b = getCommonBounds(elements);
+    const bg = file.settings.viewBackgroundColor.toLowerCase();
     store.set({
       files: file.files,
-      elements: file.elements,
+      elements: finalizeScene(elements),
       selectedIds: new Set(),
       editingTextId: null,
       theme: file.settings.theme,
-      viewBackgroundColor: file.settings.viewBackgroundColor,
+      viewBackgroundColor: isColor(bg) ? bg : PAPER[file.settings.theme],
       gridEnabled: file.settings.gridEnabled,
       viewport: (b && fitBounds(b, view.width, view.height)) || { scrollX: 0, scrollY: 0, zoom: 1 },
       historyVersion: store.get().historyVersion + 1,
     });
-    store.toast("Board opened.", "success", 2500);
+    const fixed = report.changes.length + report.dropped.length;
+    store.toast(
+      fixed
+        ? `Board opened. ${report.dropped.length ? `${report.dropped.length} unreadable item(s) skipped, ` : ""}${report.changes.length} value(s) tidied.`
+        : "Board opened.",
+      "success",
+      2500,
+    );
   };
 
   const onFileChosen = async (input: HTMLInputElement) => {

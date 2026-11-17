@@ -1,3 +1,4 @@
+import { LIMITS } from "../shared/limits";
 import {
   alignSelected,
   applyStyle,
@@ -142,6 +143,7 @@ const FrameName = ({ id, name }: { id: string; name: string }) => {
       <span>Frame name</span>
       <input
         data-testid="frame-name"
+        maxLength={LIMITS.frameName}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => value !== name && setFrameName(store, id, value.trim() || "Page")}

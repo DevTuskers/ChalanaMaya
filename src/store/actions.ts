@@ -1,3 +1,4 @@
+import { LIMITS } from "../shared/limits";
 import { buildChart, looksLikeSpreadsheet, type ChartData, type ChartKind } from "../scene/chart";
 import { resolveWebCard } from "../scene/webcard";
 import { createEmbed } from "../scene/elements";
@@ -546,7 +547,11 @@ export const createFrameAroundSelection = (store: Store) => {
 export const setFrameName = (store: Store, id: string, name: string) => {
   if (blockedByViewMode(store)) return;
   const { elements } = store.get();
-  store.commit(elements.map((e) => (e.id === id && e.type === "frame" ? { ...e, name } : e)));
+  store.commit(
+    elements.map((e) =>
+      e.id === id && e.type === "frame" ? { ...e, name: name.slice(0, LIMITS.frameName) } : e,
+    ),
+  );
 };
 
 /** Removes a frame but keeps everything that was inside it. */

@@ -20,11 +20,12 @@ export const getBoundText = (elements: Elements, containerId: string): TextEleme
   elements.find((e): e is TextElement => e.type === "text" && e.containerId === containerId);
 
 /** Positions bound text inside its container, growing the container when text overflows. */
-export const syncBoundTexts = (elements: Elements): SceneElement[] => {
+export const syncBoundTexts = (elements: Elements, scope?: Set<string>): SceneElement[] => {
   const map = byId(elements);
   const updates = new Map<string, SceneElement>();
   for (const el of elements) {
     if (!isBoundText(el)) continue;
+    if (scope && !scope.has(el.id) && !scope.has(el.containerId!)) continue;
     let container = updates.get(el.containerId!) ?? map.get(el.containerId!);
     if (!container) continue;
     const font = fontString(el.fontFamily, el.fontSize);
@@ -64,6 +65,7 @@ export const syncBoundTexts = (elements: Elements): SceneElement[] => {
       const needed = (height + BOUND_TEXT_PADDING * 2) / factor;
       container = { ...container, height: needed };
       updates.set(container.id, container);
+      scope?.add(container.id);
     }
     const c = getCenter(container);
     const width = maxW;
@@ -90,6 +92,20 @@ export const syncBoundTexts = (elements: Elements): SceneElement[] => {
   if (!updates.size) return elements as SceneElement[];
   return elements.map((e) => updates.get(e.id) ?? e);
 };
+
+const EPS = 1e-7;
+const close = (a: number, b: number) =>
+  Math.abs(a - b) <= EPS * Math.max(1, Math.abs(a), Math.abs(b));
+/** Keeps the old object when the recomputed connector has the same geometry (Rule A). */
+const sameLinear = (a: LinearElement, b: LinearElement) =>
+  a.startBinding === b.startBinding &&
+  a.endBinding === b.endBinding &&
+  close(a.x, b.x) &&
+  close(a.y, b.y) &&
+  close(a.width, b.width) &&
+  close(a.height, b.height) &&
+  a.points.length === b.points.length &&
+  a.points.every((p, i) => close(p.x, b.points[i].x) && close(p.y, b.points[i].y));
 
 /**
  * Where a ray from the element centre towards `toward` meets the outline,
@@ -125,27 +141,48 @@ export const sidePoint = (el: SceneElement, toward: Point, gap = 4): Point => {
 };
 
 /** Recomputes endpoints of arrows attached to shapes. */
-export const updateBindings = (elements: Elements): SceneElement[] => {
+export const updateBindings = (elements: Elements, scope?: Set<string>): SceneElement[] => {
   const map = byId(elements);
   let changed = false;
+  const touched: string[] = [];
   const next = elements.map((el) => {
     if (!isLinear(el) || (!el.startBinding && !el.endBinding)) return el;
+    if (
+      scope &&
+      !scope.has(el.id) &&
+      !(el.startBinding && scope.has(el.startBinding.elementId)) &&
+      !(el.endBinding && scope.has(el.endBinding.elementId))
+    )
+      return el;
+    const result = bindConnector(el, map);
+    if (result === el) return el;
+    changed = true;
+    touched.push(el.id);
+    return result;
+  });
+  for (const id of touched) scope?.add(id);
+  return changed ? next : (elements as SceneElement[]);
+};
+
+const bindConnector = (el: LinearElement, map: Map<string, SceneElement>): LinearElement => {
+  const out = bindConnectorRaw(el, map);
+  return out !== el && sameLinear(out, el) ? el : out;
+};
+
+const bindConnectorRaw = (el: LinearElement, map: Map<string, SceneElement>): LinearElement => {
+  {
     const start = el.startBinding ? map.get(el.startBinding.elementId) : undefined;
     const end = el.endBinding ? map.get(el.endBinding.elementId) : undefined;
     let updated: LinearElement = el;
     if (el.startBinding && !start) updated = { ...updated, startBinding: null };
     if (el.endBinding && !end) updated = { ...updated, endBinding: null };
-    if (!start && !end) {
-      if (updated !== el) changed = true;
-      return updated;
-    }
+    if (!start && !end) return updated;
     const abs = getAbsolutePoints(el);
     const n = abs.length;
     if (n < 2) return updated;
     if (el.type === "arrow" && el.routing === "elbow") {
       if (start) abs[0] = sidePoint(start, end ? getCenter(end) : abs[1]);
       if (end) abs[n - 1] = sidePoint(end, start ? getCenter(start) : abs[n - 2]);
-      changed = true;
       return fromAbsolutePoints(updated, abs);
     }
     if (start) {
@@ -156,10 +193,8 @@ export const updateBindings = (elements: Elements): SceneElement[] => {
       const target = n === 2 && start ? getCenter(start) : abs[n - 2];
       abs[n - 1] = boundaryPoint(end, target);
     }
-    changed = true;
     return fromAbsolutePoints(updated, abs);
-  });
-  return changed ? next : (elements as SceneElement[]);
+  }
 };
 
 /** Topmost element that an arrow endpoint at `p` would attach to. */
@@ -272,6 +307,14 @@ export const isSelectable = (el: SceneElement) => !el.locked && !isBoundText(el)
 export const selectAll = (elements: Elements): string[] =>
   elements.filter(isSelectable).map((e) => e.id);
 
-/** Applies bindings and bound text layout after any geometry change. */
-export const finalizeScene = (elements: Elements): SceneElement[] =>
-  updateBindings(syncBoundTexts(elements));
+/**
+ * Applies bindings and bound text layout after any geometry change (Rule A).
+ * Idempotent: unchanged elements keep their object, and a no-op pass returns the
+ * same array. With `touched`, only those ids, their labels and their connectors
+ * (and those connectors' labels) are recomputed.
+ */
+export const finalizeScene = (elements: Elements, touched?: Iterable<string>): SceneElement[] => {
+  const scope = touched ? new Set(touched) : undefined;
+  // labels/containers first, then connectors, then connector labels on moved paths
+  return syncBoundTexts(updateBindings(syncBoundTexts(elements, scope), scope), scope);
+};

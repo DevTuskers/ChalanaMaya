@@ -1,4 +1,11 @@
 import {
+  captureInteraction,
+  interactionScene,
+  liveIds,
+  type InteractionBase,
+} from "../scene/rebase";
+import { LIMITS } from "../shared/limits";
+import {
   createFrame,
   createFreedraw,
   createLinear,
@@ -123,7 +130,7 @@ type Interaction =
   | {
       kind: "move";
       start: Point;
-      base: readonly SceneElement[];
+      base: InteractionBase;
       ids: Set<string>;
       before: Snapshot;
     }
@@ -132,14 +139,14 @@ type Interaction =
       handle: Handle;
       /** Edge point minus grab point, so the box edge follows the pointer delta. */
       offset: Point;
-      base: readonly SceneElement[];
+      base: InteractionBase;
       ids: Set<string>;
       startBounds: Bounds;
       before: Snapshot;
     }
   | {
       kind: "rotate";
-      base: readonly SceneElement[];
+      base: InteractionBase;
       ids: Set<string>;
       center: Point;
       startAngle: number;
@@ -417,7 +424,7 @@ export class Controller {
         const center = getCenter(box);
         this.interaction = {
           kind: "rotate",
-          base: elements,
+          base: captureInteraction(elements, selectedIds),
           ids: new Set(selectedIds),
           center,
           startAngle: Math.atan2(p.y - center.y, p.x - center.x),
@@ -433,7 +440,7 @@ export class Controller {
             kind: "resize",
             handle: h,
             offset: { x: edge.x - p.x, y: edge.y - p.y },
-            base: elements,
+            base: captureInteraction(elements, selectedIds),
             ids: new Set(selectedIds),
             startBounds: {
               minX: box.x,
@@ -489,7 +496,7 @@ export class Controller {
     this.interaction = {
       kind: "move",
       start: p,
-      base: this.state.elements,
+      base: captureInteraction(this.state.elements, ids),
       ids,
       before: this.store.snapshot(),
     };
@@ -754,7 +761,7 @@ export class Controller {
   updateText(id: string, text: string) {
     const elements = this.state.elements.map((e) => {
       if (e.id !== id || e.type !== "text") return e;
-      const next: TextElement = { ...e, text };
+      const next: TextElement = { ...e, text: text.slice(0, LIMITS.textChars) };
       return next.containerId ? next : layoutText(next);
     });
     this.store.updateElements(elements);
@@ -889,6 +896,15 @@ export class Controller {
             e.id === it.id ? { ...fromAbsolutePoints(el, it.points), pressures } : e,
           ),
         });
+        // source limit: a very long stroke carries on as a new stroke, same undo step
+        if (it.points.length >= LIMITS.freedrawPoints) {
+          const next = createFreedraw(p.x, p.y, this.state.currentStyle);
+          this.claimFrame(it.id);
+          this.store.set({ elements: [...this.state.elements, next] });
+          it.id = next.id;
+          it.points = [p];
+          if (it.pressures) it.pressures = [it.pressures[it.pressures.length - 1]];
+        }
         return;
       }
       case "path": {
@@ -897,14 +913,17 @@ export class Controller {
         return;
       }
       case "move": {
+        // Rule C: computed from the live scene with the gesture's start state put back
+        const base = interactionScene(this.state.elements, it.base);
+        const ids = liveIds(this.state.elements, it.base);
         let dx = p.x - it.start.x;
         let dy = p.y - it.start.y;
         if (this.snapOn(input)) {
-          const moving = withDependents(it.base, it.ids);
-          const b = getCommonBounds(it.base.filter((e) => moving.has(e.id)));
+          const moving = withDependents(base, ids);
+          const b = getCommonBounds(base.filter((e) => moving.has(e.id)));
           if (b) {
             const r = snapBox(
-              it.base,
+              base,
               { minX: b.minX + dx, maxX: b.maxX + dx, minY: b.minY + dy, maxY: b.maxY + dy },
               moving,
               6 / this.state.viewport.zoom,
@@ -914,36 +933,40 @@ export class Controller {
             this.store.set({ snapLines: r.lines });
           }
         } else if (this.state.snapLines.length) this.store.set({ snapLines: [] });
-        this.store.updateElements(moveElements(it.base, it.ids, dx, dy));
+        this.store.updateElements(moveElements(base, ids, dx, dy));
         return;
       }
       case "resize": {
         const target = { x: p.x + it.offset.x, y: p.y + it.offset.y };
+        const base = interactionScene(this.state.elements, it.base);
+        const ids = liveIds(this.state.elements, it.base);
+        if (!ids.size) return;
         if (it.ids.size === 1) {
-          const [id] = it.ids;
-          const el = it.base.find((e) => e.id === id)!;
+          const [id] = ids;
+          const el = base.find((e) => e.id === id)!;
           const img =
             el.type === "image" && this.state.croppingId === el.id ? this.naturalSize(el) : null;
           const next = img
             ? cropByHandle(el as ImageElement, img, it.handle, target)
             : resizeElement(el, it.handle, target, input.shiftKey);
-          this.store.updateElements(it.base.map((e) => (e.id === id ? next : e)));
+          this.store.updateElements(base.map((e) => (e.id === id ? next : e)));
         } else {
-          this.store.updateElements(
-            resizeGroup(it.base, it.ids, it.startBounds, it.handle, target),
-          );
+          this.store.updateElements(resizeGroup(base, ids, it.startBounds, it.handle, target));
         }
         return;
       }
       case "rotate": {
         let delta = Math.atan2(p.y - it.center.y, p.x - it.center.x) - it.startAngle;
+        const base = interactionScene(this.state.elements, it.base);
+        const ids = liveIds(this.state.elements, it.base);
+        if (!ids.size) return;
         if (input.shiftKey) {
           if (it.single) {
-            const el = it.base.find((e) => it.ids.has(e.id))!;
+            const el = base.find((e) => ids.has(e.id))!;
             delta = snapAngle(el.angle + delta) - el.angle;
           } else delta = snapAngle(delta);
         }
-        this.store.updateElements(rotateElements(it.base, it.ids, it.center, delta));
+        this.store.updateElements(rotateElements(base, ids, it.center, delta));
         return;
       }
       case "box": {
@@ -1224,14 +1247,14 @@ export class Controller {
     if (it.kind === "box") this.setOverlay({ selectionBox: null });
     if (it.kind === "trail") this.store.set({ trail: null, pendingErase: new Set() });
     if (this.state.snapLines.length) this.store.set({ snapLines: [] });
-    if (
+    if (it.kind === "move" || it.kind === "resize" || it.kind === "rotate") {
+      // put only the gesture's elements back, keeping anything else that changed meanwhile
+      this.store.updateElements(interactionScene(this.state.elements, it.base));
+    } else if (
       it.kind === "shape" ||
       it.kind === "frame" ||
       it.kind === "arrow" ||
       it.kind === "freedraw" ||
-      it.kind === "move" ||
-      it.kind === "resize" ||
-      it.kind === "rotate" ||
       it.kind === "endpoint"
     ) {
       this.store.set({ elements: it.before.elements });

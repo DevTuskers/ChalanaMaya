@@ -141,6 +141,7 @@ Acceptance criteria:
 - Supported links display interactive content when the provider allows it.
 - Blocked, invalid, or unavailable content shows a safe link or clear message.
 - Embedded content cannot silently change board elements.
+- While a card is in use, Esc or the Done button returns to the board, even after clicking inside the page; keyboard focus stays on the card frame rather than inside the page, and a hint says "Click Done or the board to return" when the page has taken focus.
 
 ## DRAW-15 — Eraser
 
