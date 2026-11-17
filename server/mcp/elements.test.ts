@@ -135,8 +135,8 @@ describe("buildElement", () => {
     expect(
       err(() => buildElement({ type: "image", file_id: "fpng", loop: true }, "e[0]", c)).message,
     ).toMatch(/only videos/);
-    expect(err(() => buildElement({ type: "component" }, "elements[0]", ctx())).code).toBe(
-      "kind_not_supported_yet",
+    expect(err(() => buildElement({ type: "component" }, "elements[0]", ctx())).message).toMatch(
+      /^elements\[0\]\.preset: is required/,
     );
     expect(err(() => buildElement({ type: "hexagon" }, "elements[3]", ctx())).message).toMatch(
       /^elements\[3\]\.type: must be one of/,
@@ -168,7 +168,8 @@ describe("output", () => {
 describe("guide", () => {
   it("serves the skill and references", () => {
     expect(guideText()).toMatch(/^---\nname: chalanamaya/);
-    expect(ELEMENTS_REFERENCE.later_versions).toEqual(["component"]);
+    expect(ELEMENTS_REFERENCE.types).toContain("component");
+    expect(ELEMENTS_REFERENCE.per_type.component.preset).toMatch(/spinner/);
     expect(ELEMENTS_REFERENCE.types).toContain("video");
     expect(Object.keys(PALETTE_REFERENCE.fill)).toContain("mint");
   });

@@ -955,6 +955,20 @@ kbd {
   object-fit: contain;
   display: block;
 }
+/* animated components (MEDIA-05/06): sandboxed frames, look-only */
+.livemedia-component {
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+.component-preview {
+  width: 100%;
+  height: 160px;
+  border: 1px dashed var(--line, #c9d6d3);
+  border-radius: 8px;
+  background: transparent;
+}
 .webcards {
   position: absolute;
   inset: 0;

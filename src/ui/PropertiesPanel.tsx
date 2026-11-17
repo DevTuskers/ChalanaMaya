@@ -37,6 +37,7 @@ import type {
   FillStyle,
   FontFamily,
   FontSizeName,
+  ComponentElement,
   ImageElement,
   ItemStyle,
   Routing,
@@ -54,6 +55,7 @@ import {
   isPlaying,
   isVideoFile,
   reducedMotion,
+  isComponentPaused,
   restartMedia,
   setMuted,
   setPlayAnyway,
@@ -170,6 +172,41 @@ const MediaControls = ({ el }: { el: ImageElement }) => {
       {!video && isGifTooBig(el.fileId) ? (
         <p className="prop-note" data-testid="media-too-big">
           Too many frames to animate here; it shows its first frame.
+        </p>
+      ) : null}
+    </fieldset>
+  );
+};
+
+/** Play/pause for an animated component (MEDIA-05/06), shared with every tab. */
+const ComponentControls = ({ el }: { el: ComponentElement }) => {
+  const { store } = useServices();
+  const [, bump] = useState(0);
+  const playing = !isComponentPaused(el);
+  return (
+    <fieldset className="prop-group" data-testid="component-controls">
+      <legend>Animated component</legend>
+      <div className="prop-actions wrap">
+        <Btn
+          label={playing ? "Pause" : "Play"}
+          testId="component-play"
+          onClick={() => {
+            if (playing) {
+              // under reduced motion the play was this tab's own choice
+              if (reducedMotion()) setPlayAnyway(el.id, false);
+              else setMediaPlayback(store, { paused: true });
+            } else {
+              if (reducedMotion()) setPlayAnyway(el.id, true);
+              if (el.paused) setMediaPlayback(store, { paused: false });
+            }
+            bump((n) => n + 1);
+            store.set({});
+          }}
+        />
+      </div>
+      {reducedMotion() ? (
+        <p className="prop-note" data-testid="component-reduced-motion">
+          Your system asks for less motion, so components start paused here.
         </p>
       ) : null}
     </fieldset>
@@ -604,6 +641,7 @@ export const PropertiesPanel = () => {
         </fieldset>
       ) : null}
       {single?.type === "image" ? <MediaControls el={single} /> : null}
+      {single?.type === "component" ? <ComponentControls el={single} /> : null}
       {single?.type === "image" ? (
         <fieldset className="prop-group">
           <legend>Picture</legend>

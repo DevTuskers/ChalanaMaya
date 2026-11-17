@@ -46,6 +46,8 @@ export interface Api {
   scene(id: string): Promise<SceneSnapshot>;
   push(id: string, body: PushBody, opts?: { keepalive?: boolean }): Promise<Ack>;
   importScene(id: string, body: ImportBody): Promise<Ack>;
+  /** Deletes the board, its items and its unshared files (SESS-09). */
+  deleteSession(id: string): Promise<void>;
   upload(id: string, blob: Blob): Promise<UploadedFile>;
   link(
     id: string,
@@ -106,6 +108,9 @@ export const createHttpApi = (base = ""): Api => ({
       headers: HEADERS,
       body: JSON.stringify(body),
     }),
+  deleteSession: async (id) => {
+    await call(`${base}/api/sessions/${enc(id)}`, { method: "DELETE", headers: HEADERS });
+  },
   upload: (id, blob) =>
     call(`${base}/api/sessions/${enc(id)}/files`, {
       method: "POST",

@@ -9,6 +9,7 @@ import { SESSION_FILE_PATH_RE } from "./ids";
 import { normalizeLink } from "./links";
 import { checkRemoteUrl } from "./urls";
 import { ID_RE, LIMITS, isColor } from "./limits";
+import { COMPONENT_LIMITS, checkComponentSource } from "./components";
 
 export type ValidationResult<T> = { ok: true; el: T } | { ok: false; path: string; reason: string };
 
@@ -120,6 +121,7 @@ const TYPE_KEYS: Record<string, { required: string[]; optional: string[] }> = {
   ellipse: { required: [], optional: [] },
   note: { required: [], optional: [] },
   frame: { required: ["name"], optional: [] },
+  component: { required: ["source", "title"], optional: ["paused"] },
   arrow: {
     required: [
       "points",
@@ -266,6 +268,13 @@ const checkElement = (raw: unknown): SceneElement => {
         ok = false;
       }
       if (!ok) fail("url", "must be an http(s) address");
+      break;
+    }
+    case "component": {
+      str(raw, "title", COMPONENT_LIMITS.title);
+      if ("paused" in raw) bool(raw, "paused");
+      const bad = checkComponentSource(raw.source);
+      if (bad) fail(bad.path, bad.reason);
       break;
     }
   }

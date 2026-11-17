@@ -41,6 +41,8 @@ import {
 } from "./elements";
 import { boardColor, bool, invalid, num, oneOf, str, ToolError } from "./palette";
 import { boundsOut, labelsByContainer, queryScene } from "./view";
+import { componentPresetsReference } from "./guide";
+import { PRESET_NAMES } from "../../src/shared/components";
 
 type Obj = Record<string, unknown>;
 
@@ -99,7 +101,7 @@ const elementFields = {
   type: z
     .enum(INPUT_TYPES)
     .describe(
-      "rectangle | diamond | ellipse | text | note | frame | arrow | line | freedraw | image | gif | video | web_card. (component arrives in a later version and is refused for now.)",
+      "rectangle | diamond | ellipse | text | note | frame | arrow | line | freedraw | image | gif | video | web_card | component (animated: a preset with params, or custom html/css).",
     ),
   key: z
     .string()
@@ -159,6 +161,33 @@ const elementFields = {
     .describe(
       "web_card: the page address. image, gif, video: an https link to the media (shown live by browsers, never fetched by the server); or use file_id.",
     ),
+  preset: z
+    .string()
+    .optional()
+    .describe(
+      `component: a built-in animation (${PRESET_NAMES.join(", ")}); see list_component_presets.`,
+    ),
+  params: z
+    .record(z.string(), z.union([z.string(), z.number()]))
+    .optional()
+    .describe('component: preset parameters, e.g. {color: "#007f78", speed: 2}.'),
+  html: z
+    .string()
+    .optional()
+    .describe(
+      "component (custom): body HTML, ≤ 20 KB; no scripts, event attributes, links, frames, forms or <style>.",
+    ),
+  css: z
+    .string()
+    .optional()
+    .describe(
+      "component (custom): CSS with @keyframes, ≤ 20 KB; nothing from the internet (url() only data: pictures), no @import.",
+    ),
+  title: z.string().optional().describe("component: a short title, shown on exported cards."),
+  paused: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .describe("gif, video, component: paused for everyone."),
   ...styleShape,
 };
 
@@ -1230,16 +1259,12 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
     {
       title: "Component presets",
       description:
-        "Lists the animated component presets. Animated components arrive in a later version; the list is empty for now.",
+        'Lists the built-in animated component presets with their parameters (name, type, default, range or choices) and the rules for custom HTML/CSS components. Add one with add_elements {type: "component", preset, params} or {type: "component", html, css}.',
       inputSchema: { session_id: sessionArg.optional() },
       outputSchema: loose({ presets: z.array(z.unknown()) }),
       annotations: { readOnlyHint: true },
     },
-    () =>
-      run(() => ({
-        presets: [],
-        note: "Animated components arrive in a later version of ChalanaMaya.",
-      })),
+    () => run(() => componentPresetsReference()),
   );
 };
 

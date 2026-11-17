@@ -86,6 +86,17 @@ const SessionSection = ({ close }: { close: () => void }) => {
         >
           Connect an agent…
         </button>
+        <button
+          type="button"
+          className="btn danger"
+          data-testid="session-delete"
+          onClick={() => {
+            close();
+            store.set({ dialog: { kind: "deleteBoard" } });
+          }}
+        >
+          Delete this board…
+        </button>
       </div>
       {recent.length ? (
         <div className="menu-session-recent">
@@ -211,6 +222,13 @@ export const MainMenu = () => {
       icon: Icon.image,
       edits: true,
       onClick: () => store.set({ dialog: { kind: "mediaLink" } }),
+    },
+    {
+      id: "insert-component",
+      label: "Add animated component…",
+      icon: Icon.image,
+      edits: true,
+      onClick: () => store.set({ dialog: { kind: "component" } }),
     },
     { id: "save", label: "Save as .chalana", icon: Icon.save, keys: "Mod+S", onClick: saveFile },
     {

@@ -1,6 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import DOMPurify from "dompurify";
+import { buildComponentDoc } from "../media/componentDoc";
+import type { ComponentElement } from "../scene/types";
 import {
   isMuted,
+  isComponentPaused,
+  playAnywayRevision,
+  subscribePlayAnyway,
+  reducedMotion,
   isPlaying,
   isVideoFile,
   liveMediaItems,
@@ -18,12 +25,31 @@ import { useAppState, useServices } from "./context";
  * never the /s/<id> path. They ignore the pointer (the board handles selection and
  * moves), and are left out of exports, which draw a placeholder card instead.
  */
+const docs = new WeakMap<ComponentElement["source"], Map<boolean, string>>();
+/** The srcdoc for a component, cached per source so the frame is not rebuilt on every paint. */
+const componentDoc = (el: ComponentElement, paused: boolean) => {
+  let m = docs.get(el.source);
+  if (!m) docs.set(el.source, (m = new Map()));
+  let d = m.get(paused);
+  if (d === undefined) m.set(paused, (d = buildComponentDoc(DOMPurify, el.source, paused)));
+  return d;
+};
+
+const subscribeMotion = (fn: () => void) => {
+  if (typeof matchMedia !== "function") return () => {};
+  const q = matchMedia("(prefers-reduced-motion: reduce)");
+  q.addEventListener("change", fn);
+  return () => q.removeEventListener("change", fn);
+};
+
 export const LiveMedia = () => {
   const { store } = useServices();
   const elements = useAppState((s) => s.elements);
   const files = useAppState((s) => s.files);
   const viewport = useAppState((s) => s.viewport);
   const selected = useAppState((s) => s.selectedIds);
+  useSyncExternalStore(subscribeMotion, reducedMotion, () => false);
+  useSyncExternalStore(subscribePlayAnyway, playAnywayRevision, () => 0);
   const items = liveMediaItems(elements, files, viewport, store.viewSize, selected);
   const shownKey = items.map((el) => el.id).join(",");
   useEffect(() => {
@@ -34,9 +60,31 @@ export const LiveMedia = () => {
   return (
     <div className="livemedia" aria-hidden="true">
       {items.map((el) => {
-        const f = files[el.fileId]!;
         const sx = (el.x + viewport.scrollX) * viewport.zoom;
         const sy = (el.y + viewport.scrollY) * viewport.zoom;
+        if (el.type === "component") {
+          const transform =
+            `translate(${sx}px, ${sy}px) scale(${viewport.zoom}) ` +
+            `translate(${el.width / 2}px, ${el.height / 2}px) rotate(${el.angle}rad) ` +
+            `translate(${-el.width / 2}px, ${-el.height / 2}px)`;
+          const paused = isComponentPaused(el);
+          return (
+            <iframe
+              key={el.id}
+              data-testid="live-component"
+              data-id={el.id}
+              data-paused={paused ? "true" : "false"}
+              className="livemedia-item livemedia-component"
+              title={el.title || "Animated component"}
+              sandbox=""
+              referrerPolicy="no-referrer"
+              tabIndex={-1}
+              srcDoc={componentDoc(el, paused)}
+              style={{ width: el.width, height: el.height, transform, opacity: el.opacity / 100 }}
+            />
+          );
+        }
+        const f = files[el.fileId]!;
         const flip = `scale(${el.flipX ? -1 : 1}, ${el.flipY ? -1 : 1})`;
         const transform =
           `translate(${sx}px, ${sy}px) scale(${viewport.zoom}) ` +

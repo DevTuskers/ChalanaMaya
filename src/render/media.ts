@@ -15,6 +15,7 @@
 import type {
   BinaryFile,
   FileMap,
+  ComponentElement,
   ImageElement,
   SceneElement,
   Theme,
@@ -55,10 +56,26 @@ export const setMuted = (id: string, muted: boolean) => {
   const v = videos.get(id);
   if (v) v.el.muted = muted;
 };
+export const isPlayAnyway = (id: string) => playAnyway.has(id);
+let playAnywayVersion = 0;
+const playAnywayListeners = new Set<() => void>();
 export const setPlayAnyway = (id: string, on: boolean) => {
+  if (on === playAnyway.has(id)) return;
   if (on) playAnyway.add(id);
   else playAnyway.delete(id);
+  playAnywayVersion += 1;
+  for (const fn of playAnywayListeners) fn();
 };
+/** For the live layer: re-render when this tab's play-anyway choices change. */
+export const subscribePlayAnyway = (fn: () => void) => {
+  playAnywayListeners.add(fn);
+  return () => void playAnywayListeners.delete(fn);
+};
+export const playAnywayRevision = () => playAnywayVersion;
+
+/** Components (MEDIA-05/06) pause when shared-paused or when the system asks for reduced motion. */
+export const isComponentPaused = (el: { id: string; paused?: boolean }) =>
+  !!el.paused || (reducedMotion() && !playAnyway.has(el.id));
 
 /** Should this item be moving right now (shared state + this tab's choices)? */
 let loopPaused = false;
@@ -274,6 +291,9 @@ export const markLiveLoaded = (id: string, url: string) => {
 export const isLiveShown = (el: ImageElement, file: BinaryFile) =>
   liveNow.has(el.id) && liveLoaded.has(liveKey(el.id, file.dataURL));
 
+/** Is this component's live frame on screen (then the board draws no card under it)? */
+export const isComponentLive = (id: string) => liveNow.has(id);
+
 /* ---------------------------------------------------------------- placeholders */
 
 /**
@@ -438,6 +458,9 @@ export class FramePacer {
 
 /* ---------------------------------------------------------------- live layer */
 
+/** Items shown in HTML over the board: remote media links and components. */
+export type LiveItem = ImageElement | ComponentElement;
+
 /** At most this many remote items are live at once; the rest keep their placeholder card. */
 export const LIVE_MEDIA_CAP = 24;
 
@@ -458,16 +481,19 @@ export const liveMediaItems = (
   size: { width: number; height: number },
   selected: ReadonlySet<string>,
   cap = LIVE_MEDIA_CAP,
-): ImageElement[] => {
-  // below 30 % zoom every link stays a placeholder card
+): LiveItem[] => {
+  // below 30 % zoom every link and component stays a placeholder card
   if (v.zoom < 0.3) return [];
   const ranked = elements
-    .filter((e): e is ImageElement => e.type === "image" && isRemote(files[e.fileId]))
+    .filter(
+      (e): e is LiveItem =>
+        (e.type === "image" && isRemote(files[e.fileId])) || e.type === "component",
+    )
     .map((el) => ({ el, area: screenArea(el, v, size) + (selected.has(el.id) ? 1e12 : 0) }))
     .filter((r) => r.area > 0 && Math.min(r.el.width, r.el.height) * v.zoom >= 48)
     .sort((a, b) => b.area - a.area)
     .slice(0, cap);
   // keep board order so later items cover earlier ones
   const keep = new Set(ranked.map((r) => r.el.id));
-  return elements.filter((e): e is ImageElement => keep.has(e.id));
+  return elements.filter((e): e is LiveItem => keep.has(e.id));
 };

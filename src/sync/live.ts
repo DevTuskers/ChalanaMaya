@@ -108,9 +108,14 @@ export class LiveChannel {
       }
       this.client.receive(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (this.ws !== ws) return;
       this.drop();
+      // 4404: the board was deleted; there is nothing to reconnect to
+      if (e?.code === 4404) {
+        this.closed = true;
+        return;
+      }
       this.scheduleReconnect();
     };
     ws.onerror = () => ws.close();

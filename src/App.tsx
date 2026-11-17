@@ -3,7 +3,7 @@ import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
-import { httpApi } from "./sync/api";
+import { ApiError, httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
 import { LiveMedia } from "./ui/LiveMedia";
@@ -11,7 +11,7 @@ import { fileFromStored, inlineFiles, usedFileIds } from "./sync/files";
 import { importIntoSession } from "./sync/importBoard";
 import { LiveChannel, socketUrl } from "./sync/live";
 import { PendingMirror, tabId } from "./sync/mirror";
-import { boardLabel, rememberBoard } from "./sync/recent";
+import { boardLabel, forgetBoard, rememberBoard } from "./sync/recent";
 import type { FileMap } from "./scene/types";
 import { droppedMedia, readPasteEvent } from "./io/clipboard";
 import { downloadBlob, timestampName } from "./io/export";
@@ -482,6 +482,20 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     };
     const session: SessionServices = {
       newBoard: () => window.location.assign("/"),
+      deleteBoard: async () => {
+        try {
+          await httpApi.deleteSession(boot.id);
+        } catch (e) {
+          // already gone counts as deleted
+          if (!(e instanceof ApiError && e.status === 404)) {
+            store.toast(`The board was not deleted: ${(e as Error).message}`, "error", 6000);
+            return;
+          }
+        }
+        forgetBoard(storage, boot.id);
+        // the same address now shows the missing-board page
+        window.location.assign(`/s/${boot.id}`);
+      },
       copyLink: () => {
         const url = `${window.location.origin}/s/${boot.id}`;
         void (

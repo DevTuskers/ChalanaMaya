@@ -1,3 +1,5 @@
+import type { ComponentSource } from "../shared/components";
+
 export interface Point {
   x: number;
   y: number;
@@ -13,7 +15,7 @@ export interface Bounds {
 export type ShapeType = "rectangle" | "diamond" | "ellipse";
 export type LinearType = "arrow" | "line";
 export type ElementType =
-  ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame" | "embed";
+  ShapeType | LinearType | "freedraw" | "text" | "image" | "note" | "frame" | "embed" | "component";
 
 export type FontFamily = "hand" | "normal" | "code";
 export type FontSizeName = "s" | "m" | "l" | "xl";
@@ -116,6 +118,18 @@ export interface EmbedElement extends BaseElement {
   url: string;
 }
 
+/**
+ * Animated CSS component (MEDIA-05/06): a built-in preset with parameters,
+ * or custom HTML and CSS, shown in a sandboxed frame without scripts.
+ */
+export interface ComponentElement extends BaseElement {
+  type: "component";
+  source: ComponentSource;
+  title: string;
+  /** shared pause (every tab) */
+  paused?: boolean;
+}
+
 export interface TextElement extends BaseElement {
   type: "text";
   text: string;
@@ -163,7 +177,8 @@ export type SceneElement =
   | ImageElement
   | NoteElement
   | FrameElement
-  | EmbedElement;
+  | EmbedElement
+  | ComponentElement;
 
 export interface BinaryFile {
   id: string;

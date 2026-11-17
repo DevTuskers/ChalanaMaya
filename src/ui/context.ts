@@ -16,6 +16,8 @@ export interface SessionServices {
   newBoard: () => void;
   copyLink: () => void;
   copyId: () => void;
+  /** Deletes this board on the server (after the confirm dialog). */
+  deleteBoard: () => Promise<void>;
   setTitle: (title: string) => void;
   importLegacy: () => void;
   removeLegacy: () => void;

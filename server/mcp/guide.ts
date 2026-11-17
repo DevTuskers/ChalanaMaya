@@ -4,6 +4,12 @@
  * list callback, so no board ids are ever enumerated.
  */
 import fs from "node:fs";
+import {
+  COMPONENT_LIMITS,
+  COMPONENT_RULES,
+  PRESET_NAMES,
+  PRESETS,
+} from "../../src/shared/components";
 import path from "node:path";
 import { ResourceTemplate, type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -34,7 +40,6 @@ export const ELEMENTS_REFERENCE = {
   coordinates:
     "Board units; x grows right, y grows down; boxes by top-left corner; angle in degrees clockwise; path points absolute [x, y].",
   types: INPUT_TYPES,
-  later_versions: ["component"],
   common_fields: {
     key: "name to refer to this item later in the same call",
     x: "number (±1,000,000); omit to place in free space",
@@ -90,6 +95,14 @@ export const ELEMENTS_REFERENCE = {
       autoplay: "boolean (default true); videos are always muted at first",
     },
     web_card: { url: "http(s) page address" },
+    component: {
+      preset: `built-in animation: ${PRESET_NAMES.join(" | ")} (see list_component_presets)`,
+      params: 'preset parameters, e.g. {color: "#007f78", speed: 2}',
+      html: "or custom body HTML (≤ 20 KB, no scripts, links, frames, forms or <style>)",
+      css: "custom CSS with @keyframes (≤ 20 KB, no @import, url() only data: pictures)",
+      title: "short title (shown on exported cards)",
+      paused: "boolean (paused for everyone)",
+    },
   },
   examples: [
     {
@@ -103,8 +116,33 @@ export const ELEMENTS_REFERENCE = {
     },
     { type: "arrow", from: "a", to: "b", label: "next" },
     { type: "note", x: 400, y: 80, text: "A comment", color: "butter" },
+    { type: "component", preset: "spinner", params: { color: "#007f78" }, x: 80, y: 300 },
   ],
 };
+
+/** The component presets and custom-content rules (tool and resource). */
+export const componentPresetsReference = () => ({
+  presets: PRESETS.map((p) => ({
+    name: p.name,
+    title: p.title,
+    description: p.description,
+    default_size: { width: p.width, height: p.height },
+    params: p.params.map((q) => ({
+      name: q.name,
+      type: q.type,
+      default: q.default,
+      description: q.description,
+      ...(q.min !== undefined ? { min: q.min, max: q.max } : {}),
+      ...(q.choices ? { choices: q.choices } : {}),
+    })),
+  })),
+  custom: {
+    how: 'add_elements {type: "component", html, css, title}',
+    limits: { html_bytes: COMPONENT_LIMITS.contentBytes, css_bytes: COMPONENT_LIMITS.contentBytes },
+    rules: COMPONENT_RULES,
+    note: "Components run in a sandboxed frame with no scripts and no network; they are look-only. Exports show a static card with the title.",
+  },
+});
 
 export const PALETTE_REFERENCE = {
   stroke: STROKE_NAMES,
@@ -203,11 +241,7 @@ export const registerGuide = (server: McpServer, service: SessionService) => {
     "component-presets",
     "chalanamaya://reference/component-presets",
     { title: "Component presets", mimeType: "application/json" },
-    (uri) =>
-      json(uri.href, {
-        presets: [],
-        note: "Animated components arrive in a later version of ChalanaMaya.",
-      }),
+    (uri) => json(uri.href, componentPresetsReference()),
   );
   const boardView =
     (format: "json" | "outline") => (uri: URL, vars: Record<string, string | string[]>) => {

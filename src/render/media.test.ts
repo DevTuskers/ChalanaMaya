@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createImage, createShape } from "../scene/elements";
+import { createComponent, createImage, createShape } from "../scene/elements";
+import { renderScene } from "./renderScene";
 import type { FileMap, ImageElement } from "../scene/types";
 import { exportToSvg } from "../io/svg";
 import { FORMAT_VERSION, parseBoard, serializeBoard } from "../io/serialize";
@@ -21,6 +22,8 @@ import {
   screenRect,
   setLiveShown,
   setLoopPaused,
+  setLiveShown as setLive,
+  isComponentLive,
   setPlayAnyway,
 } from "./media";
 
@@ -296,5 +299,70 @@ describe("board videos and export copies", () => {
     );
     setLiveShown([]);
     expect(isLiveShown(el, files.link)).toBe(false);
+  });
+});
+
+describe("animated components (MEDIA-05/06)", () => {
+  const comp = (x = 0, title = "Loader") =>
+    createComponent(x, 0, { kind: "preset", preset: "spinner", params: {} }, title);
+
+  it("share the live layer and its cap of 24 with remote media", () => {
+    const many = [
+      ...Array.from({ length: 20 }, (_, i) => img("link", i * 10, 300, 300)),
+      ...Array.from({ length: 10 }, (_, i) => comp(i * 10)),
+    ];
+    const live = liveMediaItems(many, files, view, screen, new Set());
+    expect(live).toHaveLength(LIVE_MEDIA_CAP);
+    expect(live.some((e) => e.type === "component")).toBe(true);
+    setLive([many[25].id]);
+    expect(isComponentLive(many[25].id)).toBe(true);
+    setLive([]);
+  });
+
+  it("export as a static card with the title, never the HTML", () => {
+    const c = createComponent(0, 0, { kind: "custom", html: "<p>SECRET</p>", css: "" }, "Card <b>");
+    const svg = exportToSvg([c, comp(400)], files, { theme: "light", background: null });
+    expect(svg).toContain("Card &#60;b&#62;");
+    expect(svg).toContain("Loader");
+    expect(svg.match(/Animated component/g)).toHaveLength(2);
+    expect(svg).not.toContain("SECRET");
+    expect(svg).not.toMatch(/<foreignObject|<iframe/i);
+  });
+
+  it("PNG export (a still render) draws the card even while the frame is live", () => {
+    const c = comp();
+    setLive([c.id]);
+    const texts: string[] = [];
+    const ctx: CanvasRenderingContext2D = new Proxy(
+      {},
+      {
+        get: (_t, k) =>
+          k === "canvas"
+            ? { getContext: () => ctx, width: 500, height: 500 }
+            : k === "fillText"
+              ? (t: string) => void texts.push(t)
+              : k === "measureText"
+                ? () => ({ width: 10 })
+                : k === "getTransform"
+                  ? () => ({ a: 1, d: 1 })
+                  : () => undefined,
+        set: () => true,
+      },
+    ) as CanvasRenderingContext2D;
+    const opts = {
+      elements: [c],
+      files,
+      theme: "light" as const,
+      background: null,
+      width: 500,
+      height: 500,
+      viewport: { zoom: 1, scrollX: 0, scrollY: 0 },
+    };
+    renderScene(ctx, { ...opts, still: true });
+    expect(texts).toEqual(["Loader", "Animated component"]);
+    texts.length = 0;
+    renderScene(ctx, opts);
+    expect(texts).toEqual([]); // the live frame shows on screen instead
+    setLive([]);
   });
 });

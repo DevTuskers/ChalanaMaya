@@ -45,7 +45,13 @@ export const compactElement = (
     if (el.fontSize !== DEFAULT_STYLE.fontSize) o.font_size = el.fontSize;
     if (el.fontFamily !== DEFAULT_STYLE.fontFamily) o.font = el.fontFamily;
   }
-  if (el.type !== "image" && el.type !== "frame" && el.type !== "embed" && el.type !== "note")
+  if (
+    el.type !== "image" &&
+    el.type !== "frame" &&
+    el.type !== "embed" &&
+    el.type !== "note" &&
+    el.type !== "component"
+  )
     if (el.strokeColor !== DEFAULT_STYLE.strokeColor) o.stroke = colorName(el.strokeColor);
   if (el.backgroundColor !== "transparent") o.fill = colorName(el.backgroundColor);
   if (el.backgroundColor !== "transparent" && el.fillStyle !== "hachure" && el.type !== "note")
@@ -58,6 +64,14 @@ export const compactElement = (
   if (el.link) o.link = el.link;
   if (el.type === "frame") o.name = el.name;
   if (el.type === "embed") o.url = el.url;
+  if (el.type === "component") {
+    if (el.title) o.title = el.title;
+    if (el.source.kind === "preset") {
+      o.preset = el.source.preset;
+      if (Object.keys(el.source.params).length) o.params = el.source.params;
+    } else o.custom = true;
+    if (el.paused) o.paused = true;
+  }
   if (isLinear(el)) {
     if (el.startBinding) o.from = el.startBinding.elementId;
     if (el.endBinding) o.to = el.endBinding.elementId;
@@ -172,6 +186,19 @@ export const fullElement = (el: SceneElement, label: TextElement | undefined): O
     case "embed":
       o.url = el.url;
       break;
+    case "component":
+      // full detail: everything needed to rebuild it (custom content included)
+      delete o.custom;
+      o.title = el.title;
+      if (el.source.kind === "preset") {
+        o.preset = el.source.preset;
+        o.params = el.source.params;
+      } else {
+        o.html = el.source.html;
+        o.css = el.source.css;
+      }
+      if (el.paused !== undefined) o.paused = el.paused;
+      break;
   }
   return o;
 };
@@ -188,6 +215,7 @@ const OUTLINE_NAME: Record<string, string> = {
   freedraw: "drawing",
   image: "picture",
   embed: "web_card",
+  component: "component",
 };
 const q = (s: string) => JSON.stringify(s.length > 80 ? `${s.slice(0, 77)}…` : s);
 
@@ -197,6 +225,10 @@ export const outlineLine = (el: SceneElement, label: TextElement | undefined): s
   if (el.type === "text") parts.push(q(el.text));
   else if (label) parts.push(q(label.text));
   if (el.type === "frame") parts.push(q(el.name));
+  if (el.type === "component") {
+    parts.push(el.source.kind === "preset" ? el.source.preset : "custom");
+    if (el.title) parts.push(q(el.title));
+  }
   if (isLinear(el)) {
     const abs = absolute(el);
     const a = el.startBinding?.elementId ?? `(${pt(abs[0]).join(",")})`;

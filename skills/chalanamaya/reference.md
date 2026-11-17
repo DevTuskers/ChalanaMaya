@@ -73,6 +73,19 @@ GIFs and videos use the same tool with `"kind": "gif"` or `"kind": "video"`; a l
 { "session_id": "SESSION", "kind": "video", "source": { "file_id": "FILE" }, "x": 80, "y": 400, "width": 480, "loop": true }
 ```
 
+## Animated components
+
+A preset (see `list_component_presets` for each preset's `params`) and a custom one, with `add_elements`:
+
+```json
+{ "session_id": "SESSION", "elements": [
+  { "type": "component", "preset": "progress-bar", "params": { "value": 70, "color": "#007f78" }, "title": "Upload", "x": 80, "y": 600 },
+  { "type": "component", "title": "Badge", "html": "<div class=\"b\">New</div>", "css": ".b{animation:p 1s infinite}@keyframes p{50%{opacity:.4}}", "x": 420, "y": 600, "width": 200, "height": 120 }
+] }
+```
+
+No scripts, event attributes, outside `url()` or `@import`; HTML and CSS up to 20 KB each.
+
 ## Tidy
 
 ```json

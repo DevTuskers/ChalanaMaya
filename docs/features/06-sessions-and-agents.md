@@ -1,6 +1,6 @@
 # Sessions and agents
 
-Status: SESS-10 is done (phase 1b, server-side limits); SESS-01, SESS-02, SESS-03, SESS-05, SESS-06 and SESS-08 are done (phase 2); SESS-04 and SESS-07 are done (phase 3, live sync between tabs); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: SESS-10 is done (phase 1b, server-side limits); SESS-01, SESS-02, SESS-03, SESS-05, SESS-06 and SESS-08 are done (phase 2); SESS-04 and SESS-07 are done (phase 3, live sync between tabs); SESS-09 is done (phase 6); the agent features are covered in their own notes. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 A **board session** is one board with its own address. People in browser tabs and agents that use ChalanaMaya's MCP server work on the same session at the same time. This is board-session sync, not the collaboration features listed in [out of scope](../out-of-scope.md).
 
@@ -114,6 +114,8 @@ Remove a board and its files from the server.
 Acceptance criteria:
 - **Delete this board** asks for confirmation, then removes the board and files no other board uses.
 - Open tabs of that board show that it was deleted; its address then shows the "does not exist" message.
+
+Status (phase 6, round 1): done. **Delete this board…** in the main menu's board section asks for confirmation, calls `DELETE /api/sessions/:id`, forgets the board from Recent boards and reloads the address, which shows the "does not exist" page. The server removes the board, its ops and push log, and every media file no other board uses; every open socket of the board gets a `session_not_found` error and is closed with code 4404 at once, so other tabs show "Not saved — board deleted" without reconnecting, and agents get `session_not_found`. Boards that were never changed are removed by the hourly maintenance after 24 hours (boards with any change, even emptied ones, are kept). Evidence: `server/sessions/service.test.ts` (shared and orphan media cleanup, 24-hour cleanup with a fake clock), `server/sync/core.test.ts`, `e2e/components.spec.ts`.
 
 ## SESS-10 — Server storage limits
 

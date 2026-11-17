@@ -92,7 +92,7 @@ export const hitElement = (
       local.x <= el.x + Math.max(60, Math.min(el.width, 200));
     return onTitle || outlineDistance(el, local) <= tolerance + 2;
   }
-  if (el.type === "text" || el.type === "image" || el.type === "embed") {
+  if (el.type === "text" || el.type === "image" || el.type === "embed" || el.type === "component") {
     return (
       local.x >= el.x - tolerance &&
       local.x <= el.x + el.width + tolerance &&

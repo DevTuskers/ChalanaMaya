@@ -7,7 +7,7 @@ import type { Theme } from "../scene/types";
 import type { Store } from "../store/store";
 import { useAppState, useServices } from "./context";
 import { Icon } from "./icons";
-import { ChartDialog, MediaLinkDialog, WebCardDialog } from "./ContentDialogs";
+import { ChartDialog, ComponentDialog, MediaLinkDialog, WebCardDialog } from "./ContentDialogs";
 import { SHORTCUT_GROUPS, formatKeys } from "./shortcuts";
 
 export const Modal = ({
@@ -662,7 +662,7 @@ const ConfirmDialog = ({
 );
 
 export const Dialogs = () => {
-  const { store } = useServices();
+  const { store, session } = useServices();
   const dialog = useAppState((s) => s.dialog);
   const count = useAppState((s) => s.elements.length);
   const close = () => store.set({ dialog: null });
@@ -684,6 +684,8 @@ export const Dialogs = () => {
       return <ConnectAgentDialog onClose={close} />;
     case "mediaLink":
       return <MediaLinkDialog onClose={close} />;
+    case "component":
+      return <ComponentDialog onClose={close} />;
     case "webcard":
       return <WebCardDialog at={dialog.at} onClose={close} />;
     case "chart":
@@ -702,6 +704,27 @@ export const Dialogs = () => {
           }
           onClose={close}
           onConfirm={() => clearCanvas(store)}
+        />
+      );
+    case "deleteBoard":
+      return (
+        <ConfirmDialog
+          title="Delete this board?"
+          testId="delete-board-dialog"
+          confirmLabel="Delete board"
+          body={
+            <p>
+              This deletes the board and all {count} item{count === 1 ? "" : "s"} on the server,
+              with its uploaded files unless another board uses them. Anyone with the link, and any
+              connected agent, loses it. This can&apos;t be undone; save a .chalana copy first if
+              you want to keep it.
+            </p>
+          }
+          onClose={close}
+          onConfirm={() => {
+            close();
+            void session?.deleteBoard();
+          }}
         />
       );
     case "confirmOpen":

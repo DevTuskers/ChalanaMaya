@@ -1,9 +1,10 @@
 import { isVideoMime, mimeFromUrl, normaliseRemoteUrl } from "../shared/urls";
+import { checkComponentSource, presetByName, type ComponentSource } from "../shared/components";
 import { LIMITS } from "../shared/limits";
 import { adoptFiles } from "../sync/files";
 import { buildChart, looksLikeSpreadsheet, type ChartData, type ChartKind } from "../scene/chart";
 import { resolveWebCard } from "../scene/webcard";
-import { createEmbed } from "../scene/elements";
+import { createComponent, createEmbed } from "../scene/elements";
 import { createFrame, createImage, createText, isLinear } from "../scene/elements";
 import { getCommonBounds } from "../scene/geometry";
 import {
@@ -365,7 +366,13 @@ export const setMediaPlayback = (
   const { elements } = store.get();
   let changed = false;
   const next = elements.map((e) => {
-    if (e.type !== "image" || !ids.has(e.id) || e.locked) return e;
+    if (!ids.has(e.id) || e.locked) return e;
+    if (e.type === "component") {
+      if (patch.paused === undefined) return e;
+      changed = true;
+      return { ...e, paused: patch.paused };
+    }
+    if (e.type !== "image") return e;
     changed = true;
     const out = { ...e, ...patch };
     // pressing Play always plays, even a video placed with autoplay off
@@ -452,6 +459,28 @@ export const insertWebCard = (store: Store, at: Point, raw: string): string | nu
     dialog: null,
   });
   if (res.target.kind === "link") store.toast(res.target.reason, "info", 5000);
+  return null;
+};
+
+/**
+ * Adds an animated component (MEDIA-05/06), centred in the view, as one
+ * undoable step. Returns the rule it breaks, or null when added.
+ */
+export const insertComponent = (
+  store: Store,
+  source: ComponentSource,
+  title: string,
+): string | null => {
+  if (blockedByViewMode(store)) return "Look-only mode is on.";
+  const bad = checkComponentSource(source);
+  if (bad) return bad.reason;
+  const def = source.kind === "preset" ? presetByName(source.preset) : undefined;
+  const w = def?.width ?? 320;
+  const h = def?.height ?? 200;
+  const p = pastePoint(store);
+  const el = createComponent(p.x - w / 2, p.y - h / 2, source, title.slice(0, 200), w, h);
+  const s = store.get();
+  store.commit([...s.elements, el], { selectedIds: new Set([el.id]), tool: "pick", dialog: null });
   return null;
 };
 

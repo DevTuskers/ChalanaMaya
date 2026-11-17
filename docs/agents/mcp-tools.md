@@ -30,11 +30,11 @@ The built-in MCP server (`POST /mcp`, or the stdio bridge `dist-server/stdio.js`
 | `clear_scene` | `confirm: true` | `{rev, deleted_count}`; open tabs get "… cleared the board · Restore" |
 | `upload_media` | `data_base64`, `mime_type`, `filename?` (PNG, JPEG, GIF, WebP ≤ 10 MB decoded; MP4, WebM ≤ 25 MB) | `{file_id, mime_type, size, width, height, duration_ms}` (video size and duration read from the file header; `null` when unknown) |
 | `place_media` | `kind?: "image" \| "gif" \| "video"`, `source: {file_id} \| {data_base64, mime_type} \| {url, mime_type?}`, `x?`, `y?`, `width?`, `height?`, `autoplay?`, `loop?` (videos) | `{rev, id, file_id, warnings}`; a `url` is an https link the browser shows live (never fetched by the server; a placeholder card in exports), and the result warns that uploading gives full support |
-| `list_component_presets` | — | `{presets: []}` (animated components arrive later) |
+| `list_component_presets` | — | `{presets: [{name, title, description, width, height, params: [{name, type, default, min?, max?, choices?, description}]}], custom: {how, limits, rules, note}}` |
 
 ### Element input (`add_elements`)
 
-Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `line`, `freedraw`, `image`, `gif`, `video`, `web_card`. Common fields: `key`, `x`, `y`, `width`, `height`, `angle`, `locked`, `link`, `group`, `frame`, and style (`stroke`, `fill`, `fill_style`, `stroke_width`, `stroke_style`, `roughness`, `edges`, `opacity`, `font`, `font_size`, `text_align`). Per type: `label` (boxes and arrows), `text` (text, note), `color` (note), `name` and `contains` (frame), `from`/`to` (id, key or `[x, y]`), `points`, `routing`, `start_arrowhead`/`end_arrowhead` (arrow), `points` and `closed` (line), `file_id` or `url` (image, gif, video), `paused` (image, gif, video), `autoplay`, `loop` (video), `url` (web card). Items without `x`/`y` go into free space to the right of the board. The full reference is the `chalanamaya://reference/elements` resource.
+Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `line`, `freedraw`, `image`, `gif`, `video`, `web_card`, `component`. Common fields: `key`, `x`, `y`, `width`, `height`, `angle`, `locked`, `link`, `group`, `frame`, and style (`stroke`, `fill`, `fill_style`, `stroke_width`, `stroke_style`, `roughness`, `edges`, `opacity`, `font`, `font_size`, `text_align`). Per type: `label` (boxes and arrows), `text` (text, note), `color` (note), `name` and `contains` (frame), `from`/`to` (id, key or `[x, y]`), `points`, `routing`, `start_arrowhead`/`end_arrowhead` (arrow), `points` and `closed` (line), `file_id` or `url` (image, gif, video), `paused` (image, gif, video), `autoplay`, `loop` (video), `url` (web card), `preset` and `params` or `html` and `css`, plus `title` and `paused` (component). Items without `x`/`y` go into free space to the right of the board. The full reference is the `chalanamaya://reference/elements` resource.
 
 ### Reading: compact and full
 
@@ -53,7 +53,8 @@ Types: `rectangle`, `ellipse`, `diamond`, `text`, `note`, `frame`, `arrow`, `lin
 | `stale_cursor` | the board changed since the cursor was made |
 | `too_large` / `storage_full` | over a size limit or the server is full |
 | `invalid_input` on a link | a `url` that is not https, has a user name or password, or names an IP address, `localhost`, a single-word host or a private name (`.local`, `.internal`, `.lan`, `.home.arpa`, …); or a `kind` that does not match the file (`kind: "video"` with a picture) |
-| `kind_not_supported_yet` | a `component` item: animated components arrive in a later version |
+| `unsafe_component` | custom component HTML or CSS breaks a rule; the message names the field and the rule (for example `elements[0].html: … (rule: no_event_attributes)`) |
+| `too_large` on a component | custom HTML or CSS over 20 KB (UTF-8 bytes) |
 
 ## Prompts and resources
 

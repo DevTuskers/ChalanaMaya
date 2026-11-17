@@ -40,6 +40,21 @@ const conn = (c: SyncConn | { refused: number }) => {
 };
 
 describe("sync core", () => {
+  it("tells open sockets at once when their board is deleted (SESS-09)", () => {
+    const { service, core } = make();
+    const a = service.create().sessionId;
+    const b = service.create().sessionId;
+    const ta = transport();
+    const tb = transport();
+    conn(core.connect(a, ta.t));
+    conn(core.connect(b, tb.t));
+    service.deleteSession(a);
+    expect(ta.msgs.at(-1)).toMatchObject({ type: "error", code: "session_not_found", status: 404 });
+    expect(ta.closed).toEqual([4404]);
+    expect(tb.closed).toEqual([]);
+    expect(tb.msgs.some((m) => m.type === "error")).toBe(false);
+  });
+
   it("refuses a missing board, a full board and a full server", () => {
     const { service, core } = make({ maxPerBoard: 2, maxSockets: 3 });
     const a = service.create().sessionId;

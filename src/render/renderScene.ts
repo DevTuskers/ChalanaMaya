@@ -2,6 +2,7 @@ import rough from "roughjs";
 import {
   drawMediaPlaceholder,
   isLiveShown,
+  isComponentLive,
   getVideo,
   gifFrame,
   isGifFile,
@@ -15,6 +16,7 @@ import { getCenter } from "../scene/geometry";
 import { buildDrawables, freedrawOutline, resolveColor } from "./shapes";
 import { fontString, getTextLines, lineHeightPx } from "../scene/text";
 import { resolveWebCard, WEB_CARD_HEADER } from "../scene/webcard";
+import { drawComponentCard } from "./componentCard";
 import type {
   EmbedElement,
   FileMap,
@@ -291,6 +293,9 @@ export const drawElement = (
     }
   } else if (el.type === "embed") {
     drawWebCard(ctx, el, theme);
+  } else if (el.type === "component") {
+    // the live frame covers it on the board; exports always draw the card
+    if (ctxInfo.still || !isComponentLive(el.id)) drawComponentCard(ctx, el, theme);
   } else {
     for (const d of getDrawables(el, theme)) rc.draw(d);
     if (el.type === "frame") {

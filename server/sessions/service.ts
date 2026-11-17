@@ -372,6 +372,8 @@ export class SessionService {
       return gone;
     })();
     for (const sha of orphans) fs.rmSync(path.join(this.mediaDir, sha), { force: true });
+    // open tabs and agents' sockets hear at once that the board is gone
+    this.events.emit("deleted", ids);
   }
 
   // ---------------------------------------------------------------- ops

@@ -405,8 +405,57 @@ describe("MCP over HTTP", () => {
           elements: [{ type: "component" }],
         })
       ).code,
-    ).toBe("kind_not_supported_yet");
+    ).toBe("invalid_input");
+    const unsafe = await callError(client, "add_elements", {
+      session_id: id,
+      elements: [{ type: "component", html: '<img src="x" onerror="alert(1)">', css: "" }],
+    });
+    expect(unsafe.code).toBe("unsafe_component");
+    expect(unsafe.message).toMatch(/rule: no_event_attributes/);
+    expect(
+      (
+        await callError(client, "add_elements", {
+          session_id: id,
+          elements: [{ type: "component", html: "x".repeat(20 * 1024 + 1), css: "" }],
+        })
+      ).code,
+    ).toBe("too_large");
     expect((await call(client, "get_scene", { session_id: id })).rev).toBe(rev);
+    // components (MEDIA-05/06): a preset with params and custom HTML/CSS
+    const presets = await call(client, "list_component_presets", {});
+    expect(presets.presets.map((p: { name: string }) => p.name)).toContain("spinner");
+    const comp = await call(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "component", preset: "spinner", params: { color: "#ff0000" }, x: 0, y: 0 },
+        { type: "component", html: "<p>Hi</p>", css: "p{animation:a 1s}", title: "Hi" },
+      ],
+    });
+    const cs = await call(client, "get_scene", {
+      session_id: id,
+      ids: comp.created.map((c: { id: string }) => c.id),
+      detail: "full",
+    });
+    expect(cs.elements[0]).toMatchObject({
+      type: "component",
+      preset: "spinner",
+      params: { color: "#ff0000" },
+    });
+    expect(cs.elements[1]).toMatchObject({ type: "component", html: "<p>Hi</p>", title: "Hi" });
+    await call(client, "update_elements", {
+      session_id: id,
+      updates: [{ id: comp.created[0].id, params: { speed: 3 }, paused: true }],
+    });
+    const cu = await call(client, "get_scene", {
+      session_id: id,
+      ids: [comp.created[0].id],
+      detail: "full",
+    });
+    expect(cu.elements[0]).toMatchObject({ params: { color: "#ff0000", speed: 3 }, paused: true });
+    await call(client, "delete_elements", {
+      session_id: id,
+      ids: comp.created.map((c: { id: string }) => c.id),
+    });
     // an uploaded video: size and duration read from the file, muted loop by default
     const mp4 = readFileSync(new URL("../../test-fixtures/media/clip.mp4", import.meta.url));
     const vid = await call(client, "place_media", {

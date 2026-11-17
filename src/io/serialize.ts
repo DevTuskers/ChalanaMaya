@@ -1,4 +1,5 @@
 import { normalizeLink } from "../scene/arrange";
+import { COMPONENT_LIMITS, checkComponentSource, type ComponentSource } from "../shared/components";
 import { checkRemoteUrl } from "../shared/urls";
 import { PAPER } from "../scene/constants";
 import { isSessionFilePath } from "../shared/ids";
@@ -50,6 +51,7 @@ const ELEMENT_TYPES = new Set([
   "note",
   "frame",
   "embed",
+  "component",
 ]);
 
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
@@ -184,6 +186,18 @@ export const parseElement = (raw: unknown): SceneElement => {
       return { ...base, type };
     case "frame":
       return { ...base, type, name: str(raw.name, "Page") };
+    case "component": {
+      // the content is kept exactly (no repair): unsafe or oversized content is refused
+      const bad = checkComponentSource(raw.source);
+      if (bad) throw new FormatError(`A component can't be used: ${bad.path} ${bad.reason}`);
+      return {
+        ...base,
+        type,
+        source: raw.source as ComponentSource,
+        title: str(raw.title).slice(0, COMPONENT_LIMITS.title),
+        ...(typeof raw.paused === "boolean" ? { paused: raw.paused } : {}),
+      };
+    }
     default: {
       const c = raw.crop;
       const crop =

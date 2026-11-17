@@ -86,6 +86,7 @@ const fakeApi = () => {
   const api: Api = {
     createSession: async () => ({ session_id: SID, url: `/s/${SID}` }),
     scene: async () => ({}) as SceneSnapshot,
+    deleteSession: async () => {},
     push: async (_id, body, opts) => {
       pushes.push({ ...body, keepalive: opts?.keepalive });
       if (held) await new Promise<void>((r) => (hold = r));

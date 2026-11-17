@@ -5,6 +5,7 @@
  * stored result is validated again by SessionService.apply.
  */
 import {
+  createComponent,
   createEmbed,
   createFrame,
   createFreedraw,
@@ -39,6 +40,16 @@ import type {
   TextElement,
 } from "../../src/scene/types";
 import { LIMITS, wrapAngle } from "../../src/shared/limits";
+import {
+  checkCustomContent,
+  checkPresetParams,
+  COMPONENT_LIMITS,
+  PRESET_NAMES,
+  presetByName,
+  type ComponentSource,
+  type ParamValue,
+  type PresetName,
+} from "../../src/shared/components";
 import { normalizeLink } from "../../src/shared/links";
 import { ALLOWED_MIME, ARROWHEAD_NAMES } from "../../src/shared/validate";
 import { isVideoMime, mimeFromUrl, normaliseRemoteUrl } from "../../src/shared/urls";
@@ -122,18 +133,10 @@ const TYPE_FIELDS: Record<string, string[]> = {
   gif: ["file_id", "url", "crop", "flip_x", "flip_y", "paused"],
   video: ["file_id", "url", "mime_type", "paused", "loop", "autoplay"],
   web_card: ["url"],
+  component: ["preset", "params", "html", "css", "title", "paused"],
 };
 /** fields update_elements and full detail add on top (round trip of get_scene full) */
 const UPDATE_EXTRA = ["id", "group_ids", "container", "label", "text", "name", "contains"];
-
-export const kindRefused = (path: string, kind: string) =>
-  new ToolError(
-    "kind_not_supported_yet",
-    `${path}: "${kind}" items arrive in a later version of ChalanaMaya. ` +
-      (kind === "gif" || kind === "video"
-        ? 'For now, place a still picture (PNG, JPEG or WebP) with place_media kind "image".'
-        : "For now, draw it from boxes, text and connectors."),
-  );
 
 /** Everything a build needs from the board and the call. */
 export interface BuildContext {
@@ -611,7 +614,6 @@ export const buildElement = (raw: unknown, path: string, ctx: BuildContext): Bui
     throw invalid(path, "must be an object");
   const o = raw as Obj;
   const type = oneOf(o.type, `${path}.type`, INPUT_TYPES);
-  if (type === "component") throw kindRefused(`${path}.type`, type);
   warnUnknown(o, [...COMMON_FIELDS, ...TYPE_FIELDS[type]], path, ctx);
   const x0 = 0;
   let el: SceneElement;
@@ -687,6 +689,15 @@ export const buildElement = (raw: unknown, path: string, ctx: BuildContext): Bui
       el = createEmbed(0, 0, url);
       break;
     }
+    case "component": {
+      const source = componentSource(o, path);
+      const def = source.kind === "preset" ? presetByName(source.preset) : undefined;
+      const title =
+        o.title === undefined ? "" : str(o.title, `${path}.title`, COMPONENT_LIMITS.title);
+      el = createComponent(0, 0, source, title, def?.width ?? 320, def?.height ?? 200);
+      if (o.paused !== undefined) el = { ...el, paused: bool(o.paused, `${path}.paused`) };
+      break;
+    }
   }
   el = applyStyle(el, o, path);
   el = geometry(el, o, path);
@@ -712,6 +723,50 @@ const imageExtras = (el: SceneElement, o: Obj, path: string, ctx: BuildContext):
   if (o.flip_y !== undefined) out.flipY = bool(o.flip_y, `${path}.flip_y`);
   if (o.crop !== undefined) out.crop = crop(o.crop, el, ctx.files.get(el.fileId), `${path}.crop`);
   return out;
+};
+
+/**
+ * A component's source from preset/params or html/css (MEDIA-05/06). On
+ * update, params merge into the current preset's, and html or css alone
+ * keeps the other. Unsafe or oversized content is refused naming the rule.
+ */
+const componentSource = (o: Obj, path: string, current?: ComponentSource): ComponentSource => {
+  const custom = o.html !== undefined || o.css !== undefined;
+  if (custom && (o.preset !== undefined || o.params !== undefined))
+    throw invalid(path, "give either preset (with params) or html/css, not both");
+  if (custom) {
+    const prev = current?.kind === "custom" ? current : { html: "", css: "" };
+    const html = o.html === undefined ? prev.html : o.html;
+    const css = o.css === undefined ? prev.css : o.css;
+    if (typeof html !== "string") throw invalid(`${path}.html`, "must be text");
+    if (typeof css !== "string") throw invalid(`${path}.css`, "must be text");
+    const bad = checkCustomContent(html, css);
+    if (bad)
+      throw new ToolError(
+        bad.rule === "too_large" ? "too_large" : "unsafe_component",
+        `${path}.${bad.field}: ${bad.message} (rule: ${bad.rule}). See chalanamaya://reference/component-presets for the rules.`,
+      );
+    return { kind: "custom", html, css };
+  }
+  const preset =
+    o.preset !== undefined ? o.preset : current?.kind === "preset" ? current.preset : undefined;
+  if (preset === undefined)
+    throw invalid(
+      `${path}.preset`,
+      `is required: a preset (${PRESET_NAMES.join(", ")}) or custom html/css`,
+    );
+  if (typeof preset !== "string" || !presetByName(preset))
+    throw invalid(`${path}.preset`, `must be one of ${PRESET_NAMES.join(", ")}`);
+  const base = current?.kind === "preset" && current.preset === preset ? current.params : {};
+  if (
+    o.params !== undefined &&
+    (typeof o.params !== "object" || o.params === null || Array.isArray(o.params))
+  )
+    throw invalid(`${path}.params`, "must be an object of parameter values");
+  const params = { ...base, ...((o.params as Record<string, ParamValue> | undefined) ?? {}) };
+  const bad = checkPresetParams(preset, params);
+  if (bad) throw invalid(`${path}.${bad.path}`, bad.reason);
+  return { kind: "preset", preset: preset as PresetName, params };
 };
 
 /** Second pass for connectors, once every target exists. */
@@ -800,6 +855,13 @@ export const updateElement = (
     const url = normalizeLink(str(o.url, `${path}.url`, LIMITS.url));
     if (!url || !/^https?:/.test(url)) throw invalid(`${path}.url`, "must be an http(s) address");
     el = { ...el, url };
+  }
+  if (el.type === "component") {
+    const touches = ["preset", "params", "html", "css"].some((k) => o[k] !== undefined);
+    if (touches) el = { ...el, source: componentSource(o, path, el.source) };
+    if (o.title !== undefined)
+      el = { ...el, title: str(o.title, `${path}.title`, COMPONENT_LIMITS.title) };
+    if (o.paused !== undefined) el = { ...el, paused: bool(o.paused, `${path}.paused`) };
   }
   if (el.type === "image") {
     const kind = type === "gif" || type === "video" ? type : "image";

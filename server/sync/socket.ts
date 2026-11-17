@@ -120,6 +120,22 @@ export const createSyncCore = (service: SessionService, opts: SocketOptions): Sy
     }
   };
   service.events.on("changes", onChanges);
+  const onDeleted = (ids: string[]) => {
+    for (const id of ids) {
+      const peers = boards.get(id);
+      if (!peers) continue;
+      for (const p of [...peers]) {
+        send(p, {
+          type: "error",
+          code: "session_not_found",
+          status: 404,
+          message: "This board was deleted.",
+        });
+        p.t.close(4404, "board deleted");
+      }
+    }
+  };
+  service.events.on("deleted", onDeleted);
 
   const fail = (p: Peer, code: string, message: string, pushId?: string, status = 400) =>
     send(p, { type: "error", code, status, message, ...(pushId ? { pushId } : {}) });
@@ -268,6 +284,7 @@ export const createSyncCore = (service: SessionService, opts: SocketOptions): Sy
     },
     close() {
       service.events.off("changes", onChanges);
+      service.events.off("deleted", onDeleted);
       for (const peers of boards.values()) for (const p of peers) p.t.terminate?.();
       boards.clear();
       total = 0;

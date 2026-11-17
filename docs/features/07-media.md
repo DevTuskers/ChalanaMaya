@@ -1,6 +1,6 @@
 # Media
 
-Status: MEDIA-01, MEDIA-02, MEDIA-04, MEDIA-07, MEDIA-08, MEDIA-09 and MEDIA-10 are done (agent canvas phase 5, round 1); MEDIA-03 is done except the play badge on paused items (see its note); MEDIA-05 and MEDIA-06 are planned (phase 6). Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: MEDIA-01, MEDIA-02, MEDIA-04, MEDIA-07, MEDIA-08, MEDIA-09 and MEDIA-10 are done (agent canvas phase 5, round 1); MEDIA-03 is done except the play badge on paused items (see its note); MEDIA-05 and MEDIA-06 are done (agent canvas phase 6, round 1). Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 Moving content on the board: animated GIFs, videos and animated CSS components. They are normal board items: they can be moved, resized, rotated, selected, grouped, layered, locked, undone and redone, and they sync to every tab and agent on the session.
 
@@ -65,6 +65,8 @@ Acceptance criteria:
 - Presets include at least a pulse dot, spinner, typing dots, progress bar, shimmer card, moving text, bouncing arrow and colour wave, each with simple settings (colour, text, speed or value).
 - Presets can be added from the UI and by agents and behave like other board items.
 
+Status (phase 6, round 1): done. **Add animated component…** in the main menu opens a dialog with the eight presets (pulse, spinner, typing-dots, progress-bar, shimmer-card, marquee, bounce-arrow, gradient-wave), their settings and a live preview; agents use `add_elements` `{type: "component", preset, params}` and `list_component_presets`. Settings are checked by type and range (colours are hex only) and text is escaped. Components show live in the same HTML layer as linked media (at most 24 live items; the selection frame and handles draw above them, and the frame ignores the pointer, so the board moves, resizes and rotates it), and as a still card on the canvas otherwise. Pause is shared with every tab. Evidence: `src/media/componentDoc.test.ts`, `src/render/media.test.ts`, `server/mcp/http.test.ts`, `e2e/components.spec.ts`.
+
 ## MEDIA-06 — Custom animated components
 
 **Priority: P1**
@@ -75,6 +77,8 @@ Acceptance criteria:
 - A dialog accepts HTML and CSS (each up to 20 KB) with a live preview and lists the rules.
 - Content never runs scripts: components are shown in a sandboxed frame without script permission, inside a fixed page that starts with a strict content policy, after cleaning the HTML and the CSS separately; forbidden content (scripts, event attributes, `javascript:` links, `@import`, outside `url()` resources, frames, forms, meta tags) is refused with a message naming the rule.
 - Components cannot load anything from the internet, open windows or change the board.
+
+Status (phase 6, round 1): done. The dialog's **Custom HTML and CSS** mode takes HTML and CSS (20 KB each, counted as UTF-8 bytes), lists the rules and shows a live preview; agents send `html`, `css` and `title`. Content is checked when it is added, opened from a `.chalana` file and stored on the server (`src/shared/components.ts`); unsafe content is refused with the rule name (`unsafe_component` for agents). The frame has `sandbox=""` (no scripts, no same origin), `referrerpolicy="no-referrer"`, and its page starts with `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">` as the first element in `<head>`; HTML is cleaned with DOMPurify (an allow-list of layout, text and SVG shape tags) and CSS is filtered separately (no `@import`, no non-`data:` `url()`, no `expression`, `behavior`, `-moz-binding`, `image-set` or absolute addresses, and `<` escaped so it cannot close the style tag). Evidence: the attack corpus in `src/media/componentDoc.test.ts` and `e2e/components.spec.ts` (refused by the dialog and MCP; even unsanitised inside the sandbox and CSP it neither runs nor makes a request).
 
 ## MEDIA-07 — Media in exports and files
 
@@ -87,7 +91,7 @@ Acceptance criteria:
 - A saved .chalana file contains the media and reopens with it (very large boards may keep videos as links, with a warning).
 - Media from links (pictures, GIFs and videos) is shown in PNG exports as a placeholder card with the site name, and never makes an export fail.
 
-Status (phase 5, round 1): done, with the `.chalana` format at version 2 (playback fields and links stored as links; version 1 files still open). Not yet: keeping videos of very large boards as links with a warning (every uploaded file is inlined when saving).
+Status (phase 5, round 1; components phase 6): done, with the `.chalana` format at version 2 (components keep their source, title and pause state; unsafe component content in a file is refused) (playback fields and links stored as links; version 1 files still open). Not yet: keeping videos of very large boards as links with a warning (every uploaded file is inlined when saving).
 
 ## MEDIA-08 — Media limits and safety
 

@@ -15,6 +15,7 @@ import {
   resolveColor,
 } from "../render/shapes";
 import { exportSize } from "./export";
+import { componentCardSvg } from "../render/componentCard";
 
 export interface SvgExportOptions {
   theme: Theme;
@@ -102,6 +103,9 @@ const elementSvg = (el: SceneElement, files: FileMap, theme: Theme, onNote: bool
         : `<image x="${attr(n(-el.width / 2))}" y="${attr(n(-el.height / 2))}" width="${attr(n(el.width))}" height="${attr(n(el.height))}" href="${attr(file.dataURL)}" preserveAspectRatio="none"/>`;
       body = `<g${flip}>${inner}</g>`;
     }
+  } else if (el.type === "component") {
+    // components never run in exports: a static card with the title
+    body = componentCardSvg(el, theme);
   } else if (el.type === "embed") {
     // exports show the card with its address; live pages can't be exported
     const stroke = theme === "dark" ? "#4d6b66" : "#9fbdb7";

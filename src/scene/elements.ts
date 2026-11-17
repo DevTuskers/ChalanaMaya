@@ -1,4 +1,6 @@
 import { LIMITS } from "../shared/limits";
+import type { ComponentSource } from "../shared/components";
+import type { ComponentElement } from "./types";
 import { DEFAULT_STYLE, NOTE_SWATCHES, TRANSPARENT } from "./constants";
 import type {
   EmbedElement,
@@ -186,6 +188,27 @@ export const createEmbed = (
   url,
 });
 
+export const createComponent = (
+  x: number,
+  y: number,
+  source: ComponentSource,
+  title: string,
+  width = 240,
+  height = 160,
+): ComponentElement => ({
+  ...base(DEFAULT_STYLE, x, y),
+  type: "component",
+  strokeColor: "#52706b",
+  backgroundColor: TRANSPARENT,
+  strokeWidth: 1,
+  roughness: 0,
+  edges: "round",
+  width,
+  height,
+  source,
+  title,
+});
+
 export const isShape = (el: SceneElement): el is ShapeElement =>
   el.type === "rectangle" || el.type === "diamond" || el.type === "ellipse";
 
@@ -218,6 +241,7 @@ export const isBindable = (el: SceneElement) =>
   isShape(el) ||
   el.type === "image" ||
   el.type === "embed" ||
+  el.type === "component" ||
   el.type === "note" ||
   (el.type === "text" && !el.containerId);
 

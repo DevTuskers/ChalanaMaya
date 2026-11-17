@@ -62,6 +62,8 @@ export type Dialog =
   | { kind: "confirmOpen"; fileName: string; apply: () => void }
   | { kind: "webcard"; at: { x: number; y: number } }
   | { kind: "mediaLink" }
+  | { kind: "component" }
+  | { kind: "deleteBoard" }
   | { kind: "chart"; text: string }
   | null;
 

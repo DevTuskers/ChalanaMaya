@@ -131,6 +131,19 @@ has no file extension). Links are shown live in the browser and as a placeholder
 exports, so upload the file when it must export. Media moves, resizes and rotates like any item
 (`update_elements`, `move_elements`). Web cards (`type: "web_card"`, `url`) show a web page.
 
+## Animated components
+
+`add_elements` with `type: "component"` adds a small animated piece. Use a built-in preset
+(`preset`: pulse, spinner, typing-dots, progress-bar, shimmer-card, marquee, bounce-arrow,
+gradient-wave, with `params` such as `color`, `text`, `speed` or `value`; see
+`list_component_presets`), or your own `html` and `css` (each up to 20 KB). Give it a `title`:
+exports show a still card with the title and "Animated component". Components run in a sandboxed
+frame with no scripts and no network, so they are look-only: no `<script>`, `on…` attributes,
+`javascript:` links, `@import`, outside `url()` (only `data:` pictures and fonts), frames, forms,
+links, meta or `<style>` tags in the HTML. Unsafe content fails with `unsafe_component` and names
+the rule; over 20 KB fails with `too_large`. `paused: true` holds it still; it moves, resizes and
+rotates like any item.
+
 ## Limits and common errors
 
 - Up to 200 items per call, 1,000 points per line, 5,000 per freehand stroke, text up to 10,000
