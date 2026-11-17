@@ -9,6 +9,9 @@ These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase ar
 - [Selecting and arranging](features/03-selecting-arranging.md)
 - [Canvas and view](features/04-canvas-and-view.md)
 - [Save, open, and export](features/05-save-open-export.md)
+- [Sessions and agents](features/06-sessions-and-agents.md) (planned)
+- [Media](features/07-media.md) (planned)
+- [Plan: board sessions, agent drawing and media](plans/agent-canvas.md)
 - [Out of scope](out-of-scope.md)
 - [Brand identity (approved)](brand-identity.md)
 
@@ -16,11 +19,13 @@ These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase ar
 
 In scope: a single-user whiteboard with drawing, styling, selection, canvas controls, local saving, and export. P0 features form the MVP; P1 and P2 remain planned work, not MVP promises. External embeds may need a network connection and permission from their providers.
 
-Out of scope: collaboration, sharing services, encryption for shared sessions, libraries, AI tools, and app-level extras listed in [out of scope](out-of-scope.md). Local file export is not a hosted sharing service. Simple draw-to-shape recognition is an explicit drawing feature, not a generative AI feature.
+Planned next (see the [agent canvas plan](plans/agent-canvas.md)): board sessions at `/s/<id>` stored by a ChalanaMaya server with live board-session sync, a built-in MCP server so agents can draw on a session, and GIF, video and animated CSS component items.
+
+Out of scope: collaboration features (accounts, permissions, cursors, comments), hosted sharing services, encryption for shared sessions, libraries, built-in AI generation, and app-level extras listed in [out of scope](out-of-scope.md). Local file export is not a hosted sharing service. Simple draw-to-shape recognition is an explicit drawing feature, not a generative AI feature.
 
 ## Feature tracking
 
-Each feature heading has a permanent ID: DRAW, STYLE, ARR, VIEW, or FILE followed by a number. Never reuse or renumber an ID; mark retired features as retired. Descriptions explain intent and acceptance bullets define completion.
+Each feature heading has a permanent ID: DRAW, STYLE, ARR, VIEW, FILE, SESS, AGENT, or MEDIA followed by a number. Never reuse or renumber an ID; mark retired features as retired. Descriptions explain intent and acceptance bullets define completion.
 
 - **P0**: MVP must-have.
 - **P1**: soon after MVP.
