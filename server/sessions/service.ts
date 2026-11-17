@@ -13,7 +13,8 @@ import { dbBytes, type DB } from "../db/schema";
 import { notFound, ServiceError, storageFull } from "../errors";
 import { baseType, PICTURE_TYPES, pictureSize, sniffType, VIDEO_TYPES } from "../media/sniff";
 import { newSessionId, randomId } from "../../src/shared/ids";
-import { isValidKey } from "../../src/shared/keys";
+import { assignKeys, isValidKey, type LayerHint } from "../../src/shared/keys";
+import { finalizeScene } from "../../src/scene/scene";
 import { validateSettings, validateStoredElement } from "../../src/shared/validate";
 import type {
   Ack,
@@ -34,6 +35,11 @@ export interface ApplyOptions {
   origin: ChangeOrigin;
   /** any rejection rolls the whole batch back */
   atomic: boolean;
+  /**
+   * Elements whose text the server laid out (agent path, §3.8): stored with
+   * needs_layout = 1 so the first browser with fonts corrects them once.
+   */
+  layoutIds?: ReadonlySet<string>;
 }
 
 export interface PushInput {
@@ -106,6 +112,13 @@ interface FileRow {
   source: "upload" | "remote";
   url: string | null;
   poster_file_id: string | null;
+}
+
+/** An agent change the server refused (validation, quota); nothing was stored. */
+export class AgentRejected extends Error {
+  constructor(readonly rejected: Rejected[]) {
+    super(rejected.map((r) => `${r.id}: ${r.reason}`).join("; ") || "rejected");
+  }
 }
 
 class Rollback extends Error {
@@ -283,6 +296,57 @@ export class SessionService {
     };
   }
 
+  /**
+   * The agent path (plan §3.9): `mutate` gets the live scene and returns the
+   * next one plus the ids it touched. Only those are finalized (bound labels,
+   * connector ends), the diff becomes ops with keys from `assignKeys`, and the
+   * batch is applied atomically with an agent origin. Throws AgentRejected when
+   * the server refuses an op; nothing is stored then.
+   */
+  applyAgentChange<R>(
+    sessionId: string,
+    mutate: (
+      elements: SceneElement[],
+      snap: SceneSnapshot,
+    ) => { next: SceneElement[]; touched: Iterable<string>; hint?: LayerHint; result: R },
+    agentName: string,
+  ): { rev: number; result: R; changed: boolean; elements: SceneElement[] } {
+    const snap = this.snapshot(sessionId);
+    const before = snap.elements.map((e) => e.el);
+    const { next: raw, touched, hint, result } = mutate(before, snap);
+    const touchedSet = new Set(touched);
+    const next = finalizeScene(raw, touchedSet);
+    const keys = new Map(snap.elements.map((e) => [e.el.id, e.idx]));
+    const versions = new Map(snap.elements.map((e) => [e.el.id, e.version]));
+    const prevById = new Map(before.map((e) => [e.id, e]));
+    const newKeys = assignKeys(before, next, keys, hint);
+    const ops: RawOp[] = [];
+    const layoutIds = new Set<string>();
+    const nextIds = new Set<string>();
+    for (const el of next) {
+      nextIds.add(el.id);
+      const prev = prevById.get(el.id);
+      const idx = newKeys.get(el.id)!;
+      if (prev === el && keys.get(el.id) === idx) continue;
+      if (prev && keys.get(el.id) === idx && JSON.stringify(prev) === JSON.stringify(el)) continue;
+      ops.push({ t: "put", el, idx, baseVersion: versions.get(el.id) ?? 0 });
+      if (el.type === "text" && touchedSet.has(el.id)) {
+        layoutIds.add(el.id);
+        if (el.containerId) layoutIds.add(el.containerId);
+      }
+    }
+    for (const el of before)
+      if (!nextIds.has(el.id)) ops.push({ t: "del", id: el.id, baseVersion: versions.get(el.id)! });
+    if (!ops.length) return { rev: snap.rev, result, changed: false, elements: next };
+    const { ack, applied } = this.apply(
+      sessionId,
+      { pushId: randomId(16), baseRev: snap.rev, ops },
+      { origin: { kind: "agent", name: agentName }, atomic: true, layoutIds },
+    );
+    if (!applied || ack.rejected.length) throw new AgentRejected(ack.rejected);
+    return { rev: ack.rev, result, changed: true, elements: next };
+  }
+
   deleteSession(id: string) {
     this.requireSession(id);
     this.deleteSessions([id]);
@@ -429,9 +493,9 @@ export class SessionService {
           count = nextCount;
           bytes = nextBytes;
           const version = stored + 1;
-          // only the server's own text layout sets the flag (agent path, phase 4);
+          // only the server's own text layout sets the flag (agent path, §3.8);
           // a browser put, including a layout correction, always clears it
-          const needsLayout = 0;
+          const needsLayout = !op.layout && opts.layoutIds?.has(el.id) ? 1 : 0;
           this.q.upsert.run({
             sid: sessionId,
             id: el.id,
@@ -443,7 +507,7 @@ export class SessionService {
             now,
           });
           versions[el.id] = version;
-          applied.push({ t: "put", el, idx: op.idx, version, needsLayout: false });
+          applied.push({ t: "put", el, idx: op.idx, version, needsLayout: needsLayout === 1 });
           return;
         }
         case "del": {

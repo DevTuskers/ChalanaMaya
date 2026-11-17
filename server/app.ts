@@ -8,12 +8,13 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import path from "node:path";
 import { apiRouter } from "./api/routes";
+import { mcpRouter } from "./mcp/http";
 import { appOrigins, ROOT_DIR, type Config } from "./config";
 import { openDatabase, type DB } from "./db/schema";
 import { crossSiteGuard, crossSiteReason } from "./security/csrf";
 import { appHeaders, baseHeaders } from "./security/headers";
 import { createSyncHub, type SyncHub } from "./sync/socket";
-import { checkUpgradeHost, hostCheck, sendRefusal } from "./security/host";
+import { checkUpgradeHost, hostCheck } from "./security/host";
 import { rateLimiters, redactIds } from "./security/rateLimit";
 import { SessionService } from "./sessions/service";
 import { isSessionId } from "../src/shared/ids";
@@ -70,17 +71,13 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
 
   app.use("/api", apiRouter(cfg, service, limiters, VERSION));
 
-  // The MCP endpoint arrives in phase 4; the host check, the cross-site guard
-  // and the rate limit already cover the path.
-  app.all("/mcp", limiters.mcp, (req, res) => {
-    sendRefusal(
-      req,
-      res,
-      404,
-      "not_available",
-      "The MCP endpoint is not available in this version yet.",
-    );
-  });
+  // stateless MCP (plan §5.1): host check, cross-site guard (ALLOWED_ORIGINS
+  // count here only) and the rate limit apply as to every path
+  app.use(
+    "/mcp",
+    limiters.mcp,
+    mcpRouter(cfg, service, (id) => hub.peers(id), VERSION),
+  );
 
   const pageHeaders = appHeaders(cfg.dev);
   let devMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | null = null;

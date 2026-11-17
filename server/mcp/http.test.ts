@@ -1,0 +1,474 @@
+/** Integration: the official MCP SDK client against a real server over HTTP (plan §8). */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { startServer, type TestServer } from "../test/helpers";
+import { call, callError, httpClient, makePng } from "./testClient";
+import type { ChangesEvent } from "../sessions/service";
+
+let srv: TestServer;
+let client: Client;
+
+beforeAll(async () => {
+  srv = await startServer();
+  client = await httpClient(srv.base);
+});
+afterAll(async () => {
+  await client?.close();
+  await srv?.close();
+});
+
+const newBoard = async () =>
+  (await call(client, "create_session", { title: "Test" })).session_id as string;
+
+describe("MCP over HTTP", () => {
+  it("lists every tool, prompt and resource without enumerating boards", async () => {
+    const tools = (await client.listTools()).tools.map((t) => t.name).sort();
+    expect(tools).toEqual(
+      [
+        "add_elements",
+        "arrange_elements",
+        "clear_scene",
+        "create_session",
+        "delete_elements",
+        "get_scene",
+        "get_session_info",
+        "group_elements",
+        "list_component_presets",
+        "move_elements",
+        "place_media",
+        "reorder_elements",
+        "set_style",
+        "ungroup_elements",
+        "update_elements",
+        "update_session",
+        "upload_media",
+      ].sort(),
+    );
+    const prompts = (await client.listPrompts()).prompts.map((p) => p.name).sort();
+    expect(prompts).toEqual(["chalanamaya_guide", "draw_diagram", "explain_board", "tidy_board"]);
+    await newBoard();
+    const resources = (await client.listResources()).resources.map((r) => r.uri);
+    expect(resources.sort()).toEqual([
+      "chalanamaya://guide",
+      "chalanamaya://reference/component-presets",
+      "chalanamaya://reference/elements",
+      "chalanamaya://reference/palette",
+    ]);
+    expect(resources.join()).not.toMatch(/session\//);
+    const templates = (await client.listResourceTemplates()).resourceTemplates.map(
+      (t) => t.uriTemplate,
+    );
+    expect(templates.sort()).toEqual([
+      "chalanamaya://session/{session_id}/outline",
+      "chalanamaya://session/{session_id}/scene",
+    ]);
+  });
+
+  it("reads prompts and resources", async () => {
+    const guide = await client.readResource({ uri: "chalanamaya://guide" });
+    expect((guide.contents[0] as { text: string }).text).toContain("name: chalanamaya");
+    const p = await client.getPrompt({
+      name: "draw_diagram",
+      arguments: { session_id: "x", description: "a flow" },
+    });
+    expect(JSON.stringify(p.messages)).toContain("add_elements");
+    const g = await client.getPrompt({ name: "chalanamaya_guide" });
+    expect(JSON.stringify(g.messages)).toContain("Coordinates");
+    const id = await newBoard();
+    await call(client, "add_elements", {
+      session_id: id,
+      elements: [{ type: "rectangle", label: "Hi" }],
+    });
+    const outline = await client.readResource({ uri: `chalanamaya://session/${id}/outline` });
+    expect((outline.contents[0] as { text: string }).text).toMatch(/^box \S+ "Hi"/);
+    const scene = await client.readResource({ uri: `chalanamaya://session/${id}/scene` });
+    expect(JSON.parse((scene.contents[0] as { text: string }).text).count).toBe(1);
+  });
+
+  it("draws a connected diagram with keys, labels, frames and groups", async () => {
+    const id = await newBoard();
+    const events: ChangesEvent[] = [];
+    const on = (e: ChangesEvent) => events.push(e);
+    srv.handle.service.events.on("changes", on);
+    const r = await call(client, "add_elements", {
+      session_id: `${srv.base}/s/${id}`,
+      agent_name: "Claude",
+      elements: [
+        {
+          type: "frame",
+          key: "f",
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 400,
+          name: "Flow",
+          contains: ["a", "b"],
+        },
+        {
+          type: "rectangle",
+          key: "a",
+          x: "80",
+          y: 80,
+          label: "Start",
+          fill: "mint",
+          fill_style: "solid",
+          group: "g",
+        },
+        { type: "diamond", key: "b", x: 400, y: 80, label: "Ok?", stroke: "clay", group: "g" },
+        { type: "arrow", key: "c", from: "a", to: "b", label: "go", routing: "elbow" },
+        { type: "note", text: "remember", color: "butter", wat: 1 },
+      ],
+    });
+    srv.handle.service.events.off("changes", on);
+    expect(r.created.map((c: { key?: string }) => c.key)).toEqual(["f", "a", "b", "c", undefined]);
+    expect(r.warnings).toEqual(["elements[4].wat: unknown field, ignored"]);
+    expect(events).toHaveLength(1);
+    expect(events[0].origin).toEqual({ kind: "agent", name: "Claude" });
+    const scene = await call(client, "get_scene", { session_id: id });
+    expect(scene.count).toBe(5);
+    const byKey = Object.fromEntries(
+      r.created.map((c: { key?: string; id: string }) => [c.key, c.id]),
+    );
+    const arrow = scene.elements.find((e: { id: string }) => e.id === byKey.c);
+    expect(arrow).toMatchObject({ from: byKey.a, to: byKey.b, label: "go", routing: "elbow" });
+    const box = scene.elements.find((e: { id: string }) => e.id === byKey.a);
+    expect(box).toMatchObject({
+      label: "Start",
+      fill: "mint",
+      fill_style: "solid",
+      frame: byKey.f,
+      x: 80,
+    });
+    // the end sits on the box outline, not its centre
+    expect(arrow.points[0][0]).toBeGreaterThanOrEqual(240);
+    const info = await call(client, "get_session_info", { session_id: id });
+    expect(info).toMatchObject({ element_count: 5, open_tabs: 0, url: `${srv.base}/s/${id}` });
+    // moving the target keeps the connector attached
+    await call(client, "move_elements", { session_id: id, ids: [byKey.b], dx: 0, dy: 200 });
+    const after = await call(client, "get_scene", {
+      session_id: id,
+      ids: [byKey.c],
+      detail: "full",
+    });
+    expect(after.elements[0].to).toBe(byKey.b);
+    expect(after.elements[0].points.at(-1)[1]).toBeGreaterThan(200);
+  });
+
+  it("round-trips full geometry through update_elements", async () => {
+    const id = await newBoard();
+    const r = await call(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "rectangle", key: "a", x: 0, y: 0, label: "A", angle: 30 },
+        { type: "rectangle", key: "b", x: 400, y: 0 },
+        { type: "arrow", key: "c", from: "a", to: "b", points: [[300, 200]] },
+        {
+          type: "line",
+          key: "l",
+          points: [
+            [0, 300],
+            [100, 350],
+            [200, 300],
+          ],
+          closed: true,
+        },
+        {
+          type: "freedraw",
+          key: "d",
+          points: [
+            [0, 500, 0.2],
+            [10, 510, 0.8],
+            [30, 505, 0.5],
+          ],
+        },
+        { type: "text", key: "t", x: 600, y: 300, text: "hello world", width: 120 },
+      ],
+    });
+    const ids = r.created.map((c: { id: string }) => c.id);
+    const full = await call(client, "get_scene", { session_id: id, ids, detail: "full" });
+    expect(full.elements).toHaveLength(6);
+    const before = JSON.stringify(full.elements);
+    const up = await call(client, "update_elements", { session_id: id, updates: full.elements });
+    expect(up.warnings).toEqual([]);
+    const again = await call(client, "get_scene", { session_id: id, ids, detail: "full" });
+    expect(JSON.stringify(again.elements)).toBe(before);
+    const fd = again.elements.find((e: { type: string }) => e.type === "freedraw");
+    expect(fd.points).toEqual([
+      [0, 500, 0.2],
+      [10, 510, 0.8],
+      [30, 505, 0.5],
+    ]);
+    const arrow = again.elements.find((e: { type: string }) => e.type === "arrow");
+    expect(arrow.points).toHaveLength(3);
+    expect(arrow.points[1]).toEqual([300, 200]);
+    // change one bend point and write it back
+    arrow.points[1] = [300, 260];
+    await call(client, "update_elements", { session_id: id, updates: [arrow] });
+    const moved = await call(client, "get_scene", {
+      session_id: id,
+      ids: [arrow.id],
+      detail: "full",
+    });
+    expect(moved.elements[0].points[1]).toEqual([300, 260]);
+    expect(moved.elements[0].from).toBe(ids[0]);
+  });
+
+  it("styles, groups, reorders, arranges, deletes and clears", async () => {
+    const id = await newBoard();
+    const r = await call(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "rectangle", x: 0, y: 0, label: "A" },
+        { type: "rectangle", x: 300, y: 30 },
+        { type: "rectangle", x: 500, y: 60 },
+        { type: "text", x: 0, y: 300, text: "free" },
+      ],
+    });
+    const [a, b, c, t] = r.created.map((x: { id: string }) => x.id);
+    const s = await call(client, "set_style", {
+      session_id: id,
+      ids: [a, t],
+      style: { fill: "peach", font_size: "l" },
+    });
+    expect(s.skipped).toEqual([{ id: t, reason: "fill: a text has no fill" }]);
+    const g = await call(client, "group_elements", { session_id: id, ids: [a, b] });
+    expect(g.group_id).toBeTruthy();
+    const sc = await call(client, "get_scene", { session_id: id, ids: [a] });
+    expect(sc.elements[0].group).toBe(g.group_id);
+    await call(client, "ungroup_elements", { session_id: id, ids: [g.group_id] });
+    await call(client, "reorder_elements", { session_id: id, ids: [a], to: "front" });
+    const order = (await call(client, "get_scene", { session_id: id })).elements.map(
+      (e: { id: string }) => e.id,
+    );
+    expect(order.at(-1)).toBe(a);
+    await call(client, "arrange_elements", {
+      session_id: id,
+      ids: [a, b, c],
+      align: "top",
+      distribute: "horizontal",
+      gap: 40,
+    });
+    const arranged = (await call(client, "get_scene", { session_id: id, ids: [a, b, c] })).elements;
+    expect(arranged.map((e: { y: number }) => e.y)).toEqual([0, 0, 0]);
+    const xs = arranged.map((e: { x: number }) => e.x).sort((p: number, q: number) => p - q);
+    expect(xs).toEqual([0, 200, 400]);
+    await call(client, "update_elements", { session_id: id, updates: [{ id: c, locked: true }] });
+    expect((await callError(client, "delete_elements", { session_id: id, ids: [c] })).code).toBe(
+      "locked",
+    );
+    expect(
+      (await call(client, "delete_elements", { session_id: id, ids: [a] })).deleted,
+    ).toHaveLength(2);
+    const cleared = await call(client, "clear_scene", { session_id: id, confirm: true });
+    expect(cleared.deleted_count).toBe(3);
+    expect((await call(client, "get_scene", { session_id: id })).count).toBe(0);
+    const set = await call(client, "update_session", {
+      session_id: id,
+      background: "mist",
+      grid: true,
+      title: "T2",
+    });
+    expect(set).toMatchObject({ background: "#eef6f4", grid: true, title: "T2" });
+  });
+
+  it("reports precise errors and changes nothing", async () => {
+    const id = await newBoard();
+    const e1 = await callError(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "rectangle", key: "start" },
+        { type: "arrow", from: "start", to: "b9" },
+      ],
+    });
+    expect(e1.message).toMatch(/^elements\[1\]\.to: no element or key "b9".*Known keys: start/);
+    const e2 = await callError(client, "add_elements", {
+      session_id: id,
+      elements: [{ type: "rectangle", fill: "plaid" }],
+    });
+    expect(e2.message).toMatch(/elements\[0\]\.fill: "plaid" is not a colour/);
+    expect((await call(client, "get_scene", { session_id: id })).count).toBe(0);
+    expect((await callError(client, "get_scene", { session_id: "nope" })).code).toBe(
+      "invalid_session_id",
+    );
+    expect((await callError(client, "get_scene", { session_id: "A".repeat(24) })).code).toBe(
+      "session_not_found",
+    );
+    expect(
+      (await callError(client, "get_scene", { session_id: id, detail: "full" })).message,
+    ).toMatch(/needs ids/);
+    expect((await callError(client, "clear_scene", { session_id: id, confirm: false })).code).toBe(
+      "invalid_input",
+    );
+  });
+
+  it("pages consistently and refuses stale cursors", async () => {
+    const id = await newBoard();
+    await call(client, "add_elements", {
+      session_id: id,
+      elements: Array.from({ length: 5 }, (_, i) => ({ type: "rectangle", x: i * 200, y: 0 })),
+    });
+    const p1 = await call(client, "get_scene", { session_id: id, limit: 2 });
+    expect(p1.elements).toHaveLength(2);
+    const p2 = await call(client, "get_scene", {
+      session_id: id,
+      limit: 2,
+      cursor: p1.next_cursor,
+    });
+    const p3 = await call(client, "get_scene", {
+      session_id: id,
+      limit: 2,
+      cursor: p2.next_cursor,
+    });
+    expect(p3.next_cursor).toBeUndefined();
+    const all = [...p1.elements, ...p2.elements, ...p3.elements].map((e: { id: string }) => e.id);
+    expect(new Set(all).size).toBe(5);
+    await call(client, "add_elements", { session_id: id, elements: [{ type: "note" }] });
+    const stale = await callError(client, "get_scene", {
+      session_id: id,
+      limit: 2,
+      cursor: p1.next_cursor,
+    });
+    expect(stale.code).toBe("stale_cursor");
+    expect(stale.message).toMatch(/rev \d+ → \d+/);
+  });
+
+  it("uploads and places pictures; refuses links, gif and video", async () => {
+    const id = await newBoard();
+    const png = makePng(40, 20, [200, 30, 30]);
+    const placed = await call(client, "place_media", {
+      session_id: id,
+      kind: "image",
+      source: { data_base64: png.toString("base64"), mime_type: "image/png" },
+      x: 10,
+      y: 10,
+    });
+    const sc = await call(client, "get_scene", { session_id: id, ids: [placed.id] });
+    expect(sc.elements[0]).toMatchObject({
+      type: "image",
+      file_id: placed.file_id,
+      mime: "image/png",
+      w: 40,
+      h: 20,
+    });
+    const rev = sc.rev;
+    const link = await callError(client, "place_media", {
+      session_id: id,
+      kind: "image",
+      source: { url: "https://example.com/a.png" },
+    });
+    expect(link.code).toBe("links_not_supported_yet");
+    expect(link.message).toMatch(/upload_media/);
+    expect(
+      (
+        await callError(client, "add_elements", {
+          session_id: id,
+          elements: [{ type: "image", url: "https://e.com/a.png" }],
+        })
+      ).code,
+    ).toBe("links_not_supported_yet");
+    expect(
+      (
+        await callError(client, "update_elements", {
+          session_id: id,
+          updates: [{ id: placed.id, url: "https://e.com/b.png" }],
+        })
+      ).code,
+    ).toBe("links_not_supported_yet");
+    for (const kind of ["gif", "video"])
+      expect(
+        (
+          await callError(client, "place_media", {
+            session_id: id,
+            kind,
+            source: { file_id: placed.file_id },
+          })
+        ).code,
+      ).toBe("kind_not_supported_yet");
+    expect(
+      (
+        await callError(client, "add_elements", {
+          session_id: id,
+          elements: [{ type: "component" }],
+        })
+      ).code,
+    ).toBe("kind_not_supported_yet");
+    expect((await call(client, "get_scene", { session_id: id })).rev).toBe(rev);
+    // a 10 MB picture fits; the board's file serves it
+    const big = makePng(8, 8, [0, 0, 255], 10 * 1024 * 1024 - 400);
+    expect(big.length).toBeLessThanOrEqual(10 * 1024 * 1024);
+    const up = await call(client, "upload_media", {
+      session_id: id,
+      data_base64: big.toString("base64"),
+      mime_type: "image/png",
+    });
+    expect(up).toMatchObject({ mime_type: "image/png", width: 8, height: 8, size: big.length });
+    const res = await fetch(`${srv.base}/api/sessions/${id}/files/${placed.file_id}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses bodies over 16 MB, GET and DELETE, and foreign origins", async () => {
+    const huge = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ping",
+      params: { x: "a".repeat(17 * 1024 * 1024) },
+    });
+    const r = await fetch(`${srv.base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: huge,
+    });
+    expect(r.status).toBe(413);
+    expect((await fetch(`${srv.base}/mcp`)).status).toBe(405);
+    expect((await fetch(`${srv.base}/mcp`, { method: "DELETE" })).status).toBe(405);
+    const foreign = await fetch(`${srv.base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    expect(foreign.status).toBe(403);
+  });
+
+  it("is stateless: a client keeps working after a server restart", async () => {
+    // every request builds a fresh server; a new server process on the same data works the same
+    const other = await httpClient(srv.base, "second");
+    const id = await newBoard();
+    await call(other, "add_elements", { session_id: id, elements: [{ type: "note" }] });
+    expect((await call(client, "get_scene", { session_id: id })).count).toBe(1);
+    await other.close();
+  });
+});
+
+describe("ALLOWED_ORIGINS", () => {
+  it("admits a listed origin on /mcp only", async () => {
+    const s = await startServer({ ALLOWED_ORIGINS: "https://inspector.example" });
+    try {
+      const headers = {
+        "content-type": "application/json",
+        origin: "https://inspector.example",
+        accept: "application/json, text/event-stream",
+      };
+      const mcp = await fetch(`${s.base}/mcp`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      });
+      expect(mcp.status).toBe(200);
+      const rest = await fetch(`${s.base}/api/sessions`, {
+        method: "POST",
+        headers: { ...headers, "x-chalanamaya": "1" },
+        body: "{}",
+      });
+      expect(rest.status).toBe(403);
+    } finally {
+      await s.close();
+    }
+  });
+});
