@@ -13,6 +13,23 @@ export type LayerHint = {
 /** Keys longer than this trigger a fresh, evenly spread set. */
 export const MAX_KEY_LENGTH = 48;
 
+/**
+ * True for a well-formed fractional-indexing key (base-62 digits, a valid
+ * integer head, no trailing zero) of at most MAX_KEY_LENGTH characters.
+ * Malformed keys are treated as missing so they get a fresh key instead of
+ * making the key library throw.
+ */
+export const isValidKey = (k: unknown): k is string => {
+  if (typeof k !== "string" || k.length === 0 || k.length > MAX_KEY_LENGTH * 4) return false;
+  if (!/^[0-9A-Za-z]+$/.test(k)) return false;
+  try {
+    generateKeyBetween(k, null);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Longest strictly increasing run of existing keys (indices into `keys`), patience sort. */
 const keepIndices = (keys: (string | null)[]): Set<number> => {
   const tails: number[] = [];
@@ -54,7 +71,7 @@ export const assignKeys = (
   const seen = new Set<string>();
   const candidate = next.map((e) => {
     const k = keys.get(e.id);
-    if (k === undefined || moved.has(e.id) || !known.has(e.id) || seen.has(k)) return null;
+    if (!isValidKey(k) || moved.has(e.id) || !known.has(e.id) || seen.has(k)) return null;
     seen.add(k);
     return k;
   });

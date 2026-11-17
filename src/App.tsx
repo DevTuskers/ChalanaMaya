@@ -1,4 +1,4 @@
-import { canonicalizeElements } from "./shared/canonical";
+import { canonicalizeElements, summarizeReport } from "./shared/canonical";
 import { isColor } from "./shared/limits";
 import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
@@ -520,13 +520,11 @@ export const App = () => {
       viewport: (b && fitBounds(b, view.width, view.height)) || { scrollX: 0, scrollY: 0, zoom: 1 },
       historyVersion: store.get().historyVersion + 1,
     });
-    const fixed = report.changes.length + report.dropped.length;
+    const summary = summarizeReport(report);
     store.toast(
-      fixed
-        ? `Board opened. ${report.dropped.length ? `${report.dropped.length} unreadable item(s) skipped, ` : ""}${report.changes.length} value(s) tidied.`
-        : "Board opened.",
+      summary ? `Board opened. ${summary}` : "Board opened.",
       "success",
-      2500,
+      summary ? 5000 : 2500,
     );
   };
 

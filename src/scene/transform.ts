@@ -1,5 +1,5 @@
 import { hasPoints, isLinear } from "./elements";
-import { wrapAngle } from "../shared/limits";
+import { LIMITS, wrapAngle } from "../shared/limits";
 import { getCenter, getCommonBounds, normalizePoints, rotatePoint } from "./geometry";
 import { withDependents } from "./arrange";
 import { withBoundTexts, type Elements } from "./scene";
@@ -97,8 +97,10 @@ export const resizeElement = (
   }
 
   if (el.type === "text") {
-    const s = Math.max(Math.abs(w) / el.width, 0.1);
-    const fontSize = Math.max(4, el.fontSize * s);
+    // source limit: the font size stays inside the stored range, and a wrapped
+    // box grows no further than its text does
+    const s = Math.min(Math.max(Math.abs(w) / el.width, 0.1), LIMITS.fontSizeMax / el.fontSize);
+    const fontSize = Math.min(LIMITS.fontSizeMax, Math.max(4, el.fontSize * s));
     const laid = layoutText({
       ...el,
       fontSize,
@@ -170,6 +172,15 @@ export const resizeGroup = (
   let s = handle.length === 2 ? Math.max(sw, sh) : handle === "e" || handle === "w" ? sw : sh;
   s = Math.max(s, 0.05);
   const scaling = withBoundTexts(elements, ids);
+  // source limit: one scale for everything, clamped so every text keeps a valid size
+  let lo = 0;
+  let hi = Infinity;
+  for (const el of elements) {
+    if (el.type !== "text" || !scaling.has(el.id) || el.locked || !(el.fontSize > 0)) continue;
+    lo = Math.max(lo, LIMITS.fontSizeMin / el.fontSize);
+    hi = Math.min(hi, LIMITS.fontSizeMax / el.fontSize);
+  }
+  if (lo <= hi) s = Math.min(hi, Math.max(lo, s));
   return elements.map((el) => {
     if (!scaling.has(el.id) || el.locked) return el;
     const c = getCenter(el);
@@ -178,7 +189,10 @@ export const resizeGroup = (
     const height = el.height * s;
     let next = { ...el, width, height, x: nc.x - width / 2, y: nc.y - height / 2 } as SceneElement;
     next = scalePoints(next, s, s);
-    if (next.type === "text" && el.type === "text") next = { ...next, fontSize: el.fontSize * s };
+    if (next.type === "text" && el.type === "text") {
+      const fontSize = Math.min(LIMITS.fontSizeMax, Math.max(LIMITS.fontSizeMin, el.fontSize * s));
+      next = { ...next, fontSize };
+    }
     return next;
   });
 };

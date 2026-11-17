@@ -32,3 +32,23 @@ export const wrapAngle = (a: number) => {
   // -0 and values that round to 2π stay in range
   return r >= full || Object.is(r, -0) ? 0 : r;
 };
+
+/**
+ * Source caps for pencil strokes, derived from the element byte cap so a stroke
+ * the app makes can never be too large, whatever its coordinates (fractional
+ * zoom, later resizes) and pressures. A JSON number in the coordinate range is
+ * at most 25 characters (sign, "0.00000" and 17 significant digits), so one
+ * point `{"x":…,"y":…},` is at most 62 bytes and one pressure at most 25.
+ * 8 KiB is kept for the other fields (ids, 32 group ids, a 2,048-character link).
+ */
+const WORST_POINT_BYTES = 62;
+const WORST_PRESSURE_BYTES = 25;
+const ELEMENT_FIELDS_RESERVE = 8 * 1024;
+export const freedrawSourcePoints = (hasPressures: boolean) =>
+  Math.min(
+    LIMITS.freedrawPoints,
+    Math.floor(
+      (LIMITS.elementBytes - ELEMENT_FIELDS_RESERVE) /
+        (WORST_POINT_BYTES + (hasPressures ? WORST_PRESSURE_BYTES : 0)),
+    ),
+  );

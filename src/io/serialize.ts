@@ -1,5 +1,6 @@
 import { normalizeLink } from "../scene/arrange";
 import { PAPER } from "../scene/constants";
+import { isColor } from "../shared/limits";
 import type { FileMap, SceneElement, Theme } from "../scene/types";
 
 export const FILE_TYPE = "chalana";
@@ -77,6 +78,13 @@ const str = (v: unknown, fallback?: string): string => {
   if (fallback !== undefined) return fallback;
   throw new FormatError("An element has an invalid text value.");
 };
+/**
+ * A colour that is a hex colour or "transparent" once trimmed and lower-cased;
+ * anything else becomes the default (plan §3.11). Case is left to
+ * canonicalisation, which reports it.
+ */
+const color = (v: unknown, fallback: string): string =>
+  typeof v === "string" && isColor(v.trim().toLowerCase()) ? v : fallback;
 const points = (v: unknown) => {
   if (!Array.isArray(v) || v.length === 0) throw new FormatError("A path has no points.");
   return v.map((p) => {
@@ -101,8 +109,8 @@ export const parseElement = (raw: unknown): SceneElement => {
     width: num(raw.width),
     height: num(raw.height),
     angle: num(raw.angle, 0),
-    strokeColor: str(raw.strokeColor, "#193a36"),
-    backgroundColor: str(raw.backgroundColor, "transparent"),
+    strokeColor: color(raw.strokeColor, "#193a36"),
+    backgroundColor: color(raw.backgroundColor, "transparent"),
     fillStyle: oneOf(raw.fillStyle, ["hachure", "cross-hatch", "zigzag", "solid"], "hachure"),
     strokeWidth: num(raw.strokeWidth, 2.5),
     strokeStyle: oneOf(raw.strokeStyle, ["solid", "dashed", "dotted"], "solid"),

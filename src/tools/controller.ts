@@ -4,7 +4,7 @@ import {
   liveIds,
   type InteractionBase,
 } from "../scene/rebase";
-import { LIMITS } from "../shared/limits";
+import { LIMITS, freedrawSourcePoints } from "../shared/limits";
 import {
   createFrame,
   createFreedraw,
@@ -896,8 +896,10 @@ export class Controller {
             e.id === it.id ? { ...fromAbsolutePoints(el, it.points), pressures } : e,
           ),
         });
-        // source limit: a very long stroke carries on as a new stroke, same undo step
-        if (it.points.length >= LIMITS.freedrawPoints) {
+        // source limit: a very long stroke carries on as a new stroke, same undo step.
+        // The cap is size-aware (fewer points when pressures are stored), so the
+        // stroke stays under the element byte cap whatever its coordinates.
+        if (it.points.length >= freedrawSourcePoints(it.pressures !== null)) {
           const next = createFreedraw(p.x, p.y, this.state.currentStyle);
           this.claimFrame(it.id);
           this.store.set({ elements: [...this.state.elements, next] });
