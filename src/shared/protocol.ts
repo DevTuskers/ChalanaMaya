@@ -127,3 +127,54 @@ export interface SceneSnapshot {
   tombstones: { id: string; version: number }[];
   files: StoredFile[];
 }
+
+// ------------------------------------------------------------ live sync (§3.6)
+
+/** One applied op as the server sends it to other tabs (versions are the stored ones). */
+export type RemoteOp =
+  | { t: "put"; el: SceneElement; idx: string; version: number; needsLayout?: boolean }
+  | { t: "del"; id: string; version: number }
+  | {
+      t: "settings";
+      settings: { viewBackgroundColor?: string; gridEnabled?: boolean; title?: string };
+    }
+  | { t: "poster"; fileId: string; posterFileId: string }
+  | { t: "fileMeta"; fileId: string; width: number; height: number; durationMs?: number };
+
+export const clientIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
+
+/** Messages a tab sends on its socket. */
+export const clientMessageSchema = (maxOps: number) =>
+  z.discriminatedUnion("type", [
+    z.strictObject({
+      type: z.literal("hello"),
+      clientId: clientIdSchema,
+      sinceRev: z.number().int().nonnegative().optional(),
+    }),
+    z.strictObject({
+      type: z.literal("push"),
+      pushId,
+      baseRev: z.number().int().nonnegative(),
+      ops: z.array(opSchema).max(maxOps),
+      mirrored: z.literal(true).optional(),
+    }),
+    z.strictObject({ type: z.literal("ping") }),
+  ]);
+export type ClientMessage = z.infer<ReturnType<typeof clientMessageSchema>>;
+
+export type ServerMessage =
+  | ({ type: "snapshot" } & SceneSnapshot)
+  | {
+      type: "changes";
+      fromRev: number;
+      rev: number;
+      ops: RemoteOp[];
+      files?: StoredFile[];
+      origin: { kind: "browser" | "agent"; name: string };
+    }
+  | ({ type: "ack" } & Ack)
+  | { type: "error"; code: string; status: number; message: string; pushId?: string }
+  | { type: "pong" };
+
+/** Path of a board's socket. */
+export const SOCKET_PATH_RE = /^\/api\/sessions\/([A-Za-z0-9_-]{24})\/socket$/;

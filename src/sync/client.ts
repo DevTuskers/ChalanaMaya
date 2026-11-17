@@ -8,11 +8,31 @@
  * at a time over REST. Every unacknowledged push is kept in the pending mirror
  * with its original pushId and baseRev, so a reload can replay it safely. On
  * `pagehide` a small batch goes out with `fetch(..., { keepalive: true })`.
+ *
+ * Live sync (phase 3): while a socket is attached, pushes go over it and the
+ * server's `changes` from other tabs and agents come back through `receive`.
+ * Remote ops are applied to the current board by id (Rule B), skipping ids
+ * that are busy here (changed locally and not yet sent, or in a push not yet
+ * acknowledged); a skipped put is kept and applied after the ack if the
+ * server's version is newer than ours. Derived fields (connector ends, label
+ * boxes) are recomputed after every remote change and kept only for busy
+ * elements (Rule F), so tabs converge without echo loops.
  */
 import { assignKeys } from "../shared/keys";
 import { newPushId } from "../shared/ids";
-import type { Ack, Op, SceneSnapshot } from "../shared/protocol";
-import type { SceneElement } from "../scene/types";
+import type {
+  Ack,
+  ClientMessage,
+  Op,
+  RemoteOp,
+  SceneSnapshot,
+  ServerMessage,
+  StoredFile,
+} from "../shared/protocol";
+import type { RemoteChange } from "../scene/rebase";
+import { applyChange } from "../scene/rebase";
+import { finalizeScene } from "../scene/scene";
+import type { LinearElement, SceneElement } from "../scene/types";
 import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
 import type { MirrorBatch, PendingMirror } from "./mirror";
@@ -35,7 +55,43 @@ export interface SyncHost {
   notice(message: string): void;
   /** Ids moved in the layer order since the last call (a reorder hint). */
   takeLayerMoves(): Iterable<string>;
+  /**
+   * Applies a remote change (Rule B): `elements` is the new board, `change`
+   * what the server sent (for the history's remote log). Without it the board
+   * is replaced like `replaceElements`.
+   */
+  applyRemote?(
+    elements: SceneElement[],
+    change: RemoteChange,
+    settings: Partial<SyncSettings> | null,
+    files: readonly StoredFile[],
+  ): void;
 }
+
+/** Sends client messages on the live socket. */
+export interface Link {
+  send(msg: ClientMessage): void;
+}
+
+export interface Timers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(t: unknown): void;
+}
+
+const realTimers: Timers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+};
+
+const MAX_REPAIR_STREAK = 3;
+const TEXT_DERIVED = new Set(["x", "y", "width", "height"]);
+const LINEAR_DERIVED = new Set(["x", "y", "width", "height", "points"]);
+const CONTAINER_DERIVED = new Set(["height"]);
+
+type RemotePut = Extract<RemoteOp, { t: "put" }>;
+
+/** The notice when a change was refused because someone removed the item meanwhile. */
+export const REMOVED_NOTICE = "Someone removed that item, so your change was not kept.";
 
 interface Known {
   el: SceneElement;
@@ -149,8 +205,10 @@ export class SyncClient {
   private rev = 0;
   private queue: QueueItem[] = [];
   private inflight = false;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True while a remote change is being applied to the board. */
+  private applying = false;
+  private timer: unknown = null;
+  private retryTimer: unknown = null;
   private backoff = 0;
   private lastStatus: SaveStatus | null = null;
   private lastProtection: string | null = null;
@@ -160,6 +218,22 @@ export class SyncClient {
   private resyncIds = new Set<string>();
   private resyncAll = false;
   private idleWaiters: (() => void)[] = [];
+  /** the live socket, while connected */
+  private link: Link | null = null;
+  /** the socket was lost (or never came up): the chip says offline */
+  /** last rev seen in order on the socket (for `hello` after a reconnect) */
+  private liveRev = 0;
+  private waiting = new Map<string, { resolve(a: Ack): void; reject(e: unknown): void }>();
+  /** ids in queued or unacknowledged pushes, with how many pushes hold them */
+  private busy = new Map<string, number>();
+  /** remote puts skipped because the id was busy; applied after the ack when newer */
+  private deferred = new Map<string, RemotePut>();
+  /** Rule F: consecutive repairs of an element no local edit is behind. */
+  private repairStreak = new Map<string, number>();
+  /** settings fields in queued or unacknowledged pushes */
+  private busySettings = new Map<string, number>();
+  private readonly timers: Timers;
+  readonly clientId = newPushId();
 
   constructor(
     readonly sessionId: string,
@@ -168,7 +242,9 @@ export class SyncClient {
     private readonly mirror: PendingMirror,
     snapshot: SceneSnapshot,
     pending: readonly MirrorBatch[] = [],
+    opts: { timers?: Timers } = {},
   ) {
+    this.timers = opts.timers ?? realTimers;
     this.settings = { viewBackgroundColor: "", gridEnabled: false, title: "" };
     this.load(snapshot);
     this.adoptPending(pending);
@@ -200,7 +276,7 @@ export class SyncClient {
           if (s.title !== undefined) this.settings.title = s.title;
         }
       }
-      this.queue.push({
+      this.push({
         kind: "ops",
         pushId: b.pushId,
         baseRev: b.baseRev,
@@ -234,6 +310,7 @@ export class SyncClient {
       title: s.title,
     };
     this.rev = s.rev;
+    this.liveRev = s.rev;
   }
 
   /** The layer key the server has for an element (tests and import). */
@@ -249,14 +326,15 @@ export class SyncClient {
    */
   schedule() {
     if (this.stopped) return;
+    if (this.applying) return;
     for (const id of this.host.takeLayerMoves()) this.moves.add(id);
-    this.timer ??= setTimeout(() => this.flush(), THROTTLE_MS);
+    this.timer ??= this.timers.setTimeout(() => this.flush(), THROTTLE_MS);
     this.updateStatus();
   }
 
   /** Diffs the board against the server state and queues the changes. */
   flush(opts: { keepalive?: boolean; exclude?: ReadonlySet<string> } = {}) {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = null;
     if (this.stopped) return;
     const ops = this.diff(opts.exclude);
@@ -346,7 +424,7 @@ export class SyncClient {
       this.tomb.delete(e.el.id);
     }
     this.order = this.host.scene().elements.filter((e) => this.known.has(e.id));
-    this.queue.push({ kind: "import", body, sent: false });
+    this.push({ kind: "import", body, sent: false });
     this.pump(false);
     this.updateStatus();
     return true;
@@ -354,10 +432,342 @@ export class SyncClient {
 
   /** Stops timers (the app is going away). */
   dispose() {
-    if (this.timer) clearTimeout(this.timer);
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
+    if (this.retryTimer) this.timers.clearTimeout(this.retryTimer);
     this.timer = null;
     this.retryTimer = null;
+  }
+
+  // ---------------------------------------------------------------- live sync
+
+  /** The first message on a new socket: who we are and the last rev we saw. */
+  hello(): ClientMessage {
+    return { type: "hello", clientId: this.clientId, sinceRev: this.liveRev };
+  }
+
+  /**
+   * A socket is open (hello already sent). Unacknowledged pushes are resent
+   * with their pushIds; the server answers a repeat with the stored ack.
+   */
+  attach(link: Link) {
+    this.link = link;
+    if (this.retryTimer) this.timers.clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.backoff = 0;
+    this.pump(false);
+    this.updateStatus();
+  }
+
+  /** The socket closed: pushes waiting for an ack are retried (same pushId). */
+  detach() {
+    this.link = null;
+    const w = [...this.waiting.values()];
+    this.waiting.clear();
+    for (const p of w) p.reject(new ApiError(0, "network", "the connection was lost"));
+    this.updateStatus();
+  }
+
+  get connected() {
+    return this.link !== null;
+  }
+
+  /** A message from the server on the socket. */
+  receive(msg: ServerMessage) {
+    switch (msg.type) {
+      case "ack": {
+        this.liveRev = Math.max(this.liveRev, msg.rev);
+        const w = this.waiting.get(msg.pushId);
+        if (w) {
+          this.waiting.delete(msg.pushId);
+          const ack: Partial<typeof msg> = { ...msg };
+          delete ack.type;
+          w.resolve(ack as Ack);
+        }
+        return;
+      }
+      case "error": {
+        const w = msg.pushId ? this.waiting.get(msg.pushId) : undefined;
+        if (w) {
+          this.waiting.delete(msg.pushId!);
+          w.reject(new ApiError(msg.status, msg.code, msg.message));
+        } else if (msg.status === 404) {
+          this.stopped = "gone";
+          this.host.notice("This board no longer exists on the server, so changes are not saved.");
+          this.updateStatus();
+        }
+        return;
+      }
+      case "pong":
+        return;
+      case "snapshot": {
+        this.liveRev = Math.max(this.liveRev, msg.rev);
+        this.rev = Math.max(this.rev, msg.rev);
+        const ops: RemoteOp[] = [
+          { t: "settings", settings: { ...msg.settings, title: msg.title } },
+        ];
+        const present = new Set<string>();
+        for (const e of msg.elements) {
+          present.add(e.el.id);
+          ops.push({
+            t: "put",
+            el: e.el,
+            idx: e.idx,
+            version: e.version,
+            needsLayout: e.needsLayout,
+          });
+        }
+        const tombs = new Map(msg.tombstones.map((t) => [t.id, t.version]));
+        for (const [id, k] of this.known)
+          if (!present.has(id) && !this.busy.has(id))
+            ops.push({ t: "del", id, version: tombs.get(id) ?? k.version + 1 });
+        this.applyRemote(ops, msg.files);
+        this.updateStatus();
+        return;
+      }
+      case "changes": {
+        this.liveRev = Math.max(this.liveRev, msg.rev);
+        this.rev = Math.max(this.rev, msg.rev);
+        this.applyRemote(msg.ops, msg.files ?? []);
+        this.updateStatus();
+        return;
+      }
+    }
+  }
+
+  /** True when the id has local changes the server has not acknowledged. */
+  isBusy(id: string) {
+    if (this.busy.has(id)) return true;
+    const el = this.host.scene().elements.find((e) => e.id === id);
+    return this.isDirty(id, el);
+  }
+
+  /**
+   * True when the board's element differs from the confirmed one only in
+   * fields other elements derive (a container's height from its label, a
+   * label's box, a bound connector's path): such an element takes remote
+   * edits, and Rule F recomputes the derived fields afterwards.
+   */
+  private derivedOnly(el: SceneElement | undefined, id: string) {
+    const k = this.known.get(id);
+    if (!el || !k) return false;
+    const fields =
+      el.type === "text" && el.containerId
+        ? TEXT_DERIVED
+        : (el.type === "arrow" || el.type === "line") &&
+            ((el as LinearElement).startBinding || (el as LinearElement).endBinding)
+          ? LINEAR_DERIVED
+          : CONTAINER_DERIVED;
+    const a = el as unknown as Record<string, unknown>;
+    const b = k.el as unknown as Record<string, unknown>;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
+      if (!fields.has(key) && JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false;
+    return true;
+  }
+
+  private isDirty(id: string, el: SceneElement | undefined) {
+    const k = this.known.get(id);
+    return el ? !k || toJson(el) !== k.json : k !== undefined;
+  }
+
+  /**
+   * Rule B + Rule F: applies remote ops to the current board by id. Busy ids
+   * are skipped in the board (their confirmed state still moves forward);
+   * then derived fields are recomputed for the touched ids and kept only for
+   * elements that are busy here, which then go out as ordinary puts.
+   */
+  applyRemote(ops: readonly RemoteOp[], files: readonly StoredFile[] = []) {
+    if (this.stopped === "gone") return;
+    const { elements, settings: local } = this.host.scene();
+    const byId = new Map<string, SceneElement>();
+    for (const e of elements) byId.set(e.id, e);
+    const dirty = new Map<string, boolean>();
+    const busyNow = (id: string) => {
+      if (this.busy.has(id)) return true;
+      let d = dirty.get(id);
+      if (d === undefined) dirty.set(id, (d = this.isDirty(id, byId.get(id))));
+      return d;
+    };
+    const upserts: SceneElement[] = [];
+    const deletes: string[] = [];
+    const keys = new Map<string, string>();
+    const log: { upserts: SceneElement[]; deletes: string[]; keys: Map<string, string> } = {
+      upserts: [],
+      deletes: [],
+      keys: new Map(),
+    };
+    const touched = new Set<string>();
+    const layout: string[] = [];
+    let settings: Partial<SyncSettings> | null = null;
+    for (const op of ops) {
+      if (op.t === "put") {
+        const id = op.el.id;
+        const t = this.tomb.get(id);
+        if (t !== undefined && t >= op.version) continue; // we know of a later delete
+        touched.add(id);
+        if (this.busy.has(id)) {
+          const d = this.deferred.get(id);
+          if (!d || d.version < op.version) this.deferred.set(id, op);
+          continue;
+        }
+        const k = this.known.get(id);
+        if (k && k.version > op.version) continue; // older than what we have
+        const json0 = toJson(op.el);
+        if (k && k.json === json0 && this.keys.get(id) === op.idx) {
+          // our own write coming back (a REST push or import while the socket was up)
+          k.version = Math.max(k.version, op.version);
+          continue;
+        }
+        const wasDirty = busyNow(id) && !this.derivedOnly(byId.get(id), id);
+        const prevKey = this.keys.get(id);
+        const json = json0;
+        this.known.set(id, { el: op.el, json, version: op.version });
+        this.keys.set(id, op.idx);
+        this.tomb.delete(id);
+        log.upserts.push(op.el);
+        log.keys.set(id, op.idx);
+        // a local edit not sent yet wins: it goes out with this version as its base
+        if (wasDirty) continue;
+        const cur = byId.get(id);
+        if (op.needsLayout) layout.push(id);
+        if (cur && toJson(cur) === json && prevKey === op.idx) continue;
+        upserts.push(op.el);
+        if (!cur || prevKey !== op.idx) keys.set(id, op.idx);
+      } else if (op.t === "del") {
+        const k = this.known.get(op.id);
+        if (k && !this.busy.has(op.id) && k.version >= op.version) continue;
+        if (!k && !byId.has(op.id) && this.tomb.has(op.id)) {
+          // gone here already (our own delete coming back): nothing to replay on undo
+          this.tomb.set(op.id, Math.max(op.version, this.tomb.get(op.id)!));
+          this.deferred.delete(op.id);
+          continue;
+        }
+        touched.add(op.id);
+        // deleting wins over local edits (in-flight puts are refused by the server)
+        this.known.delete(op.id);
+        this.keys.delete(op.id);
+        this.deferred.delete(op.id);
+        this.tomb.set(op.id, Math.max(op.version, this.tomb.get(op.id) ?? 0));
+        log.deletes.push(op.id);
+        if (byId.has(op.id)) deletes.push(op.id);
+      } else if (op.t === "settings") {
+        for (const f of ["viewBackgroundColor", "gridEnabled", "title"] as const) {
+          const v = op.settings[f];
+          if (v === undefined || this.busySettings.has(f)) continue;
+          const dirtyField = local[f] !== this.settings[f];
+          (this.settings as unknown as Record<string, unknown>)[f] = v;
+          if (!dirtyField && local[f] !== v)
+            (settings ??= {} as Record<string, unknown>)[f] = v as never;
+        }
+      }
+    }
+    const next = applyChange(elements, { upserts, deletes, keys }, (id) => this.keys.get(id));
+    let final = next;
+    let repaired = false;
+    if (next !== elements && touched.size) {
+      final = this.repair(next, touched, busyNow);
+      repaired = final !== next;
+    }
+    if (layout.length) final = this.layoutCorrection(final, layout);
+    const changed =
+      final !== elements || log.upserts.length || log.deletes.length || settings || files.length;
+    if (changed) {
+      // nothing to send for a remote change, so a watching tab does not flash "Saving"
+      this.applying = true;
+      try {
+        if (this.host.applyRemote) this.host.applyRemote(final, log, settings, files);
+        else if (final !== elements) this.host.replaceElements(final);
+      } finally {
+        this.applying = false;
+      }
+    }
+    this.order = final.filter((e) => this.known.has(e.id));
+    if (repaired) this.schedule();
+  }
+
+  /** Rule F: recompute derived fields after a remote change; keep them for busy elements only. */
+  private repair(
+    next: SceneElement[],
+    touched: ReadonlySet<string>,
+    busyNow: (id: string) => boolean,
+  ): SceneElement[] {
+    const fin = finalizeScene(next, touched);
+    if (fin === next) return next;
+    const finById = new Map(fin.map((e) => [e.id, e]));
+    const busyLabelHosts = new Set<string>();
+    for (const e of next)
+      if (e.type === "text" && e.containerId && busyNow(e.id)) busyLabelHosts.add(e.containerId);
+    const present = new Set(next.map((e) => e.id));
+    // a reference to an item removed meanwhile is cleared the same way in every tab
+    const dangling = (el: SceneElement) => {
+      const l = el as Partial<LinearElement> & { containerId?: string | null };
+      return (
+        (l.startBinding && !present.has(l.startBinding.elementId)) ||
+        (l.endBinding && !present.has(l.endBinding.elementId)) ||
+        (l.containerId && !present.has(l.containerId))
+      );
+    };
+    let any = false;
+    const out = next.map((el) => {
+      const f = finById.get(el.id);
+      if (!f || f === el) {
+        if (touched.has(el.id)) this.repairStreak.delete(el.id);
+        return el;
+      }
+      if (busyNow(el.id) || busyLabelHosts.has(el.id) || dangling(el)) {
+        any = true;
+        return f;
+      }
+      // Stale derived fields that arrived from elsewhere (two tabs each moved
+      // one end, or one moved a box while the other restyled its label): every
+      // tab computes the same repair, so sending it converges. A tab whose
+      // repair keeps being overwritten (different text metrics) stops after
+      // a few rounds instead of fighting.
+      const streak = this.repairStreak.get(el.id) ?? 0;
+      if (streak < MAX_REPAIR_STREAK) {
+        this.repairStreak.set(el.id, streak + 1);
+        any = true;
+        return f;
+      }
+      return el;
+    });
+    return any ? out : next;
+  }
+
+  /**
+   * The `needs_layout` correction (§3.6): a text the server laid out with
+   * estimated metrics is measured here and sent back as a layout-only put.
+   */
+  private layoutCorrection(scene: SceneElement[], ids: readonly string[]): SceneElement[] {
+    const fin = finalizeScene(scene, ids);
+    const finById = new Map(fin.map((e) => [e.id, e]));
+    const want = new Set(ids);
+    for (const id of ids) {
+      const el = finById.get(id);
+      if (el && el.type === "text" && el.containerId) want.add(el.containerId);
+    }
+    const ops: Op[] = [];
+    const out = scene.map((el) => {
+      if (!want.has(el.id)) return el;
+      const f = finById.get(el.id) ?? el;
+      const k = this.known.get(el.id);
+      if (!k) return el;
+      if (f === el && !ids.includes(el.id)) return el;
+      ops.push({
+        t: "put",
+        el: f,
+        idx: this.keys.get(el.id)!,
+        baseVersion: k.version,
+        layout: true,
+      });
+      this.known.set(el.id, { el: f, json: toJson(f), version: k.version + 1 });
+      return f;
+    });
+    if (ops.length) {
+      this.enqueue(ops);
+      this.writeMirror();
+      this.pump(false);
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------- internals
@@ -445,7 +855,58 @@ export class SyncClient {
   }
 
   private enqueue(ops: Op[]) {
-    this.queue.push({ kind: "ops", pushId: newPushId(), baseRev: this.rev, ops, sent: false });
+    this.push({ kind: "ops", pushId: newPushId(), baseRev: this.rev, ops, sent: false });
+  }
+
+  private itemIds(item: QueueItem): { ids: string[]; settings: string[] } {
+    if (item.kind === "import")
+      return {
+        ids: item.body.elements.map((e) => (e.el as SceneElement).id),
+        settings: Object.keys(item.body.settings ?? {}),
+      };
+    const ids: string[] = [];
+    const settings: string[] = [];
+    for (const o of item.ops)
+      if (o.t === "put") ids.push(o.el.id);
+      else if (o.t === "del") ids.push(o.id);
+      else if (o.t === "settings") settings.push(...Object.keys(o.settings));
+    return { ids, settings };
+  }
+
+  private track(item: QueueItem, delta: 1 | -1) {
+    const { ids, settings } = this.itemIds(item);
+    for (const [map, list] of [
+      [this.busy, ids],
+      [this.busySettings, settings],
+    ] as const)
+      for (const id of list) {
+        const n = (map.get(id) ?? 0) + delta;
+        if (n > 0) map.set(id, n);
+        else map.delete(id);
+      }
+  }
+
+  private push(item: QueueItem) {
+    this.queue.push(item);
+    this.track(item, 1);
+  }
+
+  /** Drops the first queue item; returns deferred remote puts now due (Rule B). */
+  private shift(ack: Ack | null): RemoteOp[] {
+    const item = this.queue.shift();
+    if (!item) return [];
+    this.track(item, -1);
+    const due: RemoteOp[] = [];
+    const rejected = new Set(ack?.rejected.map((r) => r.id));
+    for (const id of this.itemIds(item).ids) {
+      const d = this.deferred.get(id);
+      if (!d || this.busy.has(id)) continue;
+      this.deferred.delete(id);
+      if (!ack || rejected.has(id)) continue; // the resync takes the server's version
+      const mine = ack.versions[id] ?? 0;
+      if (d.version > mine || (ack.duplicate && d.version >= mine)) due.push(d);
+    }
+    return due;
   }
 
   private writeMirror() {
@@ -477,23 +938,49 @@ export class SyncClient {
       // mirrored with its pushId before it leaves
       this.writeMirror();
     }
+    const viaSocket = item.kind === "ops" && !keepalive && this.link !== null;
     const req =
       item.kind === "import"
         ? this.api.importScene(this.sessionId, item.body)
-        : this.api.push(
-            this.sessionId,
-            {
+        : viaSocket
+          ? this.sendLive({
               pushId: item.pushId,
               baseRev: item.baseRev,
               ops: item.ops,
               ...(item.mirrored ? { mirrored: true as const } : {}),
-            },
-            { keepalive: keepalive && jsonBytes(item.ops) <= KEEPALIVE_BYTES },
-          );
+            })
+          : this.api.push(
+              this.sessionId,
+              {
+                pushId: item.pushId,
+                baseRev: item.baseRev,
+                ops: item.ops,
+                ...(item.mirrored ? { mirrored: true as const } : {}),
+              },
+              { keepalive: keepalive && jsonBytes(item.ops) <= KEEPALIVE_BYTES },
+            );
     req.then(
       (ack) => this.onAck(item, ack),
       (err: unknown) => this.onError(item, err),
     );
+  }
+
+  private sendLive(body: {
+    pushId: string;
+    baseRev: number;
+    ops: Op[];
+    mirrored?: true;
+  }): Promise<Ack> {
+    const link = this.link!;
+    return new Promise<Ack>((resolve, reject) => {
+      this.waiting.set(body.pushId, { resolve, reject });
+      try {
+        link.send({ type: "push", ...body });
+      } catch (e) {
+        this.waiting.delete(body.pushId);
+        reject(new ApiError(0, "network", String(e)));
+      }
+    });
   }
 
   private onAck(item: QueueItem, ack: Ack) {
@@ -510,6 +997,20 @@ export class SyncClient {
       const v = ack.versions[el.id];
       const k = this.known.get(el.id);
       if (v !== undefined && k && k.el === el && !rejected.has(el.id)) k.version = v;
+    }
+    const revived: RemoteOp[] = [];
+    if (item.kind === "ops") {
+      // A put that landed after a remote delete we already applied (someone
+      // put the item back in between, so the server took it): the server holds
+      // our version, so it comes back on this board too.
+      for (const o of item.ops) {
+        if (o.t !== "put" || rejected.has(o.el.id) || this.known.has(o.el.id)) continue;
+        const v = ack.versions[o.el.id];
+        const t = this.tomb.get(o.el.id);
+        if (v === undefined || (t !== undefined && t >= v)) continue;
+        this.tomb.delete(o.el.id);
+        revived.push({ t: "put", el: o.el, idx: o.idx, version: v });
+      }
     }
     if (item.kind === "ops") {
       for (const o of item.ops)
@@ -535,11 +1036,14 @@ export class SyncClient {
       } else {
         for (const id of rejected) this.resyncIds.add(id);
         this.host.notice(
-          `${ack.rejected.length === 1 ? "A change was" : `${ack.rejected.length} changes were`} refused by the server (${r.message ?? r.reason}) and undone.`,
+          ack.rejected.every((x) => x.reason === "deleted")
+            ? REMOVED_NOTICE
+            : `${ack.rejected.length === 1 ? "A change was" : `${ack.rejected.length} changes were`} refused by the server (${r.message ?? r.reason}) and undone.`,
         );
       }
     }
-    this.queue.shift();
+    const due = this.shift(ack);
+    if (due.length || revived.length) this.applyRemote([...revived, ...due]);
     this.afterSettled();
   }
 
@@ -549,7 +1053,7 @@ export class SyncClient {
     if (e.retry) {
       this.offline = true;
       this.backoff = Math.min(15000, this.backoff ? this.backoff * 2 : 1000);
-      this.retryTimer = setTimeout(() => {
+      this.retryTimer = this.timers.setTimeout(() => {
         this.retryTimer = null;
         this.pump(false);
       }, this.backoff);
@@ -564,7 +1068,7 @@ export class SyncClient {
       this.host.notice(`The server could not save: ${e.message}`);
     } else {
       // refused for good (for example too large): drop it and take the server's version
-      this.queue.shift();
+      this.shift(null);
       if (item.kind === "import") this.resyncAll = true;
       else
         for (const o of item.ops)

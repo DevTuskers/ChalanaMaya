@@ -1,5 +1,6 @@
 import { DEFAULT_STYLE, PAPER } from "../scene/constants";
 import { History, type Snapshot } from "../scene/history";
+import { RemoteLog, type RemoteChange } from "../scene/rebase";
 import { finalizeScene } from "../scene/scene";
 import type { FileMap, ItemStyle, SceneElement, Theme, Viewport } from "../scene/types";
 
@@ -192,6 +193,14 @@ export class Store {
   /** Uploads a picture to the session; unset outside a session (data URLs). */
   uploadFile: ((blob: Blob) => Promise<{ id: string; url: string; mime: string }>) | null = null;
 
+  /** Remote changes applied to this board, for lazy rebasing of older snapshots (Rule C). */
+  readonly remoteLog = new RemoteLog();
+  /** Layer key of an element as the server has it (set by the sync client). */
+  keyOf: ((id: string) => string | undefined) | undefined = undefined;
+  /** How often a stale scene was caught and rebased in `set` (tests). */
+  staleRestores = 0;
+  private snapSeq = new WeakMap<readonly SceneElement[], number>();
+
   constructor(state: AppState = initialState()) {
     this.state = state;
   }
@@ -207,6 +216,18 @@ export class Store {
 
   set(patch: Partial<AppState>) {
     const prev = this.state;
+    if (patch.elements !== undefined && patch.elements !== prev.elements) {
+      // removal guard: a scene taken before remote changes (a snapshot being
+      // restored) gets them replayed, so restoring never drops others' work
+      const seq = this.snapSeq.get(patch.elements);
+      if (seq !== undefined && seq < this.remoteLog.head) {
+        const rebased = this.remoteLog.rebase(patch.elements, seq, this.keyOf);
+        if (rebased !== patch.elements) {
+          this.staleRestores += 1;
+          patch = { ...patch, elements: rebased };
+        }
+      }
+    }
     this.state = { ...prev, ...patch };
     if (patch.elements !== undefined || patch.files !== undefined) {
       if (patch.elements !== undefined && patch.elements !== prev.elements) {
@@ -221,7 +242,36 @@ export class Store {
   }
 
   snapshot(): Snapshot {
-    return { elements: this.state.elements, files: this.state.files };
+    const seq = this.remoteLog.head;
+    if (!this.snapSeq.has(this.state.elements)) this.snapSeq.set(this.state.elements, seq);
+    return { elements: this.state.elements, files: this.state.files, seq };
+  }
+
+  /** The elements of a snapshot with every later remote change applied (Rule C). */
+  rebase(snap: Snapshot): readonly SceneElement[] {
+    const seq = snap.seq ?? this.snapSeq.get(snap.elements);
+    if (seq === undefined || seq >= this.remoteLog.head) return snap.elements;
+    return this.remoteLog.rebase(snap.elements, seq, this.keyOf);
+  }
+
+  /**
+   * Rule B: a remote change. `elements` is the scene with the change already
+   * applied (busy ids skipped); `change` is what the server sent, logged so
+   * snapshots taken earlier are rebased when restored. No history step and no
+   * local-change callback beyond the save path's diff (which finds nothing
+   * new except Rule F repairs).
+   */
+  applyRemote(
+    elements: readonly SceneElement[],
+    change: RemoteChange,
+    patch: Partial<AppState> = {},
+  ) {
+    if (change.upserts.length || change.deletes.length) this.remoteLog.append(change);
+    const editing = this.state.editingTextId;
+    const extra: Partial<AppState> = {};
+    if (editing && change.deletes.includes(editing) && !elements.some((e) => e.id === editing))
+      extra.editingTextId = null;
+    this.set({ ...patch, ...extra, elements });
   }
 
   /** Records the current scene in history, then applies new elements. */
@@ -264,7 +314,7 @@ export class Store {
     if (!prev) return false;
     for (const id of prev.moves ?? []) this.layerMoves.add(id);
     this.set({
-      elements: prev.elements,
+      elements: this.rebase(prev),
       files: this.sessionMode ? this.state.files : prev.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,
@@ -278,7 +328,7 @@ export class Store {
     if (!next) return false;
     for (const id of next.moves ?? []) this.layerMoves.add(id);
     this.set({
-      elements: next.elements,
+      elements: this.rebase(next),
       files: this.sessionMode ? this.state.files : next.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,

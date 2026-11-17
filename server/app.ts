@@ -12,6 +12,7 @@ import { appOrigins, ROOT_DIR, type Config } from "./config";
 import { openDatabase, type DB } from "./db/schema";
 import { crossSiteGuard, crossSiteReason } from "./security/csrf";
 import { appHeaders, baseHeaders } from "./security/headers";
+import { createSyncHub, type SyncHub } from "./sync/socket";
 import { checkUpgradeHost, hostCheck, sendRefusal } from "./security/host";
 import { rateLimiters, redactIds } from "./security/rateLimit";
 import { SessionService } from "./sessions/service";
@@ -29,6 +30,7 @@ export interface AppHandle {
   app: Express;
   service: SessionService;
   db: DB;
+  hub: SyncHub;
   /** call after the HTTP server exists (dev mode mounts Vite on it) */
   attach(server: Server): Promise<void>;
   /**
@@ -53,6 +55,7 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
     mediaDir: path.join(cfg.dataDir, "media"),
   });
   const limiters = rateLimiters(cfg.rateLimits);
+  const hub = createSyncHub(service, { limits: cfg.limits });
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", cfg.trustProxy);
@@ -134,6 +137,7 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
     app,
     service,
     db,
+    hub,
     async attach(server: Server) {
       timer = setInterval(() => {
         try {
@@ -165,11 +169,12 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
         socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         return;
       }
-      // no socket endpoints yet: live sync arrives in phase 3
+      if (hub.handleUpgrade(req, socket, head)) return;
       socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
     },
     close() {
       if (timer) clearInterval(timer);
+      hub.close();
       void vite?.close();
       db.close();
     },

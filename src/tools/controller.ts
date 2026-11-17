@@ -581,7 +581,7 @@ export class Controller {
     this.setOverlay({ pathStart: null });
     const el = this.state.elements.find((e) => e.id === it.id) as LinearElement | undefined;
     if (!el || fixed.length < 2) {
-      this.store.set({ elements: it.before.elements });
+      this.store.set({ elements: this.store.rebase(it.before) });
       return;
     }
     const finished: LinearElement = { ...fromAbsolutePoints(el, fixed), closed };
@@ -789,7 +789,7 @@ export class Controller {
       const elements = this.state.elements.filter((e) => e.id !== id);
       if (session?.isNew) {
         this.store.set({
-          elements: session.before.elements,
+          elements: this.store.rebase(session.before),
           editingTextId: null,
           tool: "pick",
           selectedIds: select(el.containerId),
@@ -1068,7 +1068,7 @@ export class Controller {
         const el = this.find(it.id);
         const zoom = this.state.viewport.zoom;
         if (!el || (el.width * zoom < 3 && el.height * zoom < 3)) {
-          this.store.set({ elements: it.before.elements });
+          this.store.set({ elements: this.store.rebase(it.before) });
           return;
         }
         if (it.kind === "frame") this.store.updateElements(assignFrames(this.state.elements));
@@ -1082,7 +1082,7 @@ export class Controller {
         const el = this.find(it.id) as LinearElement | undefined;
         const zoom = this.state.viewport.zoom;
         if (!el || distance(it.origin, p) * zoom < 4) {
-          this.store.set({ elements: it.before.elements });
+          this.store.set({ elements: this.store.rebase(it.before) });
           return;
         }
         const target = bindingTargetAt(this.state.elements, p, new Set([it.id]));
@@ -1259,7 +1259,7 @@ export class Controller {
       it.kind === "freedraw" ||
       it.kind === "endpoint"
     ) {
-      this.store.set({ elements: it.before.elements });
+      this.store.set({ elements: this.store.rebase(it.before) });
     }
     this.interaction = { kind: "none" };
     this.setOverlay({ bindingTargetId: null, selectionBox: null });

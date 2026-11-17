@@ -9,6 +9,8 @@ import {
   expectCount,
   expectOnBoard,
   freshBoard,
+  noLive,
+  pendingMirrors,
   serverBoard,
   sessionId,
   settled,
@@ -52,6 +54,7 @@ test("an edit made just before a reload is not lost", async ({ page }) => {
 });
 
 test("edits made while the server is unreachable are kept and sent later", async ({ page }) => {
+  await noLive(page);
   await freshBoard(page);
   await page.route("**/api/sessions/*/ops", (r) => r.abort());
   await drawRect(page);
@@ -60,16 +63,12 @@ test("edits made while the server is unreachable are kept and sent later", async
   });
   // the pending change is mirrored locally
   const id = sessionId(page);
-  await expect
-    .poll(() => page.evaluate((sid) => localStorage.getItem(`chalanamaya.pending.${sid}`), id))
-    .not.toBeNull();
+  await expect.poll(() => pendingMirrors(page, id)).toBe(1);
   await page.unroute("**/api/sessions/*/ops");
   await page.reload();
   await expectOnBoard(page, 1);
   expect((await serverBoard(page)).elements).toHaveLength(1);
-  await expect
-    .poll(() => page.evaluate((sid) => localStorage.getItem(`chalanamaya.pending.${sid}`), id))
-    .toBeNull();
+  await expect.poll(() => pendingMirrors(page, id)).toBe(0);
 });
 
 test("session menu: title, ids, new board and recent boards", async ({ page, context }) => {
@@ -112,6 +111,7 @@ test("a bad or unknown board address gets a clear page", async ({ page }) => {
 });
 
 test("a 1,000-item move is saved in chunks", async ({ page }) => {
+  await noLive(page);
   await freshBoard(page);
   const id = sessionId(page);
   const keys = generateNKeysBetween(null, null, 1000);
@@ -314,6 +314,7 @@ for (const block of ["abort", "429"] as const) {
   test(`a board opens while the server refuses saves during the reload (${block})`, async ({
     page,
   }) => {
+    await noLive(page);
     await freshBoard(page);
     const refuse = (r: import("@playwright/test").Route) =>
       block === "abort"
@@ -344,9 +345,7 @@ for (const block of ["abort", "429"] as const) {
     await page.reload();
     await expectOnBoard(page, 1);
     const id = sessionId(page);
-    await expect
-      .poll(() => page.evaluate((sid) => localStorage.getItem(`chalanamaya.pending.${sid}`), id))
-      .toBeNull();
+    await expect.poll(() => pendingMirrors(page, id)).toBe(0);
   });
 }
 

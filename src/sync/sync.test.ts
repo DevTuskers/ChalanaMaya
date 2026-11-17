@@ -23,6 +23,7 @@ import {
   fitMirror,
   mirrorSize,
   mirrorKey,
+  tabId,
   type MirrorBatch,
   type MirrorData,
 } from "./mirror";
@@ -839,5 +840,46 @@ describe("a refused import", () => {
     expect(steps()).toBe(1);
     expect(store.undo()).toBe(true);
     expect(store.history.canUndo).toBe(false);
+  });
+});
+
+describe("per-tab pending mirror (phase 3)", () => {
+  const put = (x: number): Op => ({
+    t: "put",
+    el: { ...createShape("rectangle", x, 0) } as SceneElement,
+    idx: "a0",
+    baseVersion: 0,
+  });
+
+  it("two tabs on one board keep separate mirrors", () => {
+    const s = memory();
+    const a = new PendingMirror(s, SID, undefined, "tabAAAAAAAAA");
+    const b = new PendingMirror(s, SID, undefined, "tabBBBBBBBBB");
+    a.write([], [put(1)]);
+    b.write([], [put(2)]);
+    // b settling must not wipe a's pending change
+    b.write([], []);
+    expect(a.read()!.unsent).toHaveLength(1);
+    expect(b.read()).toBeNull();
+    expect(s.data.has(mirrorKey(SID, "tabAAAAAAAAA"))).toBe(true);
+  });
+
+  it("a board-wide mirror from before the update is taken over by a tab", () => {
+    const s = memory();
+    new PendingMirror(s, SID).write([], [put(1)]);
+    const a = new PendingMirror(s, SID, undefined, "tabAAAAAAAAA");
+    expect(a.read()!.unsent).toHaveLength(1);
+    a.write([], [put(1)]);
+    expect(s.data.has(mirrorKey(SID))).toBe(false);
+    a.clear();
+    expect(a.read()).toBeNull();
+  });
+
+  it("the tab id is kept in session storage", () => {
+    const ss = memory();
+    const id = tabId(ss);
+    expect(id).toMatch(/^[A-Za-z0-9_-]{12}$/);
+    expect(tabId(ss)).toBe(id);
+    expect(tabId(memory())).not.toBe(id);
   });
 });

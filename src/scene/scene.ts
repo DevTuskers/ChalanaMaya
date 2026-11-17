@@ -27,7 +27,11 @@ export const syncBoundTexts = (elements: Elements, scope?: Set<string>): SceneEl
     if (!isBoundText(el)) continue;
     if (scope && !scope.has(el.id) && !scope.has(el.containerId!)) continue;
     let container = updates.get(el.containerId!) ?? map.get(el.containerId!);
-    if (!container) continue;
+    if (!container) {
+      // its box went away (removed in another tab meanwhile): keep the words as free text
+      updates.set(el.id, { ...el, containerId: null });
+      continue;
+    }
     const font = fontString(el.fontFamily, el.fontSize);
     if (isLinear(container)) {
       // connector label: sits on the middle of the drawn path, never moves endpoints

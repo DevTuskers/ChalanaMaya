@@ -8,6 +8,8 @@ export interface Snapshot {
    * order (a reorder hint). Undo and redo of that step send the same ids.
    */
   moves?: readonly string[];
+  /** Remote-log position when taken; restoring replays later remote changes (Rule C). */
+  seq?: number;
 }
 
 /**

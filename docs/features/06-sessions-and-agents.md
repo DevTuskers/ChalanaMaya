@@ -1,6 +1,6 @@
 # Sessions and agents
 
-Status: SESS-10 is done (phase 1b, server-side limits); SESS-01, SESS-02, SESS-03, SESS-05, SESS-06 and SESS-08 are done (phase 2, one tab per board; live sync between tabs is SESS-04, phase 3); SESS-07 is partly done (the save status and offline protection; live connection status comes with phase 3); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: SESS-10 is done (phase 1b, server-side limits); SESS-01, SESS-02, SESS-03, SESS-05, SESS-06 and SESS-08 are done (phase 2); SESS-04 and SESS-07 are done (phase 3, live sync between tabs); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 A **board session** is one board with its own address. People in browser tabs and agents that use ChalanaMaya's MCP server work on the same session at the same time. This is board-session sync, not the collaboration features listed in [out of scope](../out-of-scope.md).
 
@@ -39,7 +39,7 @@ Acceptance criteria:
 
 ## SESS-04 — Live board sync
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 3, between tabs; agent writes over REST show up live, MCP comes with phase 4; evidence `e2e/sync.spec.ts`, `src/sync/convergence.test.ts`, `server/socket.test.ts`)
 
 Changes from any tab or agent on the same session show up everywhere without reloading.
 
@@ -80,7 +80,7 @@ Acceptance criteria:
 
 ## SESS-07 — Connection status
 
-**Priority: P1** · **Status: partly done** (phase 2: Saved, Saving and Not saved, offline changes kept across a reload, a deleted board is reported; live connection status in phase 3)
+**Priority: P1** · **Status: done** (phase 2: Saved, Saving and Not saved, offline changes kept across a reload, a deleted board is reported; phase 3: Offline while the server cannot be reached, offline edits sent on reconnect; evidence `e2e/sync.spec.ts`, `e2e/sessions.spec.ts`)
 
 Show whether the board is saved and live.
 

@@ -8,7 +8,8 @@ import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene } from "./sync/client";
 import { inlineFiles, usedFileIds } from "./sync/files";
 import { importIntoSession } from "./sync/importBoard";
-import { PendingMirror } from "./sync/mirror";
+import { LiveChannel, socketUrl } from "./sync/live";
+import { PendingMirror, tabId } from "./sync/mirror";
 import { boardLabel, rememberBoard } from "./sync/recent";
 import type { FileMap } from "./scene/types";
 import { readPasteEvent } from "./io/clipboard";
@@ -153,13 +154,18 @@ const createStore = (boot: SessionBoot) => {
   const store = new Store(state);
   store.sessionMode = true;
   store.uploadFile = async (blob) => {
+    // media needs the server: refused while offline instead of queued (§3.6)
+    if (store.get().saveStatus === "offline") throw new Error(OFFLINE_MEDIA);
     const up = await httpApi.upload(boot.id, blob);
     return { id: up.file_id, url: up.url, mime: up.mime };
   };
   return store;
 };
 
-/** The save state of the board: Saved, Saving or Not saved. */
+const OFFLINE_MEDIA =
+  "you are offline. Pictures and media can be added when the connection is back";
+
+/** The save state of the board: Saved, Saving or Offline. */
 const SaveStatusChip = () => {
   const status = useAppState((s) => s.saveStatus);
   const label =
@@ -168,7 +174,7 @@ const SaveStatusChip = () => {
       : status === "saving"
         ? "Saving…"
         : status === "offline"
-          ? "Not saved — retrying"
+          ? "Offline — your changes will be sent when the connection is back"
           : status === "gone"
             ? "Not saved — board deleted"
             : "Not saved — server storage full";
@@ -180,7 +186,7 @@ const SaveStatusChip = () => {
       role="status"
       title={
         status === "offline"
-          ? "The server could not be reached. Changes are kept in this browser and sent when it is back."
+          ? "The server could not be reached. Changes are kept in this browser and sent when the connection is back."
           : undefined
       }
     >
@@ -327,6 +333,23 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             };
           },
           replaceElements: (elements) => store.set({ elements }),
+          applyRemote: (elements, change, settings, files) => {
+            const s = store.get();
+            const patch: Partial<ReturnType<typeof store.get>> = {};
+            if (settings?.viewBackgroundColor !== undefined)
+              patch.viewBackgroundColor = settings.viewBackgroundColor;
+            if (settings?.gridEnabled !== undefined) patch.gridEnabled = settings.gridEnabled;
+            if (settings?.title !== undefined && s.session)
+              patch.session = { ...s.session, title: settings.title };
+            // Rule D: files are add-only, so remote ones are only ever added
+            const fresh = files.filter((f) => !s.files[f.id]);
+            if (fresh.length) {
+              const map = { ...s.files };
+              for (const f of fresh) map[f.id] = { id: f.id, mimeType: f.mime, dataURL: f.url };
+              patch.files = map;
+            }
+            store.applyRemote(elements, change, patch);
+          },
           status: (saveStatus) => store.set({ saveStatus }),
           protection: (storageWarning) => store.set({ storageWarning }),
           notice: (message) => store.toast(message, "error", 8000),
@@ -336,7 +359,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             return ids;
           },
         },
-        new PendingMirror(getStorage(), boot.id),
+        new PendingMirror(getStorage(), boot.id, undefined, tabId()),
         {
           ...boot.snapshot,
           settings: {
@@ -489,9 +512,15 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     if (boot.lost) store.toast(LOST_NOTICE, "error", 9000);
     const onHide = () => sync.pageHide();
     win.addEventListener("pagehide", onHide);
+    // live sync: other tabs' and agents' changes arrive on the board's socket
+    store.keyOf = (id) => sync.keyOf(id);
+    const live = new LiveChannel(sync, socketUrl(win.location, boot.id), win);
+    live.start();
     // test hook: lets e2e specs wait until everything is acknowledged
     (win as unknown as { __chalanaSync?: SyncClient }).__chalanaSync = sync;
+    (win as unknown as { __chalanaLive?: LiveChannel }).__chalanaLive = live;
     return () => {
+      live.dispose();
       unsubPrefs();
       store.onSceneChange = null;
       store.onCommit = null;

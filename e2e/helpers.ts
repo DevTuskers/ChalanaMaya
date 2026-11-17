@@ -115,3 +115,15 @@ export const expectOnBoard = async (page: Page, n: number) => {
     timeout: 15000,
   });
 };
+
+/** Keeps the page off the live channel, so saving goes over REST (phase 2 paths). */
+export const noLive = (page: Page) =>
+  page.routeWebSocket(/\/api\/sessions\/[^/]+\/socket$/, (ws) => ws.close());
+
+/** This board's pending mirrors in the page's storage (one per tab). */
+export const pendingMirrors = (page: Page, sid = sessionId(page)) =>
+  page.evaluate(
+    (prefix) =>
+      Object.keys(localStorage).filter((k) => k === prefix || k.startsWith(`${prefix}.`)).length,
+    `chalanamaya.pending.${sid}`,
+  );

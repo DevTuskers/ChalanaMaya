@@ -69,18 +69,78 @@ export const rebaseElements = (
 export interface RemoteChange {
   upserts: readonly SceneElement[];
   deletes: readonly string[];
+  /** Layer keys of the upserts (Rule E); an upsert with a key is placed by it. */
+  keys?: ReadonlyMap<string, string>;
 }
+
+const before = (ka: string, ia: string, kb: string, ib: string) =>
+  ka < kb || (ka === kb && ia < ib);
+
+/**
+ * Applies one remote change to a scene by id (Rule B): deletes drop out,
+ * upserts replace the element with that id, and an upsert with a layer key
+ * is placed by key among the elements around it (`keyOf` gives their keys;
+ * an element without a key stays right after its predecessor). Returns the
+ * same array when nothing changes.
+ */
+export const applyChange = (
+  elements: Elements,
+  change: RemoteChange,
+  keyOf: (id: string) => string | undefined = () => undefined,
+): SceneElement[] => {
+  if (!change.upserts.length && !change.deletes.length) return elements as SceneElement[];
+  const del = new Set(change.deletes);
+  const keys = change.keys;
+  const inPlace = new Map<string, SceneElement>();
+  const placed: { el: SceneElement; key: string }[] = [];
+  for (const u of change.upserts) {
+    if (del.has(u.id)) continue;
+    const k = keys?.get(u.id);
+    if (k !== undefined) placed.push({ el: u, key: k });
+    else inPlace.set(u.id, u);
+  }
+  const reinsert = new Set(placed.map((p) => p.el.id));
+  placed.sort((a, b) => (before(a.key, a.el.id, b.key, b.el.id) ? -1 : 1));
+  const out: SceneElement[] = [];
+  const seen = new Set<string>();
+  let j = 0;
+  let changed = false;
+  for (const el of elements) {
+    if (del.has(el.id) || reinsert.has(el.id)) {
+      changed = true;
+      continue;
+    }
+    const k = keys?.get(el.id) ?? keyOf(el.id);
+    if (k !== undefined)
+      while (j < placed.length && before(placed[j].key, placed[j].el.id, k, el.id))
+        out.push(placed[j++].el);
+    const u = inPlace.get(el.id);
+    if (u) {
+      seen.add(el.id);
+      if (u !== el) changed = true;
+      out.push(u);
+    } else out.push(el);
+  }
+  while (j < placed.length) out.push(placed[j++].el);
+  for (const [id, u] of inPlace)
+    if (!seen.has(id)) {
+      out.push(u);
+      changed = true;
+    }
+  if (!changed && !placed.length) return elements as SceneElement[];
+  return out;
+};
 
 /**
  * Log of remote changes so undo/redo snapshots can be brought forward lazily:
  * a snapshot taken at sequence `seq` is rebased by replaying later remote
- * changes only when it is restored.
+ * changes only when it is restored (Rule C).
  */
 export class RemoteLog {
   private entries: { seq: number; change: RemoteChange }[] = [];
   private seq = 0;
 
-  constructor(private readonly limit = 500) {}
+  constructor(private readonly limit = 2000) {}
 
   get head() {
     return this.seq;
@@ -93,27 +153,20 @@ export class RemoteLog {
     return this.seq;
   }
 
-  /** True when every change after `seq` is still in the log. */
   covers(seq: number) {
     return seq >= this.seq || (this.entries.length > 0 && this.entries[0].seq <= seq + 1);
   }
 
-  /** Applies remote changes after `seq` to `elements`, keeping untouched objects. */
-  rebase(elements: Elements, seq: number): SceneElement[] {
+  /** The snapshot taken at `seq` with every later remote change applied (best effort past the limit). */
+  rebase(
+    elements: Elements,
+    seq: number,
+    keyOf?: (id: string) => string | undefined,
+  ): SceneElement[] {
     let out = elements as SceneElement[];
     for (const { seq: s, change } of this.entries) {
       if (s <= seq) continue;
-      const del = new Set(change.deletes);
-      const up = new Map(change.upserts.map((e) => [e.id, e]));
-      const seen = new Set<string>();
-      const next: SceneElement[] = [];
-      for (const el of out) {
-        if (del.has(el.id)) continue;
-        seen.add(el.id);
-        next.push(up.get(el.id) ?? el);
-      }
-      for (const el of change.upserts) if (!seen.has(el.id) && !del.has(el.id)) next.push(el);
-      out = next;
+      out = applyChange(out, change, keyOf);
     }
     return out;
   }

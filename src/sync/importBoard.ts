@@ -77,7 +77,7 @@ export const importIntoSession = async (
     // refused before anything was sent: put the board back and leave no empty undo step
     store.history.discard(before);
     store.set({
-      elements: before.elements,
+      elements: store.rebase(before),
       selectedIds: new Set(),
       ...beforeView,
       historyVersion: store.get().historyVersion + 1,

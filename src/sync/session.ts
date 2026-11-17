@@ -4,7 +4,7 @@ import type { Op, SceneSnapshot } from "../shared/protocol";
 import { getStorage } from "../io/autosave";
 import type { Api } from "./api";
 import { replayMirror } from "./client";
-import { PendingMirror, type MirrorBatch } from "./mirror";
+import { PendingMirror, tabId, type MirrorBatch } from "./mirror";
 
 export interface SessionBoot {
   id: string;
@@ -32,7 +32,7 @@ export const sessionIdFromPath = (path: string): string | null | "root" | "inval
 };
 
 export const loadSession = async (api: Api, id: string): Promise<SessionBoot> => {
-  const mirror = new PendingMirror(getStorage(), id);
+  const mirror = new PendingMirror(getStorage(), id, undefined, tabId());
   // never blocks opening the board: undeliverable batches come back as pending
   const { unsent, pending, lost } = await replayMirror(api, mirror);
   const snapshot = await api.scene(id);

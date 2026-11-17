@@ -22,7 +22,43 @@ export interface MirrorData {
 }
 
 export const MIRROR_CAP = 2 * 1024 * 1024;
-export const mirrorKey = (sessionId: string) => `chalanamaya.pending.${sessionId}`;
+/**
+ * One mirror per tab (phase 3): two tabs on the same board must not overwrite
+ * each other's pending changes. The tab id lives in sessionStorage, which a
+ * reload keeps. Without a tab id the board-wide key is used (phase 2 layout,
+ * still read so a mirror written before the update is not lost).
+ */
+export const mirrorKey = (sessionId: string, tab?: string) =>
+  tab ? `chalanamaya.pending.${sessionId}.${tab}` : `chalanamaya.pending.${sessionId}`;
+
+const TAB_KEY = "chalanamaya.tab";
+
+/** This tab's id, kept across reloads of the tab; null when sessionStorage is unusable. */
+export const tabId = (store: StorageLike | null = sessionStore()): string | null => {
+  if (!store) return null;
+  try {
+    let id = store.getItem(TAB_KEY);
+    if (!id || !/^[A-Za-z0-9_-]{8,32}$/.test(id)) {
+      const bytes = new Uint8Array(9);
+      crypto.getRandomValues(bytes);
+      id = btoa(String.fromCharCode(...bytes))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_");
+      store.setItem(TAB_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+};
+
+const sessionStore = (): StorageLike | null => {
+  try {
+    return typeof sessionStorage !== "undefined" ? sessionStorage : null;
+  } catch {
+    return null;
+  }
+};
 
 const opKey = (op: Op): string =>
   op.t === "put"
@@ -125,11 +161,30 @@ export class PendingMirror {
     private readonly storage: StorageLike | null,
     readonly sessionId: string,
     private readonly cap = MIRROR_CAP,
+    private readonly tab: string | null = null,
   ) {}
 
+  private get key() {
+    return mirrorKey(this.sessionId, this.tab ?? undefined);
+  }
+
   read(): MirrorData | null {
+    const own = this.readKey(this.key);
+    if (!this.tab) return own;
+    // a board-wide mirror from before per-tab mirrors: the first tab takes it
+    const legacy = this.readKey(mirrorKey(this.sessionId));
+    if (!legacy) return own;
+    if (!own) return legacy;
+    return {
+      v: 1,
+      batches: [...legacy.batches, ...own.batches],
+      unsent: [...legacy.unsent, ...own.unsent],
+    };
+  }
+
+  private readKey(key: string): MirrorData | null {
     try {
-      const raw = this.storage?.getItem(mirrorKey(this.sessionId));
+      const raw = this.storage?.getItem(key);
       if (!raw) return null;
       const d = JSON.parse(raw) as Partial<MirrorData>;
       if (!d || d.v !== 1 || !Array.isArray(d.batches) || !Array.isArray(d.unsent)) return null;
@@ -149,8 +204,9 @@ export class PendingMirror {
   /** Never throws: a full or missing storage is reported, not raised. */
   write(batches: MirrorBatch[], unsent: Op[]): MirrorWrite {
     if (!this.storage) return { ok: false, reason: "this browser has no local storage" };
-    const key = mirrorKey(this.sessionId);
+    const key = this.key;
     try {
+      if (this.tab) this.storage.removeItem?.(mirrorKey(this.sessionId));
       if (!batches.length && !unsent.length) {
         this.storage.removeItem?.(key);
         return { ok: true, complete: true };
@@ -167,7 +223,8 @@ export class PendingMirror {
 
   clear() {
     try {
-      this.storage?.removeItem?.(mirrorKey(this.sessionId));
+      this.storage?.removeItem?.(this.key);
+      if (this.tab) this.storage?.removeItem?.(mirrorKey(this.sessionId));
     } catch {
       // nothing to protect
     }

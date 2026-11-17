@@ -611,6 +611,63 @@ export class SessionService {
     }
   }
 
+  /**
+   * Everything that changed after `sinceRev` (§3.6 reconnect): live elements
+   * and tombstones with a newer rev, plus the settings and title. Returns null
+   * when the board cannot answer exactly (older than the push-log floor, where
+   * tombstones may have been purged, or ahead of the board) — the caller then
+   * sends a full snapshot.
+   */
+  changesSince(
+    sessionId: string,
+    sinceRev: number,
+  ): { fromRev: number; rev: number; ops: AppliedOp[]; files: StoredFile[] } | null {
+    const s = this.requireSession(sessionId);
+    if (sinceRev > s.rev || sinceRev < s.push_log_floor_rev) return null;
+    if (sinceRev === s.rev) return { fromRev: sinceRev, rev: s.rev, ops: [], files: [] };
+    const rows = this.db
+      .prepare<[string, number], ElementRow>(
+        "SELECT id, idx, version, rev, deleted, needs_layout, data FROM elements WHERE session_id = ? AND rev > ? ORDER BY idx, id",
+      )
+      .all(sessionId, sinceRev);
+    const ops: AppliedOp[] = [
+      { t: "settings", settings: { ...JSON.parse(s.settings), title: s.title } },
+    ];
+    for (const r of rows)
+      ops.push(
+        r.deleted
+          ? { t: "del", id: r.id, version: r.version }
+          : {
+              t: "put",
+              el: JSON.parse(r.data) as SceneElement,
+              idx: r.idx,
+              version: r.version,
+              needsLayout: r.needs_layout === 1,
+            },
+      );
+    return { fromRev: sinceRev, rev: s.rev, ops, files: this.filesFor(sessionId, ops) };
+  }
+
+  /** The stored files the given ops refer to (so another tab can show them). */
+  filesFor(sessionId: string, ops: readonly AppliedOp[]): StoredFile[] {
+    const ids = new Set<string>();
+    for (const op of ops) {
+      if (op.t === "put") {
+        const f = (op.el as { fileId?: unknown }).fileId;
+        if (typeof f === "string") ids.add(f);
+      } else if (op.t === "poster") {
+        ids.add(op.fileId);
+        ids.add(op.posterFileId);
+      } else if (op.t === "fileMeta") ids.add(op.fileId);
+    }
+    const out: StoredFile[] = [];
+    for (const id of ids) {
+      const f = this.q.file.get(sessionId, id);
+      if (f) out.push(this.fileOut(sessionId, f));
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- files
 
   /** Stores an uploaded picture (§3.10, §7). Same bytes in the same board give the same file. */
