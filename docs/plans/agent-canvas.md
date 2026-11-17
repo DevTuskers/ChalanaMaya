@@ -1,6 +1,6 @@
 # Plan: board sessions, agent drawing (MCP) and media
 
-Status: **planning round 5, waiting for owner review.** No application code has been written for this plan yet. The [review answers](#13-review-answers) and final round 5 resolutions map the findings to the sections that fix them.
+Status: **in progress — phases 1a and 1b are done** (see the status table in [docs/README.md](../README.md#implementation-status)); phases 2–6 are planned. The [review answers](#13-review-answers) and final round 5 resolutions map the findings to the sections that fix them.
 
 Specs added with this plan: [06 — Sessions and agents](../features/06-sessions-and-agents.md) (SESS, AGENT) and [07 — Media](../features/07-media.md) (MEDIA). This plan explains how they are built; the specs say what "done" means.
 

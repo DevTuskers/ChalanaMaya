@@ -18,7 +18,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run build && npx vite preview --port 5184 --strictPort",
+    // the built ChalanaMaya server (app, API, security layers) with a fresh data folder
+    command:
+      "npm run build && node -e \"require('fs').rmSync('test-results/e2e-data',{recursive:true,force:true})\" && node dist-server/main.js",
+    env: { PORT: "5184", DATA_DIR: "test-results/e2e-data", RATE_LIMITS: "off" },
     url: "http://localhost:5184",
     reuseExistingServer: false,
     timeout: 180000,

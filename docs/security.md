@@ -1,0 +1,29 @@
+# Security
+
+This page describes what the ChalanaMaya server protects against and what it does not. It covers what is built so far (phase 1b of the [agent canvas plan](plans/agent-canvas.md)); later phases add to it.
+
+## Access: the session id is the key
+
+There are no accounts. Anyone, person or agent, who has a board's id can read and change that board. Ids are 24 characters of random base64url (144 random bits), are never listed by the server and appear in logs only as their first 4 characters. Treat a board link like a password. Pages send `Referrer-Policy: strict-origin-when-cross-origin`, so other sites never see `/s/<id>`.
+
+## Who can reach the server
+
+- **Loopback by default.** `npm start` listens on `127.0.0.1` and `::1` only.
+- **Host check.** Every request and socket upgrade must carry a `Host` that is `localhost`, `127.0.0.1`, `[::1]`, the host of `PUBLIC_URL`, or an `ALLOWED_HOSTS` entry (ports are ignored; IPv6 addresses are compared in bracketed, lower-case form). Anything else gets 403 — as `{error: …}` JSON under `/api`, a JSON-RPC error under `/mcp`, and plain text for pages. This stops DNS-rebinding pages from talking to a local server.
+- **Cross-site request guard.** Requests that change something (`POST`, `PUT`, `PATCH`, `DELETE` under `/api` and `/mcp`) are refused with 403 when the browser marks them `Sec-Fetch-Site: cross-site` or sends an `Origin` other than the app's own address. REST requests must also carry `X-ChalanaMaya: 1`, which a plain form or `text/plain` request from another site cannot add. `ALLOWED_ORIGINS` admits extra origins for `/mcp` only. Socket upgrades from another origin are refused too.
+- **Proxies.** `X-Forwarded-For` is ignored unless `TRUST_PROXY` is set, so a client cannot pick its own rate-limit bucket.
+- **Rate limits** per address for board creation, uploads and `/mcp` (configurable, can be turned off).
+
+## What is stored
+
+- Every item written to a board is checked by the same strict validator the app uses (`src/shared/validate.ts`): known types and fields only, colours, numbers, ids, links and lengths within limits. Anything else is refused with the field path, and nothing is stored. Board settings and file rows are checked the same way.
+- Pictures: PNG, JPEG, GIF and WebP only, and the file's first bytes must match its claimed type (SVG and HTML are refused). Files are stored by SHA-256 under `DATA_DIR/media` and served with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cross-Origin-Resource-Policy: same-origin`.
+- Size limits: 2 MiB per change batch, 12 MiB per import, 10 MiB per picture, 10 MiB per board, 5,000 items per board, plus the server-wide limits in the [setup guide](agents/setup.md#settings-environment-variables). Over a limit: 413 for a request, 507 when the server is full.
+
+## The page
+
+The app is served with a strict Content Security Policy: scripts only from the app itself, frames only from the supported web card providers (YouTube, Vimeo, Figma, CodePen), `connect-src` limited to the app and its own `ws://`/`wss://` address, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`. SVG export escapes every attribute value. (`npm run dev` relaxes the script rule for hot reload; never expose a dev server.)
+
+## Exposing ChalanaMaya beyond your machine
+
+Cloud agents cannot reach `localhost`. If you expose the server (tunnel, proxy, `HOST=0.0.0.0`), set `PUBLIC_URL` or `ALLOWED_HOSTS` and, behind a proxy, `TRUST_PROXY`. The session id is then the only protection for each board; prefer a short-lived tunnel and stop it when you are done. Traffic is only encrypted if your tunnel or proxy uses HTTPS.

@@ -1,6 +1,6 @@
 # Documentation
 
-These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase are implemented with React, strict TypeScript, Vite, HTML Canvas 2D, roughjs, and perfect-freehand; see the status table below.
+These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase are implemented with React, strict TypeScript, Vite, HTML Canvas 2D, roughjs, and perfect-freehand, served by a Node server (Express, SQLite via better-sqlite3); see the status table below. How to run the server and connect agents: [setup guide](agents/setup.md).
 
 ## Index
 
@@ -12,6 +12,8 @@ These documents describe ChalanaMaya's behaviour. The P0 MVP and the P1 phase ar
 - [Sessions and agents](features/06-sessions-and-agents.md) (planned)
 - [Media](features/07-media.md) (planned)
 - [Plan: board sessions, agent drawing and media](plans/agent-canvas.md)
+- [Running ChalanaMaya and connecting agents](agents/setup.md)
+- [Security](security.md)
 - [Out of scope](out-of-scope.md)
 - [Brand identity (approved)](brand-identity.md)
 
@@ -35,7 +37,19 @@ All features start as **planned**. Track implementation in issues using the feat
 
 ## Implementation status
 
-Phases P0 (MVP), P1, P2 (round 1) and agent-canvas phase 1a. Evidence: unit tests in `src/**/*.test.ts` and Playwright smoke tests in `e2e/smoke.spec.ts` (P0), `e2e/p1.spec.ts` (P1), `e2e/revision.spec.ts` (P1 review fixes), `e2e/p2.spec.ts` (P2) and `e2e/webcard-esc.spec.ts` (phase 1a).
+Phases P0 (MVP), P1, P2 (round 1) and agent-canvas phases 1a and 1b. Evidence: unit tests in `src/**/*.test.ts`, server unit and integration tests in `server/**/*.test.ts`, and Playwright smoke tests in `e2e/smoke.spec.ts` (P0), `e2e/p1.spec.ts` (P1), `e2e/revision.spec.ts` (P1 review fixes), `e2e/p2.spec.ts` (P2), `e2e/webcard-esc.spec.ts` (phase 1a) and `e2e/server.spec.ts` (phase 1b). Playwright runs against the built server (`node dist-server/main.js` on port 5184).
+
+| Agent canvas phase | Features | Status |
+| --- | --- | --- |
+| 1a — Esc fix, strict validation, sync-ready scene code | DRAW-14 fix | done |
+| 1b — The server shell | SESS-10 | done |
+| 2 — Server-backed sessions in one tab | SESS-01…03, SESS-05, SESS-06, SESS-08 | planned |
+| 3 — Live sync between tabs | SESS-04, SESS-07 | planned |
+| 4 — MCP server, skill and setup docs | AGENT-01…11, AGENT-13 | planned |
+| 5 — GIF and video elements | MEDIA-01…04, MEDIA-07…10 | planned |
+| 6 — Animated CSS components and hardening | MEDIA-05, MEDIA-06, SESS-09 | planned |
+
+Agent canvas phase 1b (server shell; the app still saves to localStorage, so users see no change): a Node server in `server/` (`npm run dev` with Vite in middleware mode, `npm run build`, `npm start` on `http://localhost:5183`, loopback only); SQLite through `better-sqlite3` pinned at 12.11.1 with `sessions`, `elements`, `files`, `blobs` and `push_log` tables, and `npm run db:smoke` (also run at start-up and in `npm test`); `SessionService` with strict `validateStoredElement` on every op, atomic and per-op modes, item versions and tombstones, push dedupe by `pushId`, atomic `/import` as one revision, and the quotas of SESS-10 (507 when full); the REST API (`/api/sessions`, `/scene`, `/ops`, `/import`, `/files` with magic-byte checks, `image-size` dimensions and `Range`); a host check with IPv6 normalisation and per-route error shapes, `TRUST_PROXY`, the cross-site request guard (`X-ChalanaMaya: 1`, `Origin`, `Sec-Fetch-Site`), per-address rate limits, and a strict CSP naming `ws://` and `wss://` for the request host. `/mcp` is reserved behind the same checks; the MCP tools arrive in phase 4. Evidence: `server/api.test.ts` (integration over real HTTP), `server/sessions/service.test.ts`, `server/security/security.test.ts`, `server/config.test.ts`, `server/db/smoke.test.ts`, `server/media/sniff.test.ts`, `src/shared/ids.test.ts`, `e2e/server.spec.ts`. Details: [setup guide](agents/setup.md), [security](security.md).
 
 Agent canvas phase 1a (browser only, no server yet): the web card Esc fix (DRAW-14: the card frame keeps focus, a Done button and a hint when the page has taken focus); strict, non-normalising validation of stored elements, settings and file rows in `src/shared/validate.ts`; canonicalisation in `src/shared/canonical.ts`, used only when a `.chalana` file is opened, so opened files are tidied (colours, numbers, options, pressures, ids and references, long texts, strokes split by count and size) and then strictly validated, and the toast says what changed; every SVG export attribute is escaped with `attr()`; source limits (pencil strokes carry on as a new stroke at a size-aware cap of 4,096 points, or 2,918 with pen pressure, so a stroke stays under the 256 KB element cap whatever its coordinates; text resizes keep the font size within 1–1,000; 10,000 characters per text; 200 per frame name; rotations wrapped into [0, 2π)); an idempotent `finalizeScene` that keeps object identity and can be scoped to touched ids (Rule A); move, resize and rotate computed by id against the live scene, plus `rebaseElements` and a lazy `RemoteLog` in `src/scene/rebase.ts` (Rule C building blocks); fractional layer keys with `assignKeys` in `src/shared/keys.ts` (Rule E, not yet stored; malformed stored keys get a fresh key). Evidence: `src/shared/shared.test.ts`, `src/io/svgsafety.test.ts`, `e2e/webcard-esc.spec.ts`.
 

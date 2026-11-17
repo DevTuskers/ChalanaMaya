@@ -1,6 +1,6 @@
 # Sessions and agents
 
-Status: all features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: SESS-10 is done (phase 1b, server-side limits); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 A **board session** is one board with its own address. People in browser tabs and agents that use ChalanaMaya's MCP server work on the same session at the same time. This is board-session sync, not the collaboration features listed in [out of scope](../out-of-scope.md).
 
@@ -117,7 +117,7 @@ Acceptance criteria:
 
 ## SESS-10 — Server storage limits
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 1b; evidence `server/api.test.ts`, `server/sessions/service.test.ts`)
 
 One server cannot be filled up by people who create many boards.
 

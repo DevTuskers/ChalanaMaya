@@ -18,6 +18,7 @@ import type { FreedrawElement, LinearElement, SceneElement, TextElement } from "
 import { setTool } from "../store/actions";
 import { Store, initialState, type ToolId } from "../store/store";
 import { Controller, type PointerInput } from "../tools/controller";
+import { injectionCorpus } from "./corpus";
 import { canonicalizeElements, splitFreedraw, summarizeReport } from "./canonical";
 import { MAX_KEY_LENGTH, assignKeys, isValidKey, orderByKey } from "./keys";
 import { LIMITS, freedrawSourcePoints, wrapAngle } from "./limits";
@@ -47,41 +48,13 @@ const rect = () => createShape("rectangle", 10, 20);
 
 describe("strict validation", () => {
   it("rejects the injection corpus with a field path", () => {
-    const base = rect() as unknown as Record<string, unknown>;
-    const corpus: [Record<string, unknown>, string][] = [
-      [{ ...base, strokeColor: '#000" onload="alert(1)' }, "strokeColor"],
-      [{ ...base, strokeColor: "red" }, "strokeColor"],
-      [{ ...base, strokeColor: "#ABCDEF" }, "strokeColor"],
-      [{ ...base, backgroundColor: "url(javascript:alert(1))" }, "backgroundColor"],
-      [{ ...base, id: "<script>" }, "id"],
-      [{ ...base, id: "x".repeat(65) }, "id"],
-      [{ ...base, x: Number.NaN }, "x"],
-      [{ ...base, width: Infinity }, "width"],
-      [{ ...base, width: -1 }, "width"],
-      [{ ...base, angle: 100 }, "angle"],
-      [{ ...base, opacity: 101 }, "opacity"],
-      [{ ...base, fillStyle: "plaid" }, "fillStyle"],
-      [{ ...base, link: "javascript:alert(1)" }, "link"],
-      [{ ...base, link: "example.com" }, "link"],
-      [{ ...base, groupIds: ["ok", "<b>"] }, "groupIds[1]"],
-      [{ ...base, onclick: "alert(1)" }, "onclick"],
-      [{ ...base, __proto__x: 1 }, "__proto__x"],
-      [{ ...base, type: "script" }, "type"],
-      [{ ...createText(0, 0), text: "a".repeat(LIMITS.textChars + 1) }, "text"],
-      [{ ...createFrame(0, 0), name: "n".repeat(LIMITS.frameName + 1) }, "name"],
-      [{ ...createEmbed(0, 0, "https://youtu.be/x"), url: "javascript:alert(1)" }, "url"],
-      [{ ...createImage(0, 0, 10, 10, "f1"), fileId: "../etc" }, "fileId"],
-    ];
+    const corpus = injectionCorpus();
+    expect(corpus.length).toBeGreaterThan(20);
     for (const [el, path] of corpus) {
       const r = validateStoredElement(el);
       expect(r.ok, path).toBe(false);
       if (!r.ok) expect(r.path).toBe(path);
     }
-    const missing = { ...base };
-    delete missing.seed;
-    const r = validateStoredElement(missing);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.path).toBe("seed");
   });
 
   it("rejects oversized strokes and bad pressures", () => {
