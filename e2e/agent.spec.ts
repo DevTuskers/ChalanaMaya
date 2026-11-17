@@ -288,3 +288,189 @@ test("the Connect an agent dialog shows the MCP address, the board id and snippe
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
+
+const sceneRows = (page: Page, id: string) =>
+  page.evaluate(async (sid) => {
+    const r = await fetch(`/api/sessions/${sid}/scene`);
+    return (await r.json()).elements as {
+      el: { id: string; type: string; x: number; y: number; width: number; height: number };
+      needsLayout: boolean;
+    }[];
+  }, id);
+
+test("text an agent adds while no tab is open is laid out by the first tab that opens it", async ({
+  page,
+}) => {
+  const id = (await call(client, "create_session", {})).session_id as string;
+  const r = await call(client, "add_elements", {
+    session_id: id,
+    agent_name: "Claude",
+    elements: [
+      { type: "diamond", key: "d", x: 100, y: 100, label: "A long decision label here" },
+      { type: "rectangle", key: "r", x: 400, y: 100, label: "Plain words", font: "normal" },
+      { type: "text", key: "t", x: 100, y: 400, text: "monospace text", font: "code" },
+    ],
+  });
+  expect(r.created).toHaveLength(3);
+  await page.goto("about:blank");
+  await page.goto(`/s/${id}`);
+  await expect(page.getByTestId("board")).toBeVisible();
+  // the flag is cleared by the page's one-time correction
+  await expect
+    .poll(async () => (await sceneRows(page, id)).filter((e) => e.needsLayout).length, {
+      timeout: 5000,
+    })
+    .toBe(0);
+  await settled(page);
+  // and the server's geometry is what the page shows
+  const rows = await sceneRows(page, id);
+  const shown = await page.evaluate(() =>
+    (
+      window as unknown as {
+        __chalanaSync: {
+          host: {
+            scene(): {
+              elements: { id: string; x: number; y: number; width: number; height: number }[];
+            };
+          };
+        };
+      }
+    ).__chalanaSync.host
+      .scene()
+      .elements.map((e) => ({ id: e.id, x: e.x, y: e.y, width: e.width, height: e.height })),
+  );
+  expect(
+    rows.map((e) => ({
+      id: e.el.id,
+      x: e.el.x,
+      y: e.el.y,
+      width: e.el.width,
+      height: e.el.height,
+    })),
+  ).toEqual(shown);
+  // the diamond keeps a sensible size (no runaway growth from estimated metrics)
+  const diamond = rows.find((e) => e.el.type === "diamond")!;
+  expect(diamond.el.height).toBeLessThan(260);
+});
+
+test("server-measured text widths are within 5 % of the browser's for the three fonts", async ({
+  page,
+}) => {
+  const strings = ["Hello board", "A long decision label here", "Quarterly plan 2025: v2.1"];
+  const fonts = ["hand", "normal", "code"] as const;
+  const id = (await call(client, "create_session", {})).session_id as string;
+  const elements = fonts.flatMap((font, i) =>
+    strings.map((text, j) => ({ type: "text", x: 0, y: (i * 3 + j) * 60, text, font })),
+  );
+  const r = await call(client, "add_elements", { session_id: id, elements });
+  // read the server's widths before any page opens the board
+  const scene = await call(client, "get_scene", {
+    session_id: id,
+    ids: r.created.map((c: { id: string }) => c.id),
+    detail: "full",
+  });
+  const serverWidths = r.created.map(
+    (c: { id: string }) =>
+      scene.elements.find((e: { id: string; width: number }) => e.id === c.id).width as number,
+  );
+  await freshBoard(page);
+  const css = {
+    hand: '"Kalam", "Comic Sans MS", "Segoe Print", cursive',
+    normal: '"Source Sans 3", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+    code: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
+  };
+  const browserWidths = await page.evaluate(
+    async ({ fonts, strings, css }) => {
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      const out: number[] = [];
+      for (const f of fonts) {
+        const font = `20px ${css[f]}`;
+        await document.fonts.load(font);
+        ctx.font = font;
+        for (const s of strings) out.push(ctx.measureText(s).width);
+      }
+      return out;
+    },
+    { fonts: [...fonts], strings, css },
+  );
+  expect(serverWidths).toHaveLength(9);
+  serverWidths.forEach((w: number, i: number) => {
+    const b = browserWidths[i];
+    expect(Math.abs(w - b) / b, `${fonts[Math.floor(i / 3)]}: "${strings[i % 3]}"`).toBeLessThan(
+      0.05,
+    );
+  });
+});
+
+test("agent edits during a user's drag, Esc and two undos are all kept", async ({ page }) => {
+  await freshBoard(page);
+  await connected(page);
+  const id = sessionId(page);
+  // the user draws box U (one undo step)
+  await page.keyboard.press("r");
+  await drag(page, { x: 200, y: 200 }, { x: 320, y: 280 });
+  await page.keyboard.press("Escape");
+  await settled(page);
+  const userBox = (await items(page))[0];
+  // the agent adds box V
+  const v = await call(client, "add_elements", {
+    session_id: id,
+    agent_name: "Claude",
+    elements: [{ type: "rectangle", x: 700, y: 200, width: 120, height: 80 }],
+  });
+  const vId = v.created[0].id as string;
+  await expect.poll(async () => (await items(page)).length, { timeout: LIVE_MS }).toBe(2);
+
+  // drag U by its edge (an unfilled box is picked by its outline) and hold it while the agent adds 3 items and recolours V
+  const b = await boardBox(page);
+  await page.mouse.move(b.x + 200, b.y + 240);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 200, b.y + 300, { steps: 4 });
+  const three = await call(client, "add_elements", {
+    session_id: id,
+    agent_name: "Claude",
+    elements: [
+      { type: "ellipse", x: 200, y: 600, width: 80, height: 60 },
+      { type: "note", x: 400, y: 600, text: "from the agent" },
+      { type: "text", x: 600, y: 600, text: "agent text" },
+    ],
+  });
+  const threeIds = three.created.map((c: { id: string }) => c.id) as string[];
+  await call(client, "set_style", {
+    session_id: id,
+    agent_name: "Claude",
+    ids: [vId],
+    style: { fill: "rose", fill_style: "solid" },
+  });
+  await expect
+    .poll(async () => (await items(page)).find((e) => e.id === vId)?.backgroundColor, {
+      timeout: LIVE_MS,
+    })
+    .toBe("#f7c6c1");
+  await page.mouse.move(b.x + 200, b.y + 360, { steps: 4 });
+  await page.mouse.up();
+  await settled(page);
+  const moved = (await items(page)).find((e) => e.id === userBox.id)!;
+  expect(moved.y).toBeCloseTo(userBox.y + 120, -1);
+  // a second drag cancelled with Esc
+  await page.mouse.move(b.x + 200, b.y + 360);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 400, b.y + 420, { steps: 4 });
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await settled(page);
+  expect((await items(page)).find((e) => e.id === userBox.id)!.y).toBe(moved.y);
+  // undo the drag, then the user's box
+  await page.keyboard.press(`${mod}+z`);
+  await page.keyboard.press(`${mod}+z`);
+  await settled(page);
+  const now = await items(page);
+  expect(now.some((e) => e.id === userBox.id)).toBe(false);
+  for (const t of threeIds) expect(now.some((e) => e.id === t)).toBe(true);
+  expect(now.find((e) => e.id === vId)?.backgroundColor).toBe("#f7c6c1");
+  const scene = await call(client, "get_scene", { session_id: id });
+  const ids = scene.elements.map((e: { id: string }) => e.id);
+  for (const t of [...threeIds, vId]) expect(ids).toContain(t);
+  expect(ids).not.toContain(userBox.id);
+  expect(scene.elements.find((e: { id: string }) => e.id === vId).fill).toBe("rose");
+});

@@ -60,6 +60,7 @@ import { ToolRail } from "./ui/ToolRail";
 import { ZoomStrip } from "./ui/ZoomStrip";
 import { TOOLS } from "./ui/shortcuts";
 import { Minimap } from "./ui/Minimap";
+import { whenBoardFontsReady } from "./ui/measure";
 import { WebCards } from "./ui/WebCards";
 import type { Theme } from "./scene/types";
 
@@ -575,10 +576,16 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     store.keyOf = (id) => sync.keyOf(id);
     const live = new LiveChannel(sync, socketUrl(win.location, boot.id), win);
     live.start();
+    // text an agent laid out while no tab was open is measured here once fonts are in
+    let alive = true;
+    void whenBoardFontsReady(win.document).then(() => {
+      if (alive) sync.correctLoadedLayout();
+    });
     // test hook: lets e2e specs wait until everything is acknowledged
     (win as unknown as { __chalanaSync?: SyncClient }).__chalanaSync = sync;
     (win as unknown as { __chalanaLive?: LiveChannel }).__chalanaLive = live;
     return () => {
+      alive = false;
       live.dispose();
       unsubPrefs();
       store.onSceneChange = null;

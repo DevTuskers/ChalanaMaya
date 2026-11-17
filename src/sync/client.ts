@@ -274,6 +274,8 @@ export class SyncClient {
   private removedNoticed = new Set<string>();
   /** Rule F: consecutive repairs of an element no local edit is behind. */
   private repairStreak = new Map<string, number>();
+  /** ids loaded from a snapshot with `needsLayout`, corrected by `correctLoadedLayout()` */
+  private loadedLayout = new Set<string>();
   /** settings fields in queued or unacknowledged pushes */
   private busySettings = new Map<string, number>();
   private readonly timers: Timers;
@@ -346,9 +348,11 @@ export class SyncClient {
     this.known.clear();
     this.keys.clear();
     this.tomb.clear();
+    this.loadedLayout.clear();
     for (const e of s.elements) {
       this.known.set(e.el.id, { el: e.el, json: toJson(e.el), version: e.version });
       this.keys.set(e.el.id, e.idx);
+      if (e.needsLayout) this.loadedLayout.add(e.el.id);
     }
     for (const t of s.tombstones) this.tomb.set(t.id, t.version);
     this.order = s.elements.map((e) => ({ id: e.el.id }));
@@ -359,6 +363,33 @@ export class SyncClient {
     };
     this.rev = s.rev;
     this.liveRev = s.rev;
+  }
+
+  /**
+   * The `needs_layout` correction for text that came in a REST snapshot (the
+   * board was opened after an agent wrote it, so no socket `changes` carry the
+   * flag). The app calls this once fonts are loaded; ids with local edits are
+   * skipped (their own put re-lays them out).
+   */
+  correctLoadedLayout() {
+    if (this.stopped || !this.loadedLayout.size) return;
+    const { elements } = this.host.scene();
+    const byId = new Map(elements.map((e) => [e.id, e] as const));
+    const ids = [...this.loadedLayout].filter(
+      (id) => byId.has(id) && !this.busy.has(id) && !this.isDirty(id, byId.get(id)),
+    );
+    this.loadedLayout.clear();
+    if (!ids.length) return;
+    const final = this.layoutCorrection(elements as SceneElement[], ids);
+    if (final === elements) return;
+    this.applying = true;
+    try {
+      this.host.replaceElements(final);
+    } finally {
+      this.applying = false;
+    }
+    this.order = final.filter((e) => this.known.has(e.id));
+    this.updateStatus();
   }
 
   /** The layer key the server has for an element (tests and import). */
@@ -837,11 +868,10 @@ export class SyncClient {
       this.known.set(el.id, { el: f, json: toJson(f), version: k.version + 1 });
       return f;
     });
-    if (ops.length) {
-      this.enqueue(ops);
-      this.writeMirror();
-      this.pump(false);
-    }
+    if (!ops.length) return scene;
+    this.enqueue(ops);
+    this.writeMirror();
+    this.pump(false);
     return out;
   }
 
@@ -1184,6 +1214,7 @@ export class SyncClient {
       this.load(snap);
       this.host.replaceElements(snap.elements.map((e) => e.el));
       this.updateStatus();
+      this.correctLoadedLayout();
       return;
     }
     const next: SceneElement[] = [];

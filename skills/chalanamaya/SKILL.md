@@ -65,6 +65,37 @@ boxes; the default `hachure` looks sketchy.
 box moves. `[x, y]` leaves the end free. `points` adds bend points in between.
 `routing: "elbow"` draws right-angle connectors, `"curved"` draws a curve.
 
+## Example: a 6-step flowchart in one call
+
+Six nodes in one column (rows 160 apart), a decision with labelled `yes`/`no` branches, and
+every arrow bound to its boxes. Copy it, change the labels and the `session_id`, and send it as
+one `add_elements` call.
+
+<!-- flowchart-example:start -->
+
+```json
+{
+  "session_id": "<session_id>",
+  "agent_name": "Claude",
+  "elements": [
+    { "type": "ellipse", "key": "start", "x": 400, "y": 40, "width": 200, "height": 80, "label": "Order placed", "fill": "mint", "fill_style": "solid" },
+    { "type": "rectangle", "key": "check", "x": 400, "y": 200, "width": 200, "height": 80, "label": "Check stock" },
+    { "type": "diamond", "key": "instock", "x": 400, "y": 360, "width": 200, "height": 100, "label": "In stock?", "stroke": "clay", "fill": "peach", "fill_style": "solid" },
+    { "type": "rectangle", "key": "ship", "x": 400, "y": 540, "width": 200, "height": 80, "label": "Ship order" },
+    { "type": "rectangle", "key": "reorder", "x": 720, "y": 370, "width": 200, "height": 80, "label": "Reorder stock", "stroke": "berry", "fill": "rose", "fill_style": "solid" },
+    { "type": "ellipse", "key": "done", "x": 400, "y": 700, "width": 200, "height": 80, "label": "Done", "fill": "mint", "fill_style": "solid" },
+    { "type": "arrow", "from": "start", "to": "check" },
+    { "type": "arrow", "from": "check", "to": "instock" },
+    { "type": "arrow", "from": "instock", "to": "ship", "label": "yes" },
+    { "type": "arrow", "from": "instock", "to": "reorder", "label": "no" },
+    { "type": "arrow", "from": "reorder", "to": "check", "routing": "elbow" },
+    { "type": "arrow", "from": "ship", "to": "done" }
+  ]
+}
+```
+
+<!-- flowchart-example:end -->
+
 ## Editing precisely
 
 - `get_scene` with `detail: "full"` and `ids` (≤ 50) returns every field, with absolute points.

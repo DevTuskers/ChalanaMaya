@@ -13,6 +13,8 @@ import type { StorageLike } from "../src/io/autosave";
 import { importIntoSession } from "../src/sync/importBoard";
 import { Store } from "../src/store/store";
 import { api, rect, startServer, type TestServer } from "./test/helpers";
+import { call, httpClient } from "./mcp/testClient";
+import { defaultMeasure, setMeasure } from "../src/scene/text";
 
 let srv: TestServer;
 let A: ReturnType<typeof api>;
@@ -297,5 +299,52 @@ describe("SyncClient against the server", () => {
     expect(scene.elements[0].el.type).toBe("rectangle");
     expect(c.get()[0].type).toBe("rectangle");
     expect(c.notices.length).toBeGreaterThan(0);
+  });
+
+  it("lays out agent text once when the board is opened after the agent wrote it", async () => {
+    const mcp = await httpClient(srv.base, "Claude");
+    const typed = createHttpApi(srv.base);
+    try {
+      const sid = (await call(mcp, "create_session", {})).session_id as string;
+      const added = await call(mcp, "add_elements", {
+        session_id: sid,
+        elements: [
+          {
+            type: "diamond",
+            x: 0,
+            y: 0,
+            width: 160,
+            height: 100,
+            label: "A long decision label here",
+          },
+        ],
+      });
+      const id = added.created[0].id as string;
+      const before = await typed.scene(sid);
+      expect(before.elements.some((e) => e.needsLayout)).toBe(true);
+      const shapeBefore = before.elements.find((e) => e.el.id === id)!;
+      // this "browser" measures text 60 % wider than the server did (containers only grow)
+      setMeasure((t, f) => defaultMeasure(t, f) * 1.6);
+      try {
+        const c = await startClient(sid, createHttpApi(srv.base));
+        c.client.correctLoadedLayout();
+        await c.client.settle();
+        const after = await typed.scene(sid);
+        expect(after.elements.every((e) => !e.needsLayout)).toBe(true);
+        const shape = after.elements.find((e) => e.el.id === id)!;
+        expect(shape.el.height).toBeGreaterThan(shapeBefore.el.height);
+        expect(c.get().find((e) => e.id === id)!.height).toBe(shape.el.height);
+        // a second open has nothing to correct
+        const c2 = await startClient(sid, createHttpApi(srv.base));
+        const rev = after.rev;
+        c2.client.correctLoadedLayout();
+        await c2.client.settle();
+        expect((await typed.scene(sid)).rev).toBe(rev);
+      } finally {
+        setMeasure(defaultMeasure);
+      }
+    } finally {
+      await mcp.close();
+    }
   });
 });

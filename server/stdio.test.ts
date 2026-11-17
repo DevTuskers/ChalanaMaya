@@ -1,16 +1,39 @@
 /** Integration: the official SDK stdio client against the bridge process (plan §8). */
 import net from "node:net";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
+  ToolListChangedNotificationSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { startServer, type TestServer } from "./test/helpers";
 import { call, callError, makePng } from "./mcp/testClient";
 import type { ChangesEvent } from "./sessions/service";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+const BUILT = path.join(ROOT, "dist-server", "stdio.js");
+
+// the tests run the built bridge, as desktop clients do (`node dist-server/stdio.js`)
+beforeAll(() => {
+  const r = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "node_modules", "vite", "bin", "vite.js"),
+      "build",
+      "--ssr",
+      "-c",
+      "vite.server.config.ts",
+      "--logLevel",
+      "error",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  if (r.status !== 0) throw new Error(`server build failed: ${r.stderr}`);
+}, 120_000);
 
 const freePort = async (): Promise<number> => {
   for (;;) {
@@ -33,8 +56,8 @@ afterEach(async () => {
 const bridge = async (url: string, name = "Claude Desktop") => {
   const client = new Client({ name, version: "1.0.0" });
   const transport = new StdioClientTransport({
-    command: TSX,
-    args: [path.join(ROOT, "server", "stdio.ts")],
+    command: process.execPath,
+    args: [BUILT],
     env: { ...process.env, CHALANAMAYA_URL: url } as Record<string, string>,
     stderr: "pipe",
   });
@@ -101,19 +124,32 @@ describe("stdio bridge", () => {
     const port = await freePort();
     const client = await bridge(`http://localhost:${port}`);
     expect(client.getServerVersion()?.name).toBe("chalanamaya");
-    expect((await client.listTools()).tools).toEqual([]);
+    // list calls have no isError result: they fail with a JSON-RPC error that says why
+    await expect(client.listTools()).rejects.toThrow(/not reachable/);
+    await expect(client.listPrompts()).rejects.toThrow(/not reachable/);
+    await expect(client.listResources()).rejects.toThrow(/not reachable/);
     const down = await client.callTool({ name: "get_scene", arguments: { session_id: "x" } });
     expect(down.isError).toBe(true);
     expect(JSON.stringify(down.content)).toMatch(/not reachable/);
 
     let changed = 0;
+    let prompts = 0;
+    let resources = 0;
     client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
       changed++;
+    });
+    client.setNotificationHandler(PromptListChangedNotificationSchema, () => {
+      prompts++;
+    });
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+      resources++;
     });
     let srv: TestServer = await serve(port);
     const id = (await call(client, "create_session", {})).session_id as string;
     await expect.poll(() => changed).toBe(1);
+    await expect.poll(() => prompts + resources).toBe(2);
     expect((await client.listTools()).tools.length).toBe(17);
+    expect((await client.listPrompts()).prompts.length).toBe(4);
 
     // the server goes away and comes back on the same port
     await srv.close();

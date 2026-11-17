@@ -287,18 +287,19 @@ const decodeBase64 = (v: unknown, path: string, max: number): Buffer => {
   return buf;
 };
 
-const upload = (ctx: ToolContext, sid: string, data: unknown, mime: unknown, path: string) => {
-  const mimeType =
-    mime === undefined ? undefined : str(mime, `${path}.mime_type`, 100).toLowerCase();
-  if (mimeType?.startsWith("video/")) throw kindRefused(`${path}.mime_type`, "video");
-  const buf = decodeBase64(data, `${path}.data_base64`, ctx.maxImageBytes);
+const upload = (ctx: ToolContext, sid: string, data: unknown, mime: unknown, base: string) => {
+  // "" for upload_media's own arguments, "source" inside place_media
+  const path = (k: string) => (base ? `${base}.${k}` : k);
+  const mimeType = mime === undefined ? undefined : str(mime, path("mime_type"), 100).toLowerCase();
+  if (mimeType?.startsWith("video/")) throw kindRefused(path("mime_type"), "video");
+  const buf = decodeBase64(data, path("data_base64"), ctx.maxImageBytes);
   try {
     return ctx.service.addFile(sid, buf, mimeType);
   } catch (e) {
     if (e instanceof ServiceError && e.code === "unsupported_type")
       throw new ToolError(
         "unsupported_type",
-        `${path}: ${e.message} Upload a PNG, JPEG, GIF or WebP picture.`,
+        `${path("data_base64")}: ${e.message} Upload a PNG, JPEG, GIF or WebP picture.`,
       );
     throw e;
   }

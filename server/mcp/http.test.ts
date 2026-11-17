@@ -1,7 +1,10 @@
 /** Integration: the official MCP SDK client against a real server over HTTP (plan §8). */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { startServer, type TestServer } from "../test/helpers";
+import fs from "node:fs";
+import path from "node:path";
+import { api, put, startServer, tempDir, type TestServer } from "../test/helpers";
+import { ROOT_DIR } from "../config";
 import { call, callError, httpClient, makePng } from "./testClient";
 import type { ChangesEvent } from "../sessions/service";
 
@@ -436,13 +439,162 @@ describe("MCP over HTTP", () => {
     expect(foreign.status).toBe(403);
   });
 
-  it("is stateless: a client keeps working after a server restart", async () => {
-    // every request builds a fresh server; a new server process on the same data works the same
-    const other = await httpClient(srv.base, "second");
+  it("is stateless: clients keep working across a real server restart", async () => {
+    const dir = tempDir("cm-restart-");
+    let s1: TestServer | null = await startServer({ DATA_DIR: dir });
+    const port = s1.port;
+    const before = await httpClient(s1.base, "before-restart");
+    try {
+      const id = (await call(before, "create_session", {})).session_id as string;
+      await call(before, "add_elements", { session_id: id, elements: [{ type: "note" }] });
+      await s1.close();
+      s1 = null;
+      const s2 = await startServer({ DATA_DIR: dir, PORT: String(port) });
+      try {
+        // the client from before the restart works again (its first request may hit the
+        // closed keep-alive socket) and a fresh one works at once: no MCP session state
+        const again = () => call(before, "get_scene", { session_id: id });
+        expect((await again().catch(again)).count).toBe(1);
+        const fresh = await httpClient(s2.base, "after-restart");
+        await call(fresh, "add_elements", { session_id: id, elements: [{ type: "note" }] });
+        expect((await call(fresh, "get_scene", { session_id: id })).count).toBe(2);
+        await fresh.close();
+      } finally {
+        await s2.close();
+      }
+    } finally {
+      await before.close().catch(() => {});
+      if (s1) await s1.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses JSON-RPC batches so the rate limit counts every call", async () => {
+    const one = { jsonrpc: "2.0", method: "tools/list", params: {} };
+    const r = await fetch(`${srv.base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify([
+        { ...one, id: 1 },
+        { ...one, id: 2 },
+      ]),
+    });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: { code: number } }).error.code).toBe(-32600);
+  });
+
+  it("names upload fields without a stray leading dot", async () => {
     const id = await newBoard();
-    await call(other, "add_elements", { session_id: id, elements: [{ type: "note" }] });
-    expect((await call(client, "get_scene", { session_id: id })).count).toBe(1);
-    await other.close();
+    const e = await callError(client, "upload_media", {
+      session_id: id,
+      data_base64: "!!",
+      mime_type: "image/png",
+    });
+    expect(e.message).toMatch(/^data_base64: /);
+    const p = await callError(client, "place_media", {
+      session_id: id,
+      kind: "image",
+      source: { data_base64: "!!", mime_type: "image/png" },
+    });
+    expect(p.message).toMatch(/^source\.data_base64: /);
+  });
+
+  it("leaves every element it did not touch byte-identical", async () => {
+    const id = await newBoard();
+    const r = await call(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "rectangle", key: "r", x: 0, y: 0, label: "Browser measured" },
+        { type: "rectangle", key: "s", x: 400, y: 0, label: "Other" },
+        { type: "arrow", key: "c", from: "r", to: "s", label: "link" },
+      ],
+    });
+    const A = api(srv);
+    // a browser re-measures R's label with its own fonts and pushes the result
+    let rows = (await A.scene(id)).elements as {
+      el: Record<string, unknown>;
+      idx: string;
+      version: number;
+    }[];
+    const label = rows.find((e) => e.el.containerId === r.created[0].id)!;
+    const pushed = await A.push(
+      id,
+      [
+        put(
+          { ...label.el, width: (label.el.width as number) - 3.25, height: 27.5 },
+          label.idx,
+          label.version,
+        ),
+      ],
+      { baseRev: (await A.scene(id)).rev },
+    );
+    expect(pushed.status).toBe(200);
+    rows = (await A.scene(id)).elements;
+    const sId = r.created[1].id as string;
+    const touched = new Set([sId]);
+    for (const e of rows) if (e.el.containerId === sId) touched.add(e.el.id as string);
+    const snapshot = new Map(rows.map((e) => [e.el.id as string, JSON.stringify(e)]));
+    // the agent restyles and moves S and adds new items; R, its label and nothing else changes
+    await call(client, "set_style", { session_id: id, ids: [sId], style: { fill: "mint" } });
+    await call(client, "add_elements", {
+      session_id: id,
+      elements: [
+        { type: "note", text: "new" },
+        { type: "text", text: "more" },
+      ],
+    });
+    const after = (await A.scene(id)).elements as { el: Record<string, unknown> }[];
+    const arrowId = r.created[2].id as string;
+    for (const e of after) {
+      const was = snapshot.get(e.el.id as string);
+      if (!was || touched.has(e.el.id as string)) continue;
+      expect(JSON.stringify(e), String(e.el.type)).toBe(was);
+    }
+    // the connector and R's label were among the untouched ones
+    expect(after.some((e) => e.el.id === arrowId)).toBe(true);
+    expect(after.some((e) => e.el.id === label.el.id)).toBe(true);
+  });
+
+  it("draws the 6-step flowchart from SKILL.md verbatim in one call", async () => {
+    const skill = fs.readFileSync(path.join(ROOT_DIR, "skills", "chalanamaya", "SKILL.md"), "utf8");
+    const m =
+      /<!-- flowchart-example:start -->\s*```json\n([\s\S]*?)```\s*<!-- flowchart-example:end -->/.exec(
+        skill,
+      );
+    expect(m, "SKILL.md has the flowchart example").not.toBeNull();
+    const args = JSON.parse(m![1]) as { session_id: string; elements: { type: string }[] };
+    const id = await newBoard();
+    const r = await call(client, "add_elements", { ...args, session_id: id });
+    expect(r.warnings ?? []).toEqual([]);
+    const nodes = args.elements.filter((e) => e.type !== "arrow");
+    expect(nodes).toHaveLength(6);
+    const scene = await call(client, "get_scene", { session_id: id });
+    const items = scene.elements as {
+      id: string;
+      type: string;
+      label?: string;
+      from?: unknown;
+      to?: unknown;
+    }[];
+    expect(items.filter((e) => e.type !== "arrow")).toHaveLength(6);
+    const ids = new Set(items.map((e) => e.id));
+    const arrows = items.filter((e) => e.type === "arrow");
+    expect(arrows).toHaveLength(6);
+    // every connector is bound at both ends to a box from the same call
+    for (const a of arrows) {
+      expect(ids.has(a.from as string)).toBe(true);
+      expect(ids.has(a.to as string)).toBe(true);
+    }
+    expect(
+      arrows
+        .map((a) => a.label)
+        .filter(Boolean)
+        .sort(),
+    ).toEqual(["no", "yes"]);
+    expect(items.filter((e) => e.type !== "arrow").every((e) => e.label)).toBe(true);
   });
 });
 

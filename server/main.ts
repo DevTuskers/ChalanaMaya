@@ -7,6 +7,7 @@ import http from "node:http";
 import { createApp, VERSION } from "./app";
 import { ConfigError, loadConfig } from "./config";
 import { runSmokeIsolated, SmokeError } from "./db/smoke";
+import { fontsAvailable, installServerMeasure } from "./text/measure";
 
 const fail = (msg: string): never => {
   console.error(`ChalanaMaya could not start: ${msg}`);
@@ -29,6 +30,9 @@ const main = async () => {
     if (e instanceof SmokeError) fail(e.message);
     throw e;
   }
+  installServerMeasure();
+  if (!fontsAvailable())
+    console.warn("ChalanaMaya: bundled fonts not found; agent text sizes are estimated");
   const handle = createApp(cfg);
   const servers: http.Server[] = [];
   // Loopback only by default (127.0.0.1 and ::1); HOST picks one address instead.

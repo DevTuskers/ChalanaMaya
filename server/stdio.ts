@@ -5,7 +5,7 @@
  * server's /mcp endpoint. It never opens the database. Its capabilities are
  * fixed, so it starts and finishes initialize while the server is still down;
  * it connects on the first forwarded request, reconnects after a failure and
- * sends tools/list_changed once the server is back. Results are forwarded raw.
+ * sends tools, prompts and resources list_changed once the server is back. Results are forwarded raw.
  * Write calls without agent_name get the desktop client's name.
  *
  *   CHALANAMAYA_URL=http://localhost:5183 node dist-server/stdio.js
@@ -46,7 +46,11 @@ export const createBridge = (opts: BridgeOptions) => {
   const server = new Server(
     { name: "chalanamaya", title: "ChalanaMaya", version: opts.version ?? "0.0.0" },
     {
-      capabilities: { tools: { listChanged: true }, prompts: {}, resources: {} },
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: { listChanged: true },
+        resources: { listChanged: true },
+      },
       instructions:
         "ChalanaMaya is a whiteboard. Every board is a session; its URL ends in /s/<session_id>. Pass that id as session_id. Read the chalanamaya://guide resource for layout rules.",
     },
@@ -66,7 +70,10 @@ export const createBridge = (opts: BridgeOptions) => {
           if (wasDown) {
             wasDown = false;
             log(`connected to ${endpoint.origin}`);
+            // clients that cached a failed or empty list fetch it again
             void server.sendToolListChanged().catch(() => {});
+            void server.sendPromptListChanged().catch(() => {});
+            void server.sendResourceListChanged().catch(() => {});
           }
           return client;
         })
@@ -120,21 +127,19 @@ export const createBridge = (opts: BridgeOptions) => {
     }
   };
 
-  const list = (method: string, key: string) => async (req: { params?: unknown }) =>
-    (await forward(method, req.params)) ?? { [key]: [] };
   const unavailable = () => {
     throw new McpError(-32603, downMessage());
   };
+  // list and read requests have no isError result: a JSON-RPC error says the server is down
+  const list = (method: string) => async (req: { params?: unknown }) =>
+    (await forward(method, req.params)) ?? unavailable();
 
-  server.setRequestHandler(ListToolsRequestSchema, list("tools/list", "tools") as never);
-  server.setRequestHandler(ListPromptsRequestSchema, list("prompts/list", "prompts") as never);
-  server.setRequestHandler(
-    ListResourcesRequestSchema,
-    list("resources/list", "resources") as never,
-  );
+  server.setRequestHandler(ListToolsRequestSchema, list("tools/list") as never);
+  server.setRequestHandler(ListPromptsRequestSchema, list("prompts/list") as never);
+  server.setRequestHandler(ListResourcesRequestSchema, list("resources/list") as never);
   server.setRequestHandler(
     ListResourceTemplatesRequestSchema,
-    list("resources/templates/list", "resourceTemplates") as never,
+    list("resources/templates/list") as never,
   );
   server.setRequestHandler(
     GetPromptRequestSchema,

@@ -69,6 +69,18 @@ export const mcpRouter = (
       return rpcError(res, 400, -32700, "The request body is not valid JSON.");
     });
   });
+  // JSON-RPC batches would let one rate-limited POST carry many tool calls;
+  // MCP 2025-06-18 dropped batching, so one request per POST
+  router.post("/", (req, res, next) => {
+    if (Array.isArray(req.body))
+      return rpcError(
+        res,
+        400,
+        -32600,
+        "Batched JSON-RPC requests are not supported. Send one request per POST.",
+      );
+    next();
+  });
   router.post("/", async (req: Request, res: Response) => {
     const baseUrl = cfg.publicUrl
       ? cfg.publicUrl.origin
