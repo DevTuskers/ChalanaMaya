@@ -47,7 +47,9 @@ Acceptance criteria:
 - An item added, changed, moved, restyled, re-layered or deleted in one tab appears in other open tabs of the session within one second on a local network.
 - Agent changes appear live in open tabs in the same way.
 - When two edits hit the same item at the same moment, the later one is kept for that item and the board stays consistent in every tab; a change to an item that someone else deleted is not kept and a short notice explains why.
-- Undo and redo only revert the changes made in this tab; other tabs' and agents' changes stay.
+- Undo and redo only revert the changes made in this tab; other tabs' and agents' changes stay, including pictures and media they added.
+- Items that others add or change while this tab is dragging, resizing, rotating or typing are still there after the drag ends, after Esc cancels it and after undo.
+- A tab only sends changes it made itself: once every tab has the same board, no tab sends anything until someone edits again (no back-and-forth corrections).
 
 ## SESS-05 — Boards saved on the ChalanaMaya server
 
@@ -67,7 +69,8 @@ Acceptance criteria:
 Bring a board from the earlier browser-only version into a session.
 
 Acceptance criteria:
-- When a board saved in this browser is found, a banner offers to import it; the main menu offers the same.
+- When a board saved in this browser at the same address is found, a banner offers to import it; the main menu offers the same.
+- ChalanaMaya starts at `http://localhost:5183` by default, the address the earlier version used with `npm run dev`; boards saved at `http://localhost:5184` are imported by starting once with `PORT=5184` and opening that address. The menu and setup guide explain this.
 - Import brings in all items and pictures as one undo step, into an empty board or beside existing items.
 - The old browser copy is kept until the user chooses **Remove the old copy**.
 
@@ -80,6 +83,7 @@ Show whether the board is saved and live.
 Acceptance criteria:
 - A small status shows Saved, Saving, or Offline.
 - Changes made while offline are kept and sent when the connection returns, also after a reload in the same browser.
+- Adding pictures or media while offline is refused with a clear notice; items already on the board keep working.
 - A session that was deleted elsewhere shows a clear message instead of failing silently.
 
 ## SESS-08 — Access by link
@@ -92,6 +96,7 @@ Acceptance criteria:
 - Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog and `docs/security.md`.
 - The id never appears in full in server logs and is not sent to other websites (only the site origin is sent as referrer).
 - The server listens only on this computer by default; docs explain how and when to expose it with HTTPS.
+- No page, API, MCP tool, resource list or log lists the ids of boards.
 
 ## SESS-09 — Delete a board
 
@@ -103,6 +108,17 @@ Acceptance criteria:
 - **Delete this board** asks for confirmation, then removes the board and files no other board uses.
 - Open tabs of that board show that it was deleted; its address then shows the "does not exist" message.
 
+## SESS-10 — Server storage limits
+
+**Priority: P1**
+
+One server cannot be filled up by people who create many boards.
+
+Acceptance criteria:
+- The server has limits for the number of boards, the total size of stored media and the database size; the defaults are documented and can be changed by the server owner.
+- Going over a limit gives a clear "server is full" message (HTTP 507) and leaves existing boards readable and unchanged.
+- Creating boards, uploading and agent requests are rate limited per address; limits can be changed or turned off by the server owner.
+
 ## AGENT-01 — MCP endpoint
 
 **Priority: P1**
@@ -112,7 +128,9 @@ ChalanaMaya has a built-in MCP server over Streamable HTTP at `/mcp`.
 Acceptance criteria:
 - Standard MCP clients can connect, list tools, prompts and resources, and call tools.
 - Every board tool takes `session_id`, accepting either the id or the full board link.
-- Requests from unexpected host names are refused (DNS-rebinding protection).
+- Requests from unexpected host names are refused for the whole server, including `/mcp`, the API and live connections (DNS-rebinding protection); a configured public address is allowed.
+- A request of up to 16 MB (enough for a 10 MB file in base64) is accepted.
+- The endpoint keeps no per-client state, so clients keep working after a server restart.
 
 ## AGENT-02 — Desktop (stdio) entry point
 
@@ -121,7 +139,7 @@ Acceptance criteria:
 Desktop MCP clients can start ChalanaMaya's MCP server as a command.
 
 Acceptance criteria:
-- `npx chalanamaya-mcp` (and `npm run mcp:stdio`) speaks MCP over stdio and offers the same tools, prompts and resources as `/mcp`.
+- `node <path to ChalanaMaya>/dist-server/stdio.js` (also `npm run mcp:stdio`, or `chalanamaya-mcp` after `npm link`) speaks MCP over stdio and offers the same tools, prompts and resources as `/mcp`, including 10 MB uploads.
 - Its changes appear live in open browser tabs, because it forwards to the running ChalanaMaya server set by `CHALANAMAYA_URL`.
 - A clear error is returned when the server cannot be reached.
 
@@ -144,8 +162,9 @@ Agents can add every kind of item from a high-level description.
 
 Acceptance criteria:
 - `add_elements` adds boxes, diamonds, ovals, text, sticky notes, page frames, connectors (bound to items by id or by a key from the same call), paths, pencil strokes, pictures, web cards, GIFs, videos and animated components.
-- Missing positions, sizes and styles get sensible defaults; the result lists each new id with its final position and size.
-- Invalid input changes nothing and returns an error naming the field and the reason.
+- Missing positions, sizes and styles get sensible defaults; the result lists each new id with its final position and size; text sizes match what the browser shows to within a few percent.
+- Invalid input changes nothing and returns an error naming the field and the reason; unknown fields are ignored and listed as warnings.
+- Write tools accept an optional `agent_name` used in the notices people see.
 
 ## AGENT-05 — Change, move and delete items
 
@@ -167,6 +186,7 @@ Agents can make boards tidy and readable.
 Acceptance criteria:
 - `set_style` applies colours, fill, stroke, roughness, edges, opacity and font settings, and reports items that do not accept a setting.
 - `group_elements`, `ungroup_elements`, `reorder_elements` (front, back, forward, backward) and `arrange_elements` (align, distribute, gap) behave like the matching menu actions.
+- `update_session` sets the board title, board colour and grid.
 
 ## AGENT-07 — Clear the board
 
@@ -187,6 +207,7 @@ Agents can put pictures, GIFs, videos and components on a board.
 Acceptance criteria:
 - `upload_media` stores bytes (base64) and returns a file id; `place_media` places a picture, GIF or video from a file id, an https link or bytes.
 - Size and type limits match [MEDIA-08](07-media.md#media-08--media-limits-and-safety) and give clear errors.
+- Placing media from a link returns a warning that links are shown as live items and as placeholders in exports, and that uploading gives full support.
 - `list_component_presets` lists animated component presets and their settings.
 
 ## AGENT-09 — Drawing guide for agents
@@ -208,6 +229,7 @@ Make connecting an agent easy.
 
 Acceptance criteria:
 - `docs/agents/setup.md` has tested steps for Claude Desktop, Claude Code, Devin, ChatGPT and other MCP clients (HTTP and stdio).
+- It explains that cloud agents (Devin, ChatGPT) need a public HTTPS address such as a tunnel, and that the session id is then the only protection.
 - `docs/agents/mcp-tools.md` documents every tool with an example; a test fails when a tool is missing from it.
 
 ## AGENT-11 — See what agents changed
@@ -222,7 +244,7 @@ Acceptance criteria:
 
 ## AGENT-12 — Board preview for agents
 
-**Priority: P2**
+**Priority: P2** (not scheduled in the current plan; see its open question 7)
 
 Agents can look at a picture of the board to check their work.
 
