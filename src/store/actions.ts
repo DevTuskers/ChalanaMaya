@@ -1,4 +1,5 @@
 import { LIMITS } from "../shared/limits";
+import { adoptFiles } from "../sync/files";
 import { buildChart, looksLikeSpreadsheet, type ChartData, type ChartKind } from "../scene/chart";
 import { resolveWebCard } from "../scene/webcard";
 import { createEmbed } from "../scene/elements";
@@ -235,18 +236,35 @@ export const insertImageBlob = async (store: Store, blob: Blob) => {
     store.toast("That image could not be read. The board was not changed.", "error");
     return;
   }
+  let fileId = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let src = dataURL;
+  let mimeType = blob.type || "image/png";
+  if (store.uploadFile) {
+    // a session board keeps its pictures on the server
+    try {
+      const up = await store.uploadFile(blob);
+      fileId = up.id;
+      src = up.url;
+      mimeType = up.mime;
+    } catch (e) {
+      store.toast(
+        `That picture could not be saved to the board${e instanceof Error && e.message ? `: ${e.message}` : "."}`,
+        "error",
+      );
+      return;
+    }
+  }
   const max = 480 / store.get().viewport.zoom;
   const s = Math.min(1, max / Math.max(size.width, size.height));
   const w = Math.max(1, size.width * s);
   const h = Math.max(1, size.height * s);
   const p = pastePoint(store);
-  const fileId = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const el = createImage(p.x - w / 2, p.y - h / 2, w, h, fileId);
   if (store.get().viewMode) return; // turned on while the picture was loading
   const { elements, files } = store.get();
   store.history.record(store.snapshot());
   store.set({
-    files: { ...files, [fileId]: { id: fileId, mimeType: blob.type || "image/png", dataURL } },
+    files: { ...files, [fileId]: { id: fileId, mimeType, dataURL: src } },
     elements: [...elements, el],
     selectedIds: new Set([el.id]),
     tool: "pick",
@@ -274,7 +292,17 @@ export const pasteContent = async (store: Store, content: PasteContent) => {
       await insertImageBlob(store, content.blob);
       return;
     case "scene": {
-      const { elements, files } = content.payload;
+      let { elements, files } = content.payload;
+      if (store.uploadFile && elements.some((e) => e.type === "image")) {
+        const adopted = await adoptFiles(elements, files, store.get().files, store.uploadFile);
+        if (adopted.failed)
+          store.toast(
+            `${adopted.failed} picture${adopted.failed === 1 ? "" : "s"} could not be copied to this board and were left out.`,
+            "error",
+          );
+        elements = adopted.elements;
+        files = adopted.files;
+      }
       const b = getCommonBounds(elements);
       if (!b) {
         store.toast("The clipboard is empty, so there is nothing to paste.");
@@ -383,7 +411,19 @@ export const ungroupSelected = (store: Store) =>
   arrange(store, ungroupElements, "The selection is not grouped.");
 
 export const reorderSelected = (store: Store, op: ZOrder) =>
-  arrange(store, (els, ids) => reorder(els, ids, op), "Nothing to reorder.");
+  arrange(
+    store,
+    (els, ids) => {
+      const next = reorder(els, ids, op);
+      // layer hint: the moved items (and their labels) get new keys, nothing else
+      if (next)
+        for (const e of els)
+          if (ids.has(e.id) || (e.type === "text" && e.containerId && ids.has(e.containerId)))
+            store.layerMoves.add(e.id);
+      return next;
+    },
+    "Nothing to reorder.",
+  );
 
 export const alignSelected = (store: Store, mode: Align) =>
   arrange(store, (els, ids) => alignElements(els, ids, mode), "Pick two or more items to align.");

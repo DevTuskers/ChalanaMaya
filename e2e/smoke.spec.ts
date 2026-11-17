@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { STORAGE_KEY, clickBoard, drag, expectCount, freshBoard, storedElements } from "./helpers";
+import { clickBoard, drag, expectCount, freshBoard, storedElements } from "./helpers";
 
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -316,14 +316,9 @@ test("theme switch keeps the board", async ({ page }) => {
   await page.getByTestId("menu-button").click();
   await page.getByTestId("menu-theme").click();
   await expect(page.getByTestId("app")).toHaveAttribute("data-theme", "dark");
-  // the theme is part of the autosaved board settings straight away
+  // the theme is personal: it is kept in this browser, not in the shared board
   await expect
-    .poll(() =>
-      page.evaluate(
-        (key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings?.theme,
-        STORAGE_KEY,
-      ),
-    )
+    .poll(() => page.evaluate(() => localStorage.getItem("chalanamaya.theme")))
     .toBe("dark");
   await page.reload();
   await expect(page.getByTestId("app")).toHaveAttribute("data-theme", "dark");

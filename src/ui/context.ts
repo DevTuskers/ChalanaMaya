@@ -8,6 +8,18 @@ export interface AppServices {
   openFile: () => void;
   insertPicture: () => void;
   saveFile: () => void;
+  /** Session board commands (absent outside a server session). */
+  session?: SessionServices;
+}
+
+export interface SessionServices {
+  newBoard: () => void;
+  copyLink: () => void;
+  copyId: () => void;
+  setTitle: (title: string) => void;
+  importLegacy: () => void;
+  removeLegacy: () => void;
+  dismissLegacy: () => void;
 }
 
 export const AppContext = createContext<AppServices | null>(null);

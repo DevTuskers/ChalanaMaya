@@ -1,12 +1,12 @@
 # Sessions and agents
 
-Status: SESS-10 is done (phase 1b, server-side limits); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
+Status: SESS-10 is done (phase 1b, server-side limits); SESS-01, SESS-02, SESS-03, SESS-05, SESS-06 and SESS-08 are done (phase 2, one tab per board; live sync between tabs is SESS-04, phase 3); SESS-07 is partly done (the save status and offline protection; live connection status comes with phase 3); all other features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking). Implementation plan: [agent canvas plan](../plans/agent-canvas.md).
 
 A **board session** is one board with its own address. People in browser tabs and agents that use ChalanaMaya's MCP server work on the same session at the same time. This is board-session sync, not the collaboration features listed in [out of scope](../out-of-scope.md).
 
 ## SESS-01 — Board session address
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 Every board is a session whose address ends with its id: `/s/<id>`.
 
@@ -17,7 +17,7 @@ Acceptance criteria:
 
 ## SESS-02 — New board and recent boards
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 Start another board and get back to earlier ones.
 
@@ -28,13 +28,13 @@ Acceptance criteria:
 
 ## SESS-03 — Copy board link and session id
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 Hand a board to an agent or another tab.
 
 Acceptance criteria:
 - **Copy board link** copies the full `/s/<id>` address; **Copy session id** copies only the id; both confirm with a short notice.
-- When the clipboard is refused, the link and id are shown selected so they can be copied by hand.
+- When the clipboard is refused, the link and id are shown in a notice so they can be copied by hand.
 - Both actions remind the user that anyone with the link or id can change the board.
 
 ## SESS-04 — Live board sync
@@ -55,7 +55,7 @@ Acceptance criteria:
 
 ## SESS-05 — Boards saved on the ChalanaMaya server
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 The server keeps session boards and their files on disk.
 
@@ -67,7 +67,7 @@ Acceptance criteria:
 
 ## SESS-06 — Import a board saved in this browser
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 Bring a board from the earlier browser-only version into a session.
 
@@ -80,7 +80,7 @@ Acceptance criteria:
 
 ## SESS-07 — Connection status
 
-**Priority: P1**
+**Priority: P1** · **Status: partly done** (phase 2: Saved, Saving and Not saved, offline changes kept across a reload, a deleted board is reported; live connection status in phase 3)
 
 Show whether the board is saved and live.
 
@@ -92,12 +92,12 @@ Acceptance criteria:
 
 ## SESS-08 — Access by link
 
-**Priority: P1**
+**Priority: P1** · **Status: done** (phase 2; evidence `e2e/sessions.spec.ts`, `src/sync/sync.test.ts`, `server/sync.test.ts`)
 
 There are no accounts yet: the session id works like a password.
 
 Acceptance criteria:
-- Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog and `docs/security.md`.
+- Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog (phase 4) and `docs/security.md`.
 - The id never appears in full in server logs and is not sent to other websites (only the site origin is sent as referrer).
 - Every item written by a browser or an agent is checked against one strict set of rules (colour format, id format, number ranges, size limits) and refused with a clear message when it breaks one, so nothing written by one person can break or attack another person's board or exports. Large changes such as moving 1,000 items at once are saved in parts and never lost; a single item over 256 KB is refused with a notice.
 - Saving the same change twice (for example after a reload) never undoes a newer change made by someone else.

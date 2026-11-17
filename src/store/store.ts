@@ -117,6 +117,12 @@ export interface AppState {
   spotlight: SpotlightStroke[];
   /** Web card that currently receives pointer input. */
   activeEmbedId: string | null;
+  /** The server session this board belongs to (null in unit tests). */
+  session: { id: string; title: string } | null;
+  /** Server save state of the session board. */
+  saveStatus: "saved" | "saving" | "offline" | "gone" | "full";
+  /** A board saved by an older version in this browser, offered for import. */
+  legacyBoard: { count: number } | null;
 }
 
 export const initialState = (): AppState => ({
@@ -153,6 +159,9 @@ export const initialState = (): AppState => ({
   searchHighlight: null,
   spotlight: [],
   activeEmbedId: null,
+  session: null,
+  saveStatus: "saved",
+  legacyBoard: null,
 });
 
 type Listener = () => void;
@@ -171,6 +180,15 @@ export class Store {
   ownerWindow: Window | null = null;
   /** Last pointer position over the canvas, in screen px. */
   lastPointer: { x: number; y: number } | null = null;
+  /**
+   * Rule D: in a server-backed session files are add-only, so undo and redo
+   * keep the current files instead of restoring an older file map.
+   */
+  sessionMode = false;
+  /** Ids moved in the layer order since the save path last looked (reorder hint). */
+  layerMoves = new Set<string>();
+  /** Uploads a picture to the session; unset outside a session (data URLs). */
+  uploadFile: ((blob: Blob) => Promise<{ id: string; url: string; mime: string }>) | null = null;
 
   constructor(state: AppState = initialState()) {
     this.state = state;
@@ -234,7 +252,7 @@ export class Store {
     if (!prev) return false;
     this.set({
       elements: prev.elements,
-      files: prev.files,
+      files: this.sessionMode ? this.state.files : prev.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,
     });
@@ -246,7 +264,7 @@ export class Store {
     if (!next) return false;
     this.set({
       elements: next.elements,
-      files: next.files,
+      files: this.sessionMode ? this.state.files : next.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,
     });

@@ -1,11 +1,125 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { STORAGE_KEY, getStorage } from "../io/autosave";
+import { boardLabel, readRecent, shortId } from "../sync/recent";
 import { copySelectionAs, lockAll, pasteWithApi, unlockAll } from "../store/actions";
 import { useAppState, useServices } from "./context";
 import { Icon } from "./icons";
 import { formatKeys } from "./shortcuts";
 
+/** The board session: title, id, new board, links and recent boards (plan §4.1). */
+const SessionSection = ({ close }: { close: () => void }) => {
+  const { session } = useServices();
+  const info = useAppState((s) => s.session);
+  const viewMode = useAppState((s) => s.viewMode);
+  const [title, setTitle] = useState(info?.title ?? "");
+  const [showRecent, setShowRecent] = useState(false);
+  if (!session || !info) return null;
+  const storage = getStorage();
+  const recent = readRecent(storage).filter((r) => r.id !== info.id);
+  let hasLegacy = false;
+  try {
+    hasLegacy = !!storage?.getItem(STORAGE_KEY);
+  } catch {
+    // no storage, nothing to import
+  }
+  const commitTitle = () => {
+    const t = title.trim().slice(0, 120);
+    if (t !== info.title) session.setTitle(t);
+  };
+  const act = (fn: () => void) => () => {
+    close();
+    fn();
+  };
+  return (
+    <div className="menu-session" data-testid="session-menu">
+      <label className="menu-session-title">
+        <span>Board name</span>
+        <input
+          type="text"
+          value={title}
+          maxLength={120}
+          placeholder="Untitled board"
+          disabled={viewMode}
+          data-testid="session-title"
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          onBlur={commitTitle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitTitle();
+            }
+          }}
+        />
+      </label>
+      <p className="menu-session-id">
+        Board id <code data-testid="session-short-id">{shortId(info.id)}</code>
+      </p>
+      <div className="menu-session-actions">
+        {/* a link, so Ctrl/⌘ + click opens the new board in a new tab */}
+        <a className="btn" href="/" data-testid="session-new" onClick={close}>
+          New board
+        </a>
+        <button
+          type="button"
+          className="btn"
+          data-testid="session-copy-link"
+          onClick={act(session.copyLink)}
+        >
+          Copy board link
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="session-copy-id"
+          onClick={act(session.copyId)}
+        >
+          Copy board id
+        </button>
+      </div>
+      {recent.length ? (
+        <div className="menu-session-recent">
+          <button
+            type="button"
+            className="menu-item"
+            aria-expanded={showRecent}
+            data-testid="session-recent"
+            onClick={() => setShowRecent(!showRecent)}
+          >
+            <span>Recent boards ({recent.length})</span>
+          </button>
+          {showRecent ? (
+            <ul data-testid="session-recent-list">
+              {recent.map((r) => (
+                <li key={r.id}>
+                  <a href={`/s/${r.id}`}>
+                    {boardLabel(r.title)} <code>{shortId(r.id)}</code>
+                  </a>{" "}
+                  <time dateTime={new Date(r.openedAt).toISOString()}>
+                    {new Date(r.openedAt).toLocaleString()}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+      {hasLegacy && !viewMode ? (
+        <button
+          type="button"
+          className="menu-item"
+          data-testid="session-import-legacy"
+          onClick={act(session.importLegacy)}
+        >
+          <span>Import the board saved in this browser</span>
+        </button>
+      ) : null}
+      <div className="menu-sep" role="separator" />
+    </div>
+  );
+};
+
 export const MainMenu = () => {
-  const { store, openFile, saveFile, insertPicture } = useServices();
+  const { store, openFile, saveFile, insertPicture, session } = useServices();
   const theme = useAppState((s) => s.theme);
   const grid = useAppState((s) => s.gridEnabled);
   const zen = useAppState((s) => s.zenMode);
@@ -22,7 +136,7 @@ export const MainMenu = () => {
       const top = menu.getBoundingClientRect().top;
       menu.style.maxHeight = `${Math.max(200, win.innerHeight - top - 14)}px`;
     }
-    menu.querySelector<HTMLButtonElement>("button")?.focus();
+    menu.querySelector<HTMLButtonElement>("[role=menuitem], [role=menuitemcheckbox]")?.focus();
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (!menu.contains(t) && !(t as Element).closest?.("[data-testid=menu-button]")) {
@@ -220,6 +334,7 @@ export const MainMenu = () => {
 
   return (
     <div className="menu panel" role="menu" aria-label="Main menu" ref={ref}>
+      {session ? <SessionSection close={() => store.set({ menuOpen: false })} /> : null}
       {shown.map((it) => [
         it.section ? <div key={`${it.id}-sep`} className="menu-sep" role="separator" /> : null,
         <button
@@ -242,8 +357,9 @@ export const MainMenu = () => {
         </button>,
       ])}
       <p className="menu-note">
-        Your board autosaves in this browser only. Clearing browser data deletes this copy, so save
-        a .chalana file now and then as a backup.
+        {session
+          ? "This board is saved on the ChalanaMaya server. Anyone with its address or id can open and change it, so share it only with people and agents you trust."
+          : "Your board autosaves in this browser only. Clearing browser data deletes this copy, so save a .chalana file now and then as a backup."}
       </p>
     </div>
   );

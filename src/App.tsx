@@ -1,15 +1,16 @@
-import { canonicalizeElements, summarizeReport } from "./shared/canonical";
 import { isColor } from "./shared/limits";
 import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import {
-  STORAGE_KEY,
-  getStorage,
-  loadFromStorage,
-  saveToStorage,
-  type StorageLike,
-} from "./io/autosave";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
+import { httpApi } from "./sync/api";
+import type { SessionBoot } from "./sync/session";
+import { SyncClient, applyOpsToScene } from "./sync/client";
+import { inlineFiles, usedFileIds } from "./sync/files";
+import { importIntoSession } from "./sync/importBoard";
+import { PendingMirror } from "./sync/mirror";
+import { boardLabel, rememberBoard } from "./sync/recent";
+import type { FileMap } from "./scene/types";
 import { readPasteEvent } from "./io/clipboard";
 import { downloadBlob, timestampName } from "./io/export";
 import { FormatError, parseBoard, serializeBoard, type ChalanaFile } from "./io/serialize";
@@ -44,7 +45,13 @@ import { EmbedError, extractFromPng, extractFromSvg } from "./io/embed";
 import { ModeBanners, SearchBar, StatsPanel } from "./ui/ViewPanels";
 import { Controller } from "./tools/controller";
 import { Canvas } from "./ui/Canvas";
-import { AppContext, useAppState, useServices, type AppServices } from "./ui/context";
+import {
+  AppContext,
+  useAppState,
+  useServices,
+  type AppServices,
+  type SessionServices,
+} from "./ui/context";
 import { Dialogs } from "./ui/Dialogs";
 import { PropertiesPanel } from "./ui/PropertiesPanel";
 import { TextEditor } from "./ui/TextEditor";
@@ -92,7 +99,26 @@ const isTypingTarget = (t: EventTarget | null) => {
   );
 };
 
-const createStore = () => {
+/** Set once the old browser board was imported or dismissed (it is kept until removed). */
+export const LEGACY_DONE_KEY = "chalanamaya.board.v1.handled";
+
+const legacyBoard = (storage: StorageLike | null) => {
+  try {
+    if (storage?.getItem(LEGACY_DONE_KEY)) return null;
+    const saved = loadFromStorage(storage);
+    return saved && saved.elements.length ? saved : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The session's files as the board's file map (board-relative URLs). */
+const sessionFiles = (boot: SessionBoot): FileMap =>
+  Object.fromEntries(
+    boot.snapshot.files.map((f) => [f.id, { id: f.id, mimeType: f.mime, dataURL: f.url }]),
+  );
+
+const createStore = (boot: SessionBoot) => {
   const storage = getStorage();
   const state = initialState();
   let savedTheme: string | null = null;
@@ -101,31 +127,103 @@ const createStore = () => {
   } catch {
     savedTheme = null;
   }
-  const saved = loadFromStorage(storage);
-  if (saved) {
-    state.elements = saved.elements;
-    state.files = saved.files;
-    state.theme = saved.settings.theme;
-    state.viewBackgroundColor = saved.settings.viewBackgroundColor;
-    state.gridEnabled = saved.settings.gridEnabled;
-  }
+  const snap = boot.snapshot;
+  // the server snapshot first, then ops that never left before the last reload
+  const keyed = applyOpsToScene(snap.elements, boot.unsent);
+  state.elements = finalizeScene(keyed.map((e) => e.el));
+  state.files = sessionFiles(boot);
+  const bg = snap.settings.viewBackgroundColor;
+  state.viewBackgroundColor = bg && isColor(bg) ? bg : PAPER.light;
+  state.gridEnabled = snap.settings.gridEnabled ?? false;
+  let title = snap.title;
+  for (const op of boot.unsent)
+    if (op.t === "settings") {
+      if (op.settings.viewBackgroundColor)
+        state.viewBackgroundColor = op.settings.viewBackgroundColor;
+      if (op.settings.gridEnabled !== undefined) state.gridEnabled = op.settings.gridEnabled;
+      if (op.settings.title !== undefined) title = op.settings.title;
+    }
+  state.session = { id: boot.id, title };
   state.prefs = readPrefs(storage);
   if (savedTheme === "light" || savedTheme === "dark") state.theme = savedTheme;
+  const legacy = legacyBoard(storage);
+  state.legacyBoard = legacy ? { count: legacy.elements.length } : null;
   const store = new Store(state);
-  let unreadable = false;
-  try {
-    unreadable = !saved && !!storage?.getItem(STORAGE_KEY);
-  } catch {
-    unreadable = false;
-  }
-  if (unreadable) {
-    store.toast(
-      "The board saved in this browser could not be read, so a new board was started. A copy of the old data was kept.",
-      "error",
-      9000,
-    );
-  }
+  store.sessionMode = true;
+  store.uploadFile = async (blob) => {
+    const up = await httpApi.upload(boot.id, blob);
+    return { id: up.file_id, url: up.url, mime: up.mime };
+  };
   return store;
+};
+
+/** The save state of the board: Saved, Saving or Not saved. */
+const SaveStatusChip = () => {
+  const status = useAppState((s) => s.saveStatus);
+  const label =
+    status === "saved"
+      ? "Saved"
+      : status === "saving"
+        ? "Saving…"
+        : status === "offline"
+          ? "Not saved — retrying"
+          : status === "gone"
+            ? "Not saved — board deleted"
+            : "Not saved — server storage full";
+  return (
+    <div
+      className={`save-status save-${status}`}
+      data-testid="save-status"
+      data-state={status}
+      role="status"
+      title={
+        status === "offline"
+          ? "The server could not be reached. Changes are kept in this browser and sent when it is back."
+          : undefined
+      }
+    >
+      {label}
+    </div>
+  );
+};
+
+const LegacyBanner = () => {
+  const { session } = useServices();
+  const legacy = useAppState((s) => s.legacyBoard);
+  const viewMode = useAppState((s) => s.viewMode);
+  if (!legacy || !session || viewMode) return null;
+  return (
+    <div className="legacy-banner" role="region" aria-label="Old board" data-testid="legacy-banner">
+      <span>
+        This browser still has a board from an earlier version ({legacy.count} item
+        {legacy.count === 1 ? "" : "s"}).
+      </span>
+      <button
+        type="button"
+        className="btn btn-primary"
+        data-testid="legacy-import"
+        onClick={session.importLegacy}
+      >
+        Import it into this board
+      </button>
+      <button
+        type="button"
+        className="btn"
+        data-testid="legacy-dismiss"
+        onClick={session.dismissLegacy}
+      >
+        Not now
+      </button>
+      <button
+        type="button"
+        className="btn"
+        data-testid="legacy-remove"
+        onClick={session.removeLegacy}
+      >
+        Remove the old copy
+      </button>
+    </div>
+  );
 };
 
 const Toasts = () => {
@@ -164,7 +262,7 @@ const StorageWarning = () => {
   if (!warning) return null;
   return (
     <div className="storage-warning" role="alert" data-testid="storage-warning">
-      <strong>Not saved in this browser.</strong> {warning} Save a .chalana file to keep your work.
+      <strong>Not protected.</strong> {warning} Save a .chalana file to keep your work.
       <button type="button" className="btn" onClick={saveFile}>
         Save file
       </button>
@@ -206,8 +304,46 @@ const PathHint = () => {
   );
 };
 
-export const App = () => {
-  const store = useMemo(createStore, []);
+export const App = ({ boot }: { boot: SessionBoot }) => {
+  const [store] = useState(() => createStore(boot));
+  const [sync] = useState(
+    () =>
+      new SyncClient(
+        boot.id,
+        httpApi,
+        {
+          scene: () => {
+            const s = store.get();
+            return {
+              elements: s.elements,
+              settings: {
+                viewBackgroundColor: s.viewBackgroundColor,
+                gridEnabled: s.gridEnabled,
+                title: s.session?.title ?? "",
+              },
+            };
+          },
+          replaceElements: (elements) => store.set({ elements }),
+          status: (saveStatus) => store.set({ saveStatus }),
+          protection: (storageWarning) => store.set({ storageWarning }),
+          notice: (message) => store.toast(message, "error", 8000),
+          takeLayerMoves: () => {
+            const ids = [...store.layerMoves];
+            store.layerMoves.clear();
+            return ids;
+          },
+        },
+        new PendingMirror(getStorage(), boot.id),
+        {
+          ...boot.snapshot,
+          settings: {
+            viewBackgroundColor:
+              boot.snapshot.settings.viewBackgroundColor ?? store.get().viewBackgroundColor,
+            gridEnabled: boot.snapshot.settings.gridEnabled ?? false,
+          },
+        },
+      ),
+  );
   const controller = useMemo(() => new Controller(store), [store]);
   const fileInput = useRef<HTMLInputElement>(null);
   const pictureInput = useRef<HTMLInputElement>(null);
@@ -216,14 +352,18 @@ export const App = () => {
   const zen = useSyncExternalStore(store.subscribe, () => store.get().zenMode);
   const viewMode = useSyncExternalStore(store.subscribe, () => store.get().viewMode);
   const minimap = useSyncExternalStore(store.subscribe, () => store.get().prefs.minimap);
+  const itemCount = useSyncExternalStore(store.subscribe, () => store.get().elements.length);
 
   const services: AppServices = useMemo(() => {
     const saveFile = () => {
       const s = store.get();
-      const text = serializeBoard(s.elements, s.files, store.boardSettings());
       const doc = rootRef.current?.ownerDocument ?? document;
-      downloadBlob(new Blob([text], { type: "application/json" }), timestampName("chalana"), doc);
-      store.toast("Saved a .chalana file to your downloads.", "success", 2500);
+      // a .chalana file carries its pictures as data URLs
+      void inlineFiles(s.files, usedFileIds(s.elements)).then((files) => {
+        const text = serializeBoard(s.elements, files, store.boardSettings());
+        downloadBlob(new Blob([text], { type: "application/json" }), timestampName("chalana"), doc);
+        store.toast("Saved a .chalana file to your downloads.", "success", 2500);
+      });
     };
     const openFile = () => {
       if (!blockedByViewMode(store)) fileInput.current?.click();
@@ -231,25 +371,90 @@ export const App = () => {
     const insertPicture = () => {
       if (!blockedByViewMode(store)) pictureInput.current?.click();
     };
-    return { store, controller, saveFile, openFile, insertPicture };
-  }, [store, controller]);
+    const storage = getStorage();
+    const legacyDone = () => {
+      try {
+        storage?.setItem(LEGACY_DONE_KEY, String(Date.now()));
+      } catch {
+        // the banner simply shows again next time
+      }
+      store.set({ legacyBoard: null });
+    };
+    const removeLegacy = () => {
+      try {
+        storage?.removeItem?.(STORAGE_KEY);
+      } catch {
+        // nothing to remove
+      }
+      legacyDone();
+      store.toast("The old browser copy was removed.", "info", 3000);
+    };
+    const session: SessionServices = {
+      newBoard: () => window.location.assign("/"),
+      copyLink: () => {
+        const url = `${window.location.origin}/s/${boot.id}`;
+        void (
+          navigator.clipboard?.writeText(url) ?? Promise.reject(new Error("no clipboard"))
+        ).then(
+          () =>
+            store.toast(
+              "Board link copied. Anyone with it can change this board.",
+              "success",
+              3500,
+            ),
+          () => store.toast(`Copy this link: ${url}`, "info", 9000),
+        );
+      },
+      copyId: () => {
+        void (
+          navigator.clipboard?.writeText(boot.id) ?? Promise.reject(new Error("no clipboard"))
+        ).then(
+          () =>
+            store.toast(
+              "Board id copied. An agent needs only this id, and anyone with it can change this board.",
+              "success",
+              3500,
+            ),
+          () => store.toast(`Board id: ${boot.id}`, "info", 9000),
+        );
+      },
+      setTitle: (title) => {
+        const s = store.get().session;
+        if (s) store.set({ session: { ...s, title } });
+      },
+      importLegacy: () => {
+        const saved = loadFromStorage(storage);
+        if (!saved) return legacyDone();
+        store.set({ legacyBoard: null });
+        void importIntoSession(store, sync, saved, "add").then((r) => {
+          if (!r.ok) return;
+          legacyDone();
+          store.toast(
+            `Imported ${r.count} item${r.count === 1 ? "" : "s"} from the old browser board. ${r.summary} The old copy is kept until you remove it.`,
+            "success",
+            9000,
+            { label: "Remove the old copy", testId: "legacy-remove-toast", run: removeLegacy },
+          );
+        });
+      },
+      removeLegacy,
+      dismissLegacy: legacyDone,
+    };
+    return { store, controller, saveFile, openFile, insertPicture, session };
+  }, [store, controller, sync, boot.id]);
 
-  // autosave
+  // save to the session
   useEffect(() => {
     const storage = getStorage();
-    let timer = 0;
     const win = rootRef.current?.ownerDocument.defaultView ?? window;
-    const flush = () => {
-      timer = 0;
-      const s = store.get();
-      const err = saveToStorage(storage, s.elements, s.files, store.boardSettings());
-      if (err !== s.storageWarning) {
-        if (err || s.storageWarning) store.set({ storageWarning: err });
-      }
-    };
     store.ownerWindow = win;
     let lastPrefs = store.get().prefs;
-    let lastBoard = [store.get().viewBackgroundColor, store.get().gridEnabled].join();
+    const boardKey = (s: ReturnType<typeof store.get>) =>
+      [s.viewBackgroundColor, s.gridEnabled, s.session?.title].join("\u0000");
+    let lastBoard = boardKey(store.get());
+    let lastTitle = store.get().session?.title ?? "";
+    rememberBoard(storage, { id: boot.id, title: lastTitle });
+    win.document.title = `${boardLabel(lastTitle)} — ChalanaMaya`;
     const unsubPrefs = store.subscribe(() => {
       const s = store.get();
       if (s.prefs !== lastPrefs) {
@@ -260,31 +465,31 @@ export const App = () => {
           // preferences are optional
         }
       }
-      const board = [s.viewBackgroundColor, s.gridEnabled].join();
+      const board = boardKey(s);
       if (board !== lastBoard) {
         lastBoard = board;
         store.onSceneChange?.();
       }
-    });
-    store.onSceneChange = () => {
-      if (timer) win.clearTimeout(timer);
-      timer = win.setTimeout(flush, 250);
-    };
-    const onHide = () => {
-      if (timer) {
-        win.clearTimeout(timer);
-        flush();
+      const title = s.session?.title ?? "";
+      if (title !== lastTitle) {
+        lastTitle = title;
+        rememberBoard(storage, { id: boot.id, title });
+        win.document.title = `${boardLabel(title)} — ChalanaMaya`;
       }
-    };
+    });
+    store.onSceneChange = () => sync.schedule();
+    // ops that never left before the last reload go out now
+    if (boot.unsent.length) sync.schedule();
+    const onHide = () => sync.pageHide();
     win.addEventListener("pagehide", onHide);
-    win.addEventListener("beforeunload", onHide);
+    // test hook: lets e2e specs wait until everything is acknowledged
+    (win as unknown as { __chalanaSync?: SyncClient }).__chalanaSync = sync;
     return () => {
       unsubPrefs();
       store.onSceneChange = null;
       win.removeEventListener("pagehide", onHide);
-      win.removeEventListener("beforeunload", onHide);
     };
-  }, [store]);
+  }, [store, sync, boot]);
 
   // keyboard, clipboard
   useEffect(() => {
@@ -504,28 +709,27 @@ export const App = () => {
   const applyOpened = (file: ChalanaFile) => {
     if (blockedByViewMode(store)) return;
     const view = store.viewSize;
-    store.history.record(store.snapshot());
-    // lenient file edge: canonicalise, then strict validation (plan §3.11)
-    const { elements, report } = canonicalizeElements(file.elements);
-    const b = getCommonBounds(elements);
-    const bg = file.settings.viewBackgroundColor.toLowerCase();
-    store.set({
-      files: file.files,
-      elements: finalizeScene(elements),
-      selectedIds: new Set(),
-      editingTextId: null,
-      theme: file.settings.theme,
-      viewBackgroundColor: isColor(bg) ? bg : PAPER[file.settings.theme],
-      gridEnabled: file.settings.gridEnabled,
-      viewport: (b && fitBounds(b, view.width, view.height)) || { scrollX: 0, scrollY: 0, zoom: 1 },
-      historyVersion: store.get().historyVersion + 1,
+    // lenient file edge: canonicalise, upload pictures, then one atomic import (plan §4.1)
+    void importIntoSession(store, sync, file, "replace").then((r) => {
+      if (!r.ok) return;
+      const b = getCommonBounds(store.get().elements);
+      store.set({
+        theme: file.settings.theme,
+        viewport: (b && fitBounds(b, view.width, view.height)) || {
+          scrollX: 0,
+          scrollY: 0,
+          zoom: 1,
+        },
+      });
+      const extra = r.failedPictures
+        ? ` ${r.failedPictures} picture${r.failedPictures === 1 ? "" : "s"} could not be uploaded and were left out.`
+        : "";
+      store.toast(
+        r.summary ? `Board opened. ${r.summary}${extra}` : `Board opened.${extra}`,
+        "success",
+        r.summary || extra ? 5000 : 2500,
+      );
     });
-    const summary = summarizeReport(report);
-    store.toast(
-      summary ? `Board opened. ${summary}` : "Board opened.",
-      "success",
-      summary ? 5000 : 2500,
-    );
   };
 
   const onFileChosen = async (input: HTMLInputElement) => {
@@ -569,6 +773,7 @@ export const App = () => {
         data-theme={theme}
         ref={rootRef}
         data-testid="app"
+        data-items={itemCount}
       >
         <Canvas />
         <WebCards />
@@ -582,6 +787,8 @@ export const App = () => {
         <ModeBanners />
         <PathHint />
         <StorageWarning />
+        {zen ? null : <SaveStatusChip />}
+        <LegacyBanner />
         <Toasts />
         <Dialogs />
         <input
@@ -622,12 +829,7 @@ export const App = () => {
 /** Mirrors the theme to <html> (for scrollbars/colour-scheme) and remembers it. */
 function useSyncTheme(store: Store): Theme {
   const theme = useSyncExternalStoreTheme(store);
-  const firstRun = useRef(true);
-  useEffect(() => {
-    // the theme is part of the saved board settings, so autosave it too
-    if (firstRun.current) firstRun.current = false;
-    else store.onSceneChange?.();
-  }, [store, theme]);
+  // the theme is personal: it stays in this browser and is not part of the session
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.theme = theme;

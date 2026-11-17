@@ -6,6 +6,7 @@ export const STORAGE_KEY = "chalanamaya.board.v1";
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 }
 
 export const getStorage = (): StorageLike | null => {

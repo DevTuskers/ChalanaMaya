@@ -2,16 +2,18 @@
 
 Status: all features are planned. Priorities follow the [tracking guide](../README.md#feature-tracking).
 
-## FILE-01 — Browser autosave
+## FILE-01 — Autosave
 
 **Priority: P0**
 
-Save the board locally as it changes and restore it on return.
+Save the board as it changes and restore it on return.
+
+Since agent-canvas phase 2 a board is a session saved on the ChalanaMaya server ([SESS-05](06-sessions-and-agents.md#sess-05--boards-saved-on-the-chalanamaya-server)); browser storage only keeps changes not yet acknowledged by the server, preferences, recent boards and the board of the earlier browser-only version until it is imported or removed ([SESS-06](06-sessions-and-agents.md#sess-06--import-a-board-saved-in-this-browser)).
 
 Acceptance criteria:
-- After an edit, the board and images are saved to browser storage and restored on reload.
+- After an edit, the board and images are saved and restored on reload.
 - Storage failure shows a warning and leaves the current board usable.
-- Explain that clearing browser data removes this local copy and recommend file backups.
+- Explain that changes not yet saved to the server are kept only in this browser, and recommend file backups.
 
 ## FILE-02 — Save and open .chalana
 

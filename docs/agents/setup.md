@@ -1,6 +1,6 @@
 # Running ChalanaMaya and connecting agents
 
-Status: the ChalanaMaya server runs (phase 1b of the [agent canvas plan](../plans/agent-canvas.md)). The board in the browser still saves to this browser's storage; server-backed boards at `/s/<id>` arrive in phase 2 and the MCP endpoint that agents use arrives in phase 4. Until then agents cannot draw on a board yet; the sections below say what is already there.
+Status: the ChalanaMaya server runs and keeps every board (phases 1b and 2 of the [agent canvas plan](../plans/agent-canvas.md)). Opening `/` starts a board at `/s/<id>`; the main menu copies the board link or id. The MCP endpoint that agents use arrives in phase 4, so agents cannot draw on a board yet; the sections below say what is already there. A board kept by the earlier browser-only version is offered for import on boards opened at the same address (`http://localhost:5183` by default; start once with `PORT=5184` for boards saved there).
 
 ## Run the server
 
@@ -41,7 +41,7 @@ If you used the older `vite preview` address (`http://localhost:5184`), start on
 
 Going over a storage limit returns HTTP 507 ("server is full") and leaves existing boards readable and unchanged.
 
-## The REST API (used by the app from phase 2)
+## The REST API (used by the app)
 
 All responses are JSON; errors look like `{"error": {"code": "...", "message": "..."}}`. Requests that change something must send the header `X-ChalanaMaya: 1` and must not come from another site.
 

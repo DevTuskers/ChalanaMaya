@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { STORAGE_KEY, clickBoard, drag, expectCount, freshBoard } from "./helpers";
+import { clickBoard, drag, expectCount, freshBoard, serverBoard } from "./helpers";
 
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -16,11 +16,8 @@ type Loose = Record<string, unknown> & {
 const board = async (
   page: Page,
 ): Promise<{ elements: Loose[]; settings: Record<string, unknown> }> => {
-  await page.waitForTimeout(400);
-  return page.evaluate((key) => {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : { elements: [], settings: {} };
-  }, STORAGE_KEY);
+  const b = await serverBoard(page);
+  return { elements: b.elements as unknown as Loose[], settings: b.settings };
 };
 const els = async (page: Page) => (await board(page)).elements;
 

@@ -17,6 +17,7 @@ import { embedInPng, svgMetadata } from "./embed";
 import { canvasToBlob, exportToCanvas } from "./export";
 import { serializeBoard, type BoardSettings } from "./serialize";
 import { elementsToPlainText, exportToSvg } from "./svg";
+import { inlineFiles, usedFileIds } from "../sync/files";
 import kalam400 from "@fontsource/kalam/files/kalam-latin-400-normal.woff2?url";
 import sans400 from "@fontsource/source-sans-3/files/source-sans-3-latin-400-normal.woff2?url";
 import mono400 from "@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2?url";
@@ -37,7 +38,14 @@ export interface ImageExportRequest {
 const sceneJson = (r: ImageExportRequest) =>
   serializeBoard(r.elements, r.files, { ...r.settings, theme: r.theme });
 
-export const exportPngBlob = async (r: ImageExportRequest): Promise<Blob> => {
+/** Server-held pictures become data URLs, so exports work anywhere. */
+const withInlineFiles = async (r: ImageExportRequest): Promise<ImageExportRequest> =>
+  Object.values(r.files).some((f) => !f.dataURL.startsWith("data:"))
+    ? { ...r, files: await inlineFiles(r.files, usedFileIds(r.elements)) }
+    : r;
+
+export const exportPngBlob = async (req: ImageExportRequest): Promise<Blob> => {
+  const r = await withInlineFiles(req);
   const canvas = await exportToCanvas(r.elements, r.files, {
     background: r.background,
     scale: r.scale,
@@ -79,7 +87,8 @@ export const brandFontCss = () => {
   return fontCssCache;
 };
 
-export const exportSvgText = async (r: ImageExportRequest): Promise<string> => {
+export const exportSvgText = async (req: ImageExportRequest): Promise<string> => {
+  const r = await withInlineFiles(req);
   const usesText = r.elements.some((e) => e.type === "text" || e.type === "frame");
   return exportToSvg(r.elements, r.files, {
     theme: r.theme,

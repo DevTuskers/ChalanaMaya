@@ -2,7 +2,7 @@
 
 ChalanaMaya is a hand-drawn-style whiteboard for sketching ideas, explaining plans, and arranging visual notes. It aims for familiar, easy drawing with its own colours, type, icons, and voice.
 
-It is a React + TypeScript app served by a small Node server (Express, SQLite). Today the board in the browser is saved in the browser; board sessions at `/s/<id>` that live on the server, and an MCP server so agents (Claude, Devin, ChatGPT…) can draw on a session, are being built — see the [agent canvas plan](docs/plans/agent-canvas.md).
+It is a React + TypeScript app served by a small Node server (Express, SQLite). Every board is a session at `/s/<id>`: opening `/` starts a new board, and the board is saved on the ChalanaMaya server (SQLite on disk), so it survives reloads and server restarts. Anyone with the board's address or id can open and change it. Live sync between tabs and an MCP server so agents (Claude, Devin, ChatGPT…) can draw on a session are being built — see the [agent canvas plan](docs/plans/agent-canvas.md).
 
 ## Run it
 

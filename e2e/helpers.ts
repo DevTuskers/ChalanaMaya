@@ -2,12 +2,56 @@ import { expect, type Page } from "@playwright/test";
 
 export const STORAGE_KEY = "chalanamaya.board.v1";
 
-/** Opens a fresh, empty board. */
+export const SESSION_URL = /\/s\/[A-Za-z0-9_-]{24}$/;
+
+/** Opens a fresh, empty board: `/` creates a new session. */
 export const freshBoard = async (page: Page) => {
   await page.goto("/");
+  await expect(page).toHaveURL(SESSION_URL);
   await page.evaluate(() => localStorage.clear());
-  await page.reload();
+  await page.goto("/");
+  await expect(page).toHaveURL(SESSION_URL);
   await expect(page.getByTestId("board")).toBeVisible();
+};
+
+/** The session id in the page address. */
+export const sessionId = (page: Page) => {
+  const m = /\/s\/([A-Za-z0-9_-]{24})/.exec(page.url());
+  if (!m) throw new Error(`not a session page: ${page.url()}`);
+  return m[1];
+};
+
+/** Waits until every change is acknowledged by the server. */
+export const settled = async (page: Page) => {
+  await page.waitForFunction(
+    () => {
+      const s = (window as unknown as { __chalanaSync?: { settle(): Promise<void> } })
+        .__chalanaSync;
+      return s ? s.settle().then(() => true) : false;
+    },
+    undefined,
+    { timeout: 15000 },
+  );
+};
+
+interface ServerBoard {
+  title: string;
+  settings: { viewBackgroundColor?: string; gridEnabled?: boolean };
+  elements: StoredElement[];
+}
+
+/** The board as the server holds it, after the page has saved everything. */
+export const serverBoard = async (page: Page, id = sessionId(page)): Promise<ServerBoard> => {
+  await settled(page);
+  return page.evaluate(async (sid) => {
+    const r = await fetch(`/api/sessions/${sid}/scene`);
+    const s = await r.json();
+    return {
+      title: s.title,
+      settings: s.settings,
+      elements: s.elements.map((e: { el: unknown }) => e.el),
+    };
+  }, id);
 };
 
 export const boardBox = async (page: Page) => {
@@ -35,7 +79,7 @@ export const clickBoard = async (page: Page, p: { x: number; y: number }) => {
   await page.mouse.click(b.x + p.x, b.y + p.y);
 };
 
-interface StoredElement {
+export interface StoredElement {
   id: string;
   type: string;
   x: number;
@@ -57,15 +101,17 @@ interface StoredElement {
   fileId?: string;
 }
 
-/** Reads the autosaved board (autosave is debounced, so this polls). */
-export const storedElements = async (page: Page): Promise<StoredElement[]> => {
-  await page.waitForTimeout(400);
-  return page.evaluate((key) => {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw).elements as StoredElement[]) : [];
-  }, STORAGE_KEY);
-};
+/** Reads the saved board from the server (saving is debounced, so this waits). */
+export const storedElements = async (page: Page): Promise<StoredElement[]> =>
+  (await serverBoard(page)).elements;
 
 export const expectCount = async (page: Page, n: number) => {
   await expect.poll(async () => (await storedElements(page)).length).toBe(n);
+};
+
+/** Waits until the page shows `n` items (what is on screen, not what is saved). */
+export const expectOnBoard = async (page: Page, n: number) => {
+  await expect(page.getByTestId("app")).toHaveAttribute("data-items", String(n), {
+    timeout: 15000,
+  });
 };

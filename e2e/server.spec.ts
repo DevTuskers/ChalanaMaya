@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { drag, expectCount, freshBoard } from "./helpers";
 
-// Phase 1b: the app is served by the ChalanaMaya server and still saves to localStorage.
+// The app is served by the ChalanaMaya server and saves each board there (phase 2).
 
 test("the server serves the app with its security headers", async ({ page, request }) => {
   const res = await page.goto("/");
@@ -17,12 +17,16 @@ test("the server serves the app with its security headers", async ({ page, reque
 test("a board address serves the same app, and a bad one is a 404", async ({ page }) => {
   const res = await page.goto(`/s/${"A".repeat(24)}`);
   expect(res?.status()).toBe(200);
+  // a well-formed id that names no board gets a clear page with a way out
+  await expect(page.getByTestId("board-missing")).toBeVisible();
+  await page.getByTestId("boot-new-board").click();
+  await expect(page).toHaveURL(/\/s\/[A-Za-z0-9_-]{24}$/);
   await expect(page.getByTestId("board")).toBeVisible();
   const bad = await page.goto("/s/not-a-board");
   expect(bad?.status()).toBe(404);
 });
 
-test("the app still saves to localStorage under the strict CSP", async ({ page }) => {
+test("the app saves to the server under the strict CSP", async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
