@@ -92,7 +92,8 @@ Keep boards fast and safe.
 Acceptance criteria:
 - Allowed uploads are PNG, JPEG, GIF, WebP, MP4 and WebM; the file content must match its type; SVG uploads are refused.
 - Limits: 10 MB per picture or GIF, 25 MB per video, 200 MB of media per board, and a total for the whole server ([SESS-10](06-sessions-and-agents.md#sess-10--server-storage-limits)); going over gives a clear message and leaves the board unchanged.
-- Links must be https and may not point to IP addresses, `localhost`, single-word host names or private names such as `.local`, `.internal`, `.lan` and `.home.arpa`.
+- Links must be https and may not point to IP addresses, `localhost`, single-word host names or private names such as `.local`, `.internal`, `.lan` and `.home.arpa`. These rules are a best-effort guard, not a network wall: a public name can still lead to a private address. The server itself never downloads links; `docs/security.md` explains this.
+- A linked picture never breaks PNG export or the colour picker; until linked media is shown as a live item, links are refused.
 - A board item can only use files uploaded to the same board.
 
 ## MEDIA-09 — Reduced motion

@@ -74,7 +74,8 @@ Bring a board from the earlier browser-only version into a session.
 Acceptance criteria:
 - When a board saved in this browser at the same address is found, a banner offers to import it; the main menu offers the same.
 - ChalanaMaya starts at `http://localhost:5183` by default, the address the earlier version used with `npm run dev`; boards saved at `http://localhost:5184` are imported by starting once with `PORT=5184` and opening that address. The menu and setup guide explain this.
-- Import brings in all items and pictures as one undo step, into an empty board or beside existing items.
+- Import brings in all items and pictures as one undo step, into an empty board or beside existing items, also for a large board (about 5 MB, the most the browser could store); it is saved in one go, so it is either fully imported or not at all.
+- Odd old values (for example an opacity over 100 or a missing field) are corrected during import, the same way opening a .chalana file corrects them.
 - The old browser copy is kept until the user chooses **Remove the old copy**.
 
 ## SESS-07 — Connection status
@@ -98,6 +99,8 @@ There are no accounts yet: the session id works like a password.
 Acceptance criteria:
 - Anyone or any agent with the id can read and change the board; this is explained in the Board session menu, the Connect an agent dialog and `docs/security.md`.
 - The id never appears in full in server logs and is not sent to other websites (only the site origin is sent as referrer).
+- Every item written by a browser or an agent is checked against one strict set of rules (colour format, id format, number ranges, size limits) and refused with a clear message when it breaks one, so nothing written by one person can break or attack another person's board or exports. Large changes such as moving 1,000 items at once are saved in parts and never lost; a single item over 256 KB is refused with a notice.
+- Saving the same change twice (for example after a reload) never undoes a newer change made by someone else.
 - The server listens only on this computer by default; docs explain how and when to expose it with HTTPS.
 - No page, API, MCP tool, resource list or log lists the ids of boards.
 - Other websites open in the same browser cannot create, change or delete boards on this server (requests from other sites are refused).
@@ -147,6 +150,7 @@ Acceptance criteria:
 - `node <path to ChalanaMaya>/dist-server/stdio.js` (also `npm run mcp:stdio`, or `chalanamaya-mcp` after `npm link`) speaks MCP over stdio and offers the same tools, prompts and resources as `/mcp`, including 10 MB uploads.
 - Its changes appear live in open browser tabs, because it forwards to the running ChalanaMaya server set by `CHALANAMAYA_URL`.
 - A clear error is returned when the server cannot be reached.
+- The entry point can be started before ChalanaMaya: it starts without errors, reports "ChalanaMaya is not running" for calls, and works as soon as the server is started, without restarting the desktop app.
 
 ## AGENT-03 — Read the board
 
@@ -157,6 +161,7 @@ Agents can see what is on a board in a compact form.
 Acceptance criteria:
 - `get_scene` returns items in layer order with only useful fields (id, type, position, size, text or label, colours by palette name, connections, group, frame).
 - It can filter by ids, region or text, pages long boards, and also returns a short text outline and a suggested free spot for new items.
+- For chosen ids (up to 50) it can also return every field, including all points of lines and pencil strokes, in the same form `update_elements` accepts.
 - Pages of one listing never skip or repeat items: if the board changes between pages, the next page is refused with a `stale_cursor` error that says to start again.
 - `get_session_info` returns the title, link, item count and board bounds.
 
@@ -213,7 +218,8 @@ Agents can put pictures, GIFs, videos and components on a board.
 Acceptance criteria:
 - `upload_media` stores bytes (base64) and returns a file id; `place_media` places a picture, GIF or video from a file id, an https link or bytes.
 - Size and type limits match [MEDIA-08](07-media.md#media-08--media-limits-and-safety) and give clear errors.
-- Placing media from a link (pictures, GIFs or videos) returns a warning that links are shown as live items and as placeholders in exports, and that uploading gives full support.
+- Until live links are available (phase 5 of the plan), placing media from a link is refused with a clear message that suggests uploading instead; nothing is changed.
+- Once links are available, placing media from a link (pictures, GIFs or videos) returns a warning that links are shown as live items and as placeholders in exports, and that uploading gives full support.
 - Results report the media's width, height and (for videos) duration when the server can read them; otherwise the item is placed at 16:9 and the size is reported as unknown.
 - `list_component_presets` lists animated component presets and their settings.
 
