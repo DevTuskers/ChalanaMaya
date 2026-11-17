@@ -1,6 +1,7 @@
 import { DEFAULT_STYLE, PAPER } from "../scene/constants";
 import { History, type Snapshot } from "../scene/history";
-import { RemoteLog, type RemoteChange } from "../scene/rebase";
+import type { RemoteChange } from "../scene/rebase";
+import { RemoteLog } from "../sync/remoteLog";
 import { finalizeScene } from "../scene/scene";
 import type { FileMap, ItemStyle, SceneElement, Theme, Viewport } from "../scene/types";
 
@@ -122,6 +123,8 @@ export interface AppState {
   session: { id: string; title: string } | null;
   /** Server save state of the session board. */
   saveStatus: "saved" | "saving" | "offline" | "gone" | "full";
+  /** false while the live socket is down: changes save over REST, but others' changes do not show */
+  liveSync: boolean;
   /** A board saved by an older version in this browser, offered for import. */
   legacyBoard: { count: number } | null;
 }
@@ -162,6 +165,7 @@ export const initialState = (): AppState => ({
   activeEmbedId: null,
   session: null,
   saveStatus: "saved",
+  liveSync: true,
   legacyBoard: null,
 });
 

@@ -3,8 +3,8 @@ import { isSessionId } from "../shared/ids";
 import type { Op, SceneSnapshot } from "../shared/protocol";
 import { getStorage } from "../io/autosave";
 import type { Api } from "./api";
-import { replayMirror } from "./client";
-import { PendingMirror, tabId, type MirrorBatch } from "./mirror";
+import { RemoteGuard, replayMirror } from "./client";
+import { PendingMirror, tabLease, type MirrorBatch, type TabLease } from "./mirror";
 
 export interface SessionBoot {
   id: string;
@@ -18,6 +18,8 @@ export interface SessionBoot {
   pending: MirrorBatch[];
   /** Changes from the last visit the server did not keep (0 when all were kept). */
   lost: number;
+  /** Counts invalid remote elements; shared with the sync client. */
+  guard?: RemoteGuard;
 }
 
 /**
@@ -31,10 +33,27 @@ export const sessionIdFromPath = (path: string): string | null | "root" | "inval
   return isSessionId(m[1]) ? m[1] : "invalid";
 };
 
+/**
+ * Mirrors of this board left by tabs that are gone (closed or crashed) are
+ * adopted, so their offline edits are replayed here instead of being stranded.
+ */
+export const adoptOrphans = async (mirror: PendingMirror, lease: TabLease) => {
+  const foreign = mirror.foreignTabs();
+  if (!foreign.length) return [];
+  const live = await lease.liveAmong(foreign);
+  const orphans = foreign.filter((t) => !live.has(t));
+  mirror.adopt(orphans);
+  return orphans;
+};
+
 export const loadSession = async (api: Api, id: string): Promise<SessionBoot> => {
-  const mirror = new PendingMirror(getStorage(), id, undefined, tabId());
+  const lease = await tabLease();
+  const mirror = new PendingMirror(getStorage(), id, undefined, lease.id);
+  await adoptOrphans(mirror, lease);
   // never blocks opening the board: undeliverable batches come back as pending
   const { unsent, pending, lost } = await replayMirror(api, mirror);
-  const snapshot = await api.scene(id);
-  return { id, snapshot, unsent, pending, lost };
+  // Rule B: elements from the server are checked before anything is shown
+  const guard = new RemoteGuard();
+  const snapshot = guard.snapshot(await api.scene(id));
+  return { id, snapshot, unsent, pending, lost, guard };
 };

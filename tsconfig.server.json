@@ -15,5 +15,10 @@
     "types": ["node"]
   },
   "include": ["server", "src/shared", "vite.server.config.ts"],
-  "exclude": ["src/**/*.test.ts", "server/sync.test.ts", "server/socket.test.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "server/sync.test.ts",
+    "server/socket.test.ts",
+    "server/sync/convergence.test.ts"
+  ]
 }

@@ -296,3 +296,37 @@ test("a write by another client (REST, as an agent would) shows up live", async 
   expect((await items(a))[0].id).toBe(el.id);
   await close();
 });
+
+test("an offline edit in a page that is then closed is sent by the next page on the board", async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  const keeper = await ctx.newPage(); // keeps the context open when `a` closes
+  const a = await ctx.newPage();
+  await freshBoard(a);
+  await connected(a);
+  const url = a.url();
+  await ctx.setOffline(true);
+  await a.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await drawRect(a);
+  await expect(a.getByTestId("save-status")).toHaveAttribute("data-state", "offline", {
+    timeout: 10000,
+  });
+  // the page goes away while offline: its keepalive push cannot land
+  await a.close();
+  await ctx.setOffline(false);
+  await keeper.close();
+  // a new tab (its own sessionStorage, so another tab id) adopts the orphan mirror
+  const b = await ctx.newPage();
+  await b.goto(url);
+  await expect(b.getByTestId("app")).toHaveAttribute("data-items", "1", { timeout: 10000 });
+  await expect(b.getByTestId("save-status")).toHaveAttribute("data-state", "saved", {
+    timeout: 10000,
+  });
+  expect((await serverBoard(b)).elements).toHaveLength(1);
+  const left = await b.evaluate(() =>
+    Object.keys(localStorage).filter((k) => k.startsWith("chalanamaya.pending.")),
+  );
+  expect(left.length).toBeLessThanOrEqual(1);
+  await ctx.close();
+});

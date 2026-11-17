@@ -23,12 +23,14 @@ import {
   fitMirror,
   mirrorSize,
   mirrorKey,
-  tabId,
+  LEASE_MS,
+  TabLease,
+  type TabChannel,
   type MirrorBatch,
   type MirrorData,
 } from "./mirror";
 import { RECENT_MAX, boardLabel, forgetBoard, readRecent, rememberBoard, shortId } from "./recent";
-import { sessionIdFromPath } from "./session";
+import { adoptOrphans, sessionIdFromPath } from "./session";
 
 const SID = "AbCdEfGhIjKlMnOpQrStUvWx";
 const ID2 = "ZyXwVuTsRqPoNmLkJiHgFeDc";
@@ -40,7 +42,19 @@ const memory = (): StorageLike & { data: Map<string, string> } => {
     getItem: (k) => data.get(k) ?? null,
     setItem: (k, v) => void data.set(k, v),
     removeItem: (k) => void data.delete(k),
+    get length() {
+      return data.size;
+    },
+    key: (i) => [...data.keys()][i] ?? null,
   };
+};
+/** Two ends of a BroadcastChannel (messages go to the other end only). */
+const channelPair = (): [TabChannel, TabChannel] => {
+  const ends: TabChannel[] = [0, 1].map(() => ({ onmessage: null, postMessage: () => {} }));
+  ends.forEach((e, i) => {
+    e.postMessage = (m) => queueMicrotask(() => ends[1 - i].onmessage?.({ data: m }));
+  });
+  return ends as [TabChannel, TabChannel];
 };
 const fullStorage = (): StorageLike => ({
   getItem: () => null,
@@ -850,6 +864,7 @@ describe("per-tab pending mirror (phase 3)", () => {
     idx: "a0",
     baseVersion: 0,
   });
+  const batch = (pushId: string): MirrorBatch => ({ pushId, baseRev: 0, ops: [put(9)] });
 
   it("two tabs on one board keep separate mirrors", () => {
     const s = memory();
@@ -875,11 +890,75 @@ describe("per-tab pending mirror (phase 3)", () => {
     expect(a.read()).toBeNull();
   });
 
-  it("the tab id is kept in session storage", () => {
+  it("the tab id is kept in session storage across a reload", async () => {
+    const local = memory();
     const ss = memory();
-    const id = tabId(ss);
+    const a = new TabLease(local, ss);
+    const id = await a.start();
     expect(id).toMatch(/^[A-Za-z0-9_-]{12}$/);
-    expect(tabId(ss)).toBe(id);
-    expect(tabId(memory())).not.toBe(id);
+    a.release(); // pagehide of the reload
+    expect(await new TabLease(local, ss).start()).toBe(id);
+    expect(await new TabLease(local, memory()).start()).not.toBe(id);
+  });
+
+  it("a duplicated tab (copied sessionStorage) gets its own tab id", async () => {
+    const local = memory();
+    const ss = memory();
+    const bus = channelPair();
+    const a = new TabLease(local, ss, { channel: bus[0], pingMs: 5 });
+    const id = await a.start();
+    const copy = memory();
+    copy.data.set("chalanamaya.tab", id!);
+    const b = new TabLease(local, copy, { channel: bus[1], pingMs: 5 });
+    const id2 = await b.start();
+    expect(id2).not.toBe(id);
+    expect(copy.data.get("chalanamaya.tab")).toBe(id2);
+  });
+
+  it("a crashed tab's id is reused when nobody answers for it", async () => {
+    const local = memory();
+    const ss = memory();
+    const bus = channelPair();
+    const id = await new TabLease(local, ss, { channel: bus[0], pingMs: 5 }).start();
+    bus[0].onmessage = null; // the tab crashed: its lease is fresh but silent
+    expect(await new TabLease(local, ss, { channel: bus[1], pingMs: 5 }).start()).toBe(id);
+  });
+
+  it("a closed tab's offline edits are adopted by the next page and its key removed", async () => {
+    const local = memory();
+    let now = 1_000_000;
+    const closed = new TabLease(local, memory(), { now: () => now });
+    const gone = (await closed.start())!;
+    new PendingMirror(local, SID, undefined, gone).write([batch("p1")], [put(1)]);
+    closed.release(); // pagehide
+    const lease = new TabLease(local, memory(), { now: () => now });
+    const mine = (await lease.start())!;
+    const m = new PendingMirror(local, SID, undefined, mine);
+    expect(await adoptOrphans(m, lease)).toEqual([gone]);
+    const d = m.read()!;
+    expect(d.batches.map((b) => b.pushId)).toEqual(["p1"]);
+    expect(d.unsent).toHaveLength(1);
+    m.write(d.batches, d.unsent);
+    expect(local.data.has(mirrorKey(SID, gone))).toBe(false);
+    expect(new PendingMirror(local, SID, undefined, mine).read()!.unsent).toHaveLength(1);
+    // a stale lease (crash long ago, no pagehide) is adopted as well
+    const crashed = (await new TabLease(local, memory(), { now: () => now }).start())!;
+    new PendingMirror(local, SID, undefined, crashed).write([], [put(2)]);
+    now += LEASE_MS + 1;
+    const later = new TabLease(local, memory(), { now: () => now });
+    const m2 = new PendingMirror(local, SID, undefined, (await later.start())!);
+    expect(await adoptOrphans(m2, later)).toContain(crashed);
+  });
+
+  it("a live tab's mirror is left alone", async () => {
+    const local = memory();
+    const bus = channelPair();
+    const a = new TabLease(local, memory(), { channel: bus[0], pingMs: 5 });
+    const ida = (await a.start())!;
+    new PendingMirror(local, SID, undefined, ida).write([], [put(1)]);
+    const b = new TabLease(local, memory(), { channel: bus[1], pingMs: 5 });
+    const m = new PendingMirror(local, SID, undefined, (await b.start())!);
+    expect(await adoptOrphans(m, b)).toEqual([]);
+    expect(m.read()).toBeNull();
   });
 });

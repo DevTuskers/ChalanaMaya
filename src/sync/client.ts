@@ -32,6 +32,7 @@ import type {
 import type { RemoteChange } from "../scene/rebase";
 import { applyChange } from "../scene/rebase";
 import { finalizeScene } from "../scene/scene";
+import { validateStoredElement } from "../shared/validate";
 import type { LinearElement, SceneElement } from "../scene/types";
 import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
@@ -50,6 +51,8 @@ export interface SyncHost {
   /** Replaces the board with server truth, without a history step. */
   replaceElements(elements: SceneElement[]): void;
   status(s: SaveStatus): void;
+  /** the live socket came up (true) or went down (false): other tabs' changes pause */
+  live?(on: boolean): void;
   /** A warning that recent changes are not protected against a reload, or null. */
   protection(warning: string | null): void;
   notice(message: string): void;
@@ -140,6 +143,36 @@ export const applyOpsToScene = (
   );
 };
 
+/**
+ * Rule B / §3.11: every element that arrives from the server is checked with
+ * the strict stored-element rules before it is applied. The server already
+ * refuses such elements, so this only guards against a buggy or hostile
+ * server; failures are counted and reported once in the console.
+ */
+export class RemoteGuard {
+  invalid = 0;
+  private warned = false;
+
+  ok(el: unknown): el is SceneElement {
+    const v = validateStoredElement(el);
+    if (v.ok) return true;
+    this.invalid += 1;
+    if (!this.warned) {
+      this.warned = true;
+      console.warn(
+        `ChalanaMaya: an item from the server was invalid and not shown (${v.path || "element"}: ${v.reason}). Later ones are counted silently.`,
+      );
+    }
+    return false;
+  }
+
+  /** The snapshot without elements that fail validation. */
+  snapshot<T extends Pick<SceneSnapshot, "elements">>(s: T): T {
+    const elements = s.elements.filter((e) => this.ok(e.el));
+    return elements.length === s.elements.length ? s : { ...s, elements };
+  }
+}
+
 export interface ReplayResult {
   /** Ops that were never sent; applied over the snapshot and saved normally. */
   unsent: Op[];
@@ -228,12 +261,16 @@ export class SyncClient {
   private busy = new Map<string, number>();
   /** remote puts skipped because the id was busy; applied after the ack when newer */
   private deferred = new Map<string, RemotePut>();
+  /** busy ids whose remote delete was already announced (the put's reject is then quiet) */
+  private removedNoticed = new Set<string>();
   /** Rule F: consecutive repairs of an element no local edit is behind. */
   private repairStreak = new Map<string, number>();
   /** settings fields in queued or unacknowledged pushes */
   private busySettings = new Map<string, number>();
   private readonly timers: Timers;
   readonly clientId = newPushId();
+  /** remote elements that failed validation (Rule B) */
+  readonly guard: RemoteGuard;
 
   constructor(
     readonly sessionId: string,
@@ -242,9 +279,10 @@ export class SyncClient {
     private readonly mirror: PendingMirror,
     snapshot: SceneSnapshot,
     pending: readonly MirrorBatch[] = [],
-    opts: { timers?: Timers } = {},
+    opts: { timers?: Timers; guard?: RemoteGuard } = {},
   ) {
     this.timers = opts.timers ?? realTimers;
+    this.guard = opts.guard ?? new RemoteGuard();
     this.settings = { viewBackgroundColor: "", gridEnabled: false, title: "" };
     this.load(snapshot);
     this.adoptPending(pending);
@@ -294,7 +332,8 @@ export class SyncClient {
   }
 
   /** Takes a snapshot as the server's state. */
-  load(s: SceneSnapshot) {
+  load(snap: SceneSnapshot) {
+    const s = this.guard.snapshot(snap);
     this.known.clear();
     this.keys.clear();
     this.tomb.clear();
@@ -454,6 +493,7 @@ export class SyncClient {
     if (this.retryTimer) this.timers.clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.backoff = 0;
+    this.host.live?.(true);
     this.pump(false);
     this.updateStatus();
   }
@@ -464,6 +504,7 @@ export class SyncClient {
     const w = [...this.waiting.values()];
     this.waiting.clear();
     for (const p of w) p.reject(new ApiError(0, "network", "the connection was lost"));
+    this.host.live?.(false);
     this.updateStatus();
   }
 
@@ -507,7 +548,9 @@ export class SyncClient {
         ];
         const present = new Set<string>();
         for (const e of msg.elements) {
-          present.add(e.el.id);
+          // an invalid element is neither shown nor deleted here
+          present.add((e.el as { id?: string })?.id ?? "");
+          if (!this.guard.ok(e.el)) continue;
           ops.push({
             t: "put",
             el: e.el,
@@ -598,8 +641,10 @@ export class SyncClient {
     const touched = new Set<string>();
     const layout: string[] = [];
     let settings: Partial<SyncSettings> | null = null;
+    let lostEdit = false;
     for (const op of ops) {
       if (op.t === "put") {
+        if (!this.guard.ok(op.el)) continue;
         const id = op.el.id;
         const t = this.tomb.get(id);
         if (t !== undefined && t >= op.version) continue; // we know of a later delete
@@ -642,7 +687,14 @@ export class SyncClient {
           continue;
         }
         touched.add(op.id);
-        // deleting wins over local edits (in-flight puts are refused by the server)
+        // Deleting wins over local edits at once (plan §3.7, documented
+        // deviation): the item leaves the board now instead of after its
+        // refused put comes back, so a drag cannot show it a moment longer.
+        // The local edit is lost either way; the notice says so.
+        if (byId.has(op.id) && busyNow(op.id)) {
+          lostEdit = true;
+          this.removedNoticed.add(op.id);
+        }
         this.known.delete(op.id);
         this.keys.delete(op.id);
         this.deferred.delete(op.id);
@@ -682,6 +734,7 @@ export class SyncClient {
     }
     this.order = final.filter((e) => this.known.has(e.id));
     if (repaired) this.schedule();
+    if (lostEdit) this.host.notice(REMOVED_NOTICE);
   }
 
   /** Rule F: recompute derived fields after a remote change; keep them for busy elements only. */
@@ -717,11 +770,19 @@ export class SyncClient {
         any = true;
         return f;
       }
-      // Stale derived fields that arrived from elsewhere (two tabs each moved
-      // one end, or one moved a box while the other restyled its label): every
-      // tab computes the same repair, so sending it converges. A tab whose
-      // repair keeps being overwritten (different text metrics) stops after
-      // a few rounds instead of fighting.
+      // A remote change to what this element depends on (the other end of a
+      // connector, a label's box or path) and not to the element itself: its
+      // writer could not have finalised it, so the repair is always kept.
+      if (!touched.has(el.id)) {
+        this.repairStreak.delete(el.id);
+        any = true;
+        return f;
+      }
+      // The element itself arrived with stale derived fields (two tabs each
+      // moved one end, or one moved a box while the other restyled its label):
+      // every tab computes the same repair, so sending it converges. A tab
+      // whose repair keeps being overwritten (different text metrics) stops
+      // after a few rounds instead of fighting.
       const streak = this.repairStreak.get(el.id) ?? 0;
       if (streak < MAX_REPAIR_STREAK) {
         this.repairStreak.set(el.id, streak + 1);
@@ -1035,11 +1096,15 @@ export class SyncClient {
         );
       } else {
         for (const id of rejected) this.resyncIds.add(id);
-        this.host.notice(
-          ack.rejected.every((x) => x.reason === "deleted")
-            ? REMOVED_NOTICE
-            : `${ack.rejected.length === 1 ? "A change was" : `${ack.rejected.length} changes were`} refused by the server (${r.message ?? r.reason}) and undone.`,
-        );
+        const allDeleted = ack.rejected.every((x) => x.reason === "deleted");
+        const announced = allDeleted && ack.rejected.every((x) => this.removedNoticed.has(x.id));
+        for (const x of ack.rejected) this.removedNoticed.delete(x.id);
+        if (!announced)
+          this.host.notice(
+            allDeleted
+              ? REMOVED_NOTICE
+              : `${ack.rejected.length === 1 ? "A change was" : `${ack.rejected.length} changes were`} refused by the server (${r.message ?? r.reason}) and undone.`,
+          );
       }
     }
     const due = this.shift(ack);
@@ -1082,7 +1147,8 @@ export class SyncClient {
   private afterSettled() {
     this.writeMirror();
     if (this.queue.length) this.pump(false);
-    else if (this.resyncAll || this.resyncIds.size) void this.resync();
+    else if (!this.busy.size) this.removedNoticed.clear();
+    if (!this.queue.length && (this.resyncAll || this.resyncIds.size)) void this.resync();
     this.updateStatus();
   }
 
@@ -1094,7 +1160,7 @@ export class SyncClient {
     this.resyncIds = new Set();
     let snap: SceneSnapshot;
     try {
-      snap = await this.api.scene(this.sessionId);
+      snap = this.guard.snapshot(await this.api.scene(this.sessionId));
     } catch {
       return;
     }

@@ -168,9 +168,13 @@ const OFFLINE_MEDIA =
 /** The save state of the board: Saved, Saving or Offline. */
 const SaveStatusChip = () => {
   const status = useAppState((s) => s.saveStatus);
+  const live = useAppState((s) => s.liveSync);
+  const notLive = status === "saved" && !live;
   const label =
     status === "saved"
-      ? "Saved"
+      ? notLive
+        ? "Saved · not live"
+        : "Saved"
       : status === "saving"
         ? "Saving…"
         : status === "offline"
@@ -183,11 +187,14 @@ const SaveStatusChip = () => {
       className={`save-status save-${status}`}
       data-testid="save-status"
       data-state={status}
+      data-live={live ? "on" : "off"}
       role="status"
       title={
         status === "offline"
           ? "The server could not be reached. Changes are kept in this browser and sent when the connection is back."
-          : undefined
+          : notLive
+            ? "Your changes are saved, but the live link is down, so changes from other tabs and agents show up when it reconnects (or on reload)."
+            : undefined
       }
     >
       {label}
@@ -351,6 +358,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             store.applyRemote(elements, change, patch);
           },
           status: (saveStatus) => store.set({ saveStatus }),
+          live: (liveSync) => store.set({ liveSync }),
           protection: (storageWarning) => store.set({ storageWarning }),
           notice: (message) => store.toast(message, "error", 8000),
           takeLayerMoves: () => {
@@ -369,6 +377,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
           },
         },
         boot.pending,
+        { guard: boot.guard },
       ),
   );
   const controller = useMemo(() => new Controller(store), [store]);

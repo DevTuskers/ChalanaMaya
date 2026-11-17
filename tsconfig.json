@@ -21,6 +21,7 @@
     "e2e",
     "server/sync.test.ts",
     "server/socket.test.ts",
+    "server/sync/convergence.test.ts",
     "vite.config.ts",
     "playwright.config.ts"
   ]

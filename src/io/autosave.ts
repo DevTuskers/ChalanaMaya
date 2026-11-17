@@ -7,6 +7,9 @@ export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem?(key: string): void;
+  /** key enumeration (localStorage has it; used to find other tabs' mirrors) */
+  readonly length?: number;
+  key?(index: number): string | null;
 }
 
 export const getStorage = (): StorageLike | null => {

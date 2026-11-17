@@ -630,6 +630,11 @@ export class SessionService {
         "SELECT id, idx, version, rev, deleted, needs_layout, data FROM elements WHERE session_id = ? AND rev > ? ORDER BY idx, id",
       )
       .all(sessionId, sinceRev);
+    // Settings carry no rev of their own (they are one small JSON column, not
+    // rows), so the delta cannot tell whether they changed after `sinceRev`.
+    // They are sent whenever anything changed: a few bytes per reconnect, and
+    // applying unchanged settings is a no-op on the client. An unchanged board
+    // (sinceRev === rev, above) sends nothing.
     const ops: AppliedOp[] = [
       { t: "settings", settings: { ...JSON.parse(s.settings), title: s.title } },
     ];

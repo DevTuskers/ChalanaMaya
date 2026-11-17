@@ -10,7 +10,8 @@ import {
   createShape,
   createText,
 } from "../scene/elements";
-import { RemoteLog, captureInteraction, interactionScene, rebaseElements } from "../scene/rebase";
+import { captureInteraction, interactionScene, rebaseElements } from "../scene/rebase";
+import { RemoteLog } from "../sync/remoteLog";
 import { getCommonBounds } from "../scene/geometry";
 import { finalizeScene } from "../scene/scene";
 import { resizeElement, resizeGroup } from "../scene/transform";
@@ -571,7 +572,7 @@ describe("Rule C: by-id gestures and rebasing", () => {
   });
 
   it("RemoteLog brings an undo snapshot forward lazily", () => {
-    const log = new RemoteLog(3);
+    const log = new RemoteLog();
     const a = createShape("rectangle", 0, 0);
     const b = createShape("rectangle", 10, 0);
     const snapshot = [a, b];
@@ -580,12 +581,10 @@ describe("Rule C: by-id gestures and rebasing", () => {
     const c = createShape("diamond", 0, 0);
     log.append({ upserts: [b2], deletes: [] });
     log.append({ upserts: [c], deletes: [a.id] });
-    expect(log.covers(at)).toBe(true);
     const out = log.rebase(snapshot, at);
     expect(out).toEqual([b2, c]);
     expect(out[0]).toBe(b2);
-    for (let i = 0; i < 5; i++) log.append({ upserts: [], deletes: [] });
-    expect(log.covers(at)).toBe(false);
+    expect(log.rebase(snapshot, log.head)).toBe(snapshot);
   });
 });
 
