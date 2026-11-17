@@ -50,10 +50,12 @@ export const startServer = async (
     "<!doctype html><title>ChalanaMaya test app</title>",
   );
   fs.writeFileSync(path.join(appDir, "assets", "app.js"), "console.log('app')");
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const port = 5000 + Math.floor(Math.random() * 1000);
+  // a fixed env.PORT gets one attempt; otherwise a random free port
+  const fixed = env.PORT ? Number(env.PORT) : 0;
+  for (let attempt = 0; attempt < (fixed ? 1 : 50); attempt++) {
+    const port = fixed || 5000 + Math.floor(Math.random() * 1000);
     const cfg = loadConfig(
-      { DATA_DIR: path.join(dataDir, "data"), RATE_LIMITS: "off", PORT: String(port), ...env },
+      { DATA_DIR: path.join(dataDir, "data"), RATE_LIMITS: "off", ...env, PORT: String(port) },
       { appDir, ...overrides },
     );
     const handle = createApp(cfg);

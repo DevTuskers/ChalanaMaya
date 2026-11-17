@@ -14,7 +14,11 @@ export default defineConfig({
     target: "node20",
     sourcemap: true,
     rollupOptions: {
-      input: { main: "server/main.ts", "db-smoke": "server/db/smokeCli.ts" },
+      input: {
+        main: "server/main.ts",
+        stdio: "server/stdio.ts",
+        "db-smoke": "server/db/smokeCli.ts",
+      },
       output: { format: "es", entryFileNames: "[name].js" },
     },
   },
