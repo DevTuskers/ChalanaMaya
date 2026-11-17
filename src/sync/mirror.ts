@@ -64,34 +64,60 @@ export type MirrorWrite =
   | { ok: true; complete: false; dropped: number }
   | { ok: false; reason: string };
 
-/** Fits the data under `cap` characters: compacts, then drops the oldest ops. */
+/** Serialised length of one op; ops are reused between writes, so this is cached. */
+const opLength = new WeakMap<Op, number>();
+const lengthOf = (op: Op) => {
+  let n = opLength.get(op);
+  if (n === undefined) {
+    n = JSON.stringify(op).length;
+    opLength.set(op, n);
+  }
+  return n;
+};
+
+/** Exact serialised length of `data`, from cached op lengths. */
+export const mirrorSize = (data: MirrorData) => {
+  const list = (ops: Op[]) =>
+    ops.reduce((a, o) => a + lengthOf(o), 0) + Math.max(0, ops.length - 1) + 2;
+  let n = '{"v":1,"batches":[],"unsent":}'.length + list(data.unsent);
+  data.batches.forEach((b, i) => {
+    n += JSON.stringify({ ...b, ops: [] }).length - 2 + list(b.ops) + (i ? 1 : 0);
+  });
+  return n;
+};
+
+/**
+ * Fits the data under `cap` characters: compacts, then drops the oldest ops.
+ * Sizes come from cached per-op lengths, so a long drag over a large board
+ * does not stringify megabytes of ops many times on every write.
+ */
 export const fitMirror = (
   data: MirrorData,
   cap = MIRROR_CAP,
 ): { data: MirrorData; text: string; dropped: number } => {
-  let text = JSON.stringify(data);
-  if (text.length <= cap) return { data, text, dropped: 0 };
+  if (mirrorSize(data) <= cap) return { data, text: JSON.stringify(data), dropped: 0 };
   let d = compactMirror(data);
-  text = JSON.stringify(d);
+  let size = mirrorSize(d);
   let dropped = 0;
-  while (text.length > cap && (d.batches.length || d.unsent.length)) {
-    const b = d.batches[0];
-    if (b) {
-      const n = Math.max(1, Math.ceil(b.ops.length / 4));
-      dropped += Math.min(n, b.ops.length);
-      const ops = b.ops.slice(n);
-      d = {
-        ...d,
-        batches: ops.length ? [{ ...b, ops }, ...d.batches.slice(1)] : d.batches.slice(1),
-      };
-    } else {
-      const n = Math.max(1, Math.ceil(d.unsent.length / 4));
-      dropped += Math.min(n, d.unsent.length);
-      d = { ...d, unsent: d.unsent.slice(n) };
+  if (size > cap) {
+    const batches = d.batches.map((b) => ({ ...b, ops: [...b.ops] }));
+    const unsent = [...d.unsent];
+    while (size > cap && (batches.length || unsent.length)) {
+      const b = batches[0];
+      const ops = b ? b.ops : unsent;
+      const op = ops.shift();
+      if (op) {
+        dropped += 1;
+        size -= lengthOf(op) + (ops.length ? 1 : 0);
+      }
+      if (b && !b.ops.length) {
+        batches.shift();
+        size = mirrorSize({ v: 1, batches, unsent });
+      }
     }
-    text = JSON.stringify(d);
+    d = { v: 1, batches, unsent };
   }
-  return { data: d, text, dropped };
+  return { data: d, text: JSON.stringify(d), dropped };
 };
 
 export class PendingMirror {

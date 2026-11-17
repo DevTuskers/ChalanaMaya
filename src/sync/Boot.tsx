@@ -11,7 +11,7 @@ import { forgetBoard } from "./recent";
 
 type BootState =
   | { kind: "loading" }
-  | { kind: "missing"; id: string }
+  | { kind: "missing"; id: string | null }
   | { kind: "error"; message: string }
   | { kind: "ready"; boot: SessionBoot };
 
@@ -30,9 +30,14 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
   const start = useCallback(async () => {
     setState({ kind: "loading" });
     const target = sessionIdFromPath(window.location.pathname);
+    // a malformed or unknown address never silently becomes a new board
+    if (target === null || target === "invalid") {
+      setState({ kind: "missing", id: null });
+      return;
+    }
     try {
       let id: string;
-      if (target === "root" || target === null) {
+      if (target === "root") {
         // one board per visit, even when React runs the effect twice
         creating ??= httpApi.createSession().finally(() => (creating = null));
         id = (await creating).session_id;
@@ -40,7 +45,7 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
       } else id = target;
       setState({ kind: "ready", boot: await loadSession(httpApi, id) });
     } catch (e) {
-      if (e instanceof ApiError && e.code === "session_not_found" && target && target !== "root") {
+      if (e instanceof ApiError && e.code === "session_not_found" && target !== "root") {
         forgetBoard(getStorage(), target);
         setState({ kind: "missing", id: target });
       } else

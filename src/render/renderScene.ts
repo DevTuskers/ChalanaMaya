@@ -1,6 +1,7 @@
 import rough from "roughjs";
 import type { Drawable } from "roughjs/bin/core";
 import { NOTE_INK } from "../scene/constants";
+import { isSessionFilePath } from "../shared/ids";
 import { getCenter } from "../scene/geometry";
 import { buildDrawables, freedrawOutline, resolveColor } from "./shapes";
 import { fontString, getTextLines, lineHeightPx } from "../scene/text";
@@ -48,9 +49,16 @@ export const setImageLoadListener = (fn: () => void) => {
   onImageLoad = fn;
 };
 
+/**
+ * Only data URLs and same-origin session file paths are drawn (plan §3.10):
+ * a remote picture would taint the canvas and break exports.
+ */
+export const isLoadableImageSrc = (src: string) =>
+  src.startsWith("data:") || isSessionFilePath(src);
+
 export const getImage = (fileId: string, files: FileMap): HTMLImageElement | null => {
   const file = files[fileId];
-  if (!file) return null;
+  if (!file || !isLoadableImageSrc(file.dataURL)) return null;
   let img = imageCache.get(fileId);
   if (!img || img.dataset.src !== file.dataURL.slice(0, 64) + file.dataURL.length) {
     img = new Image();
@@ -73,7 +81,8 @@ export const loadImages = async (elements: readonly SceneElement[], files: FileM
             const file = files[(e as { fileId: string }).fileId];
             if (!file) return resolve();
             getImage(file.id, files);
-            const img = imageCache.get(file.id)!;
+            const img = imageCache.get(file.id);
+            if (!img) return resolve();
             if (img.complete) return resolve();
             img.addEventListener("load", () => resolve(), { once: true });
             img.addEventListener("error", () => resolve(), { once: true });

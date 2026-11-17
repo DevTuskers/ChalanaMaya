@@ -193,8 +193,9 @@ describe("SyncClient against the server", () => {
       baseRev: 1,
       ops: [{ t: "put", el: newer, idx: "a0", baseVersion: 1 }],
     });
-    const unsent = await replayMirror(apiImpl, new PendingMirror(storage, sid));
-    expect(unsent).toEqual([]);
+    const r = await replayMirror(apiImpl, new PendingMirror(storage, sid));
+    expect(r).toEqual({ unsent: [], pending: [], lost: 0 });
+    expect(storage.data.size).toBe(0);
     const scene = await A.scene(sid);
     expect(scene.elements[0].el.x).toBe(999);
     expect(scene.elements[0].version).toBe(2);
@@ -221,6 +222,44 @@ describe("SyncClient against the server", () => {
     expect(ack.ignored).toEqual([{ id: el.id, reason: "stale_replay" }]);
     expect((await A.scene(sid)).elements[0].el.x).toBe(5);
   });
+
+  it("filling push_log past its 2,000-row cap advances push_log_floor_rev", async () => {
+    const sid = await newSession();
+    const apiImpl = createHttpApi(srv.base);
+    const el = rect();
+    const firstId = "evict-test-push-000000";
+    await apiImpl.push(sid, {
+      pushId: firstId,
+      baseRev: 0,
+      ops: [{ t: "put", el: { ...el, x: 1 }, idx: "a0", baseVersion: 0 }],
+    });
+    // 2,000 more pushes: the first one falls out of the per-board cap
+    for (let i = 1; i <= 2000; i += 1)
+      await apiImpl.push(sid, {
+        pushId: `evict-test-push-${String(i).padStart(6, "0")}`,
+        baseRev: i,
+        ops: [{ t: "put", el: { ...el, x: 1 + i }, idx: "a0", baseVersion: i }],
+      });
+    const rows = srv.handle.db
+      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM push_log WHERE session_id = ?")
+      .get(sid)!.n;
+    expect(rows).toBe(2000);
+    const floor = srv.handle.db
+      .prepare<[string], { f: number }>("SELECT push_log_floor_rev AS f FROM sessions WHERE id = ?")
+      .get(sid)!.f;
+    expect(floor).toBeGreaterThanOrEqual(1);
+    // the evicted push replayed from a mirror is no longer known by its id, so
+    // it is checked against versions and does not overwrite the newer edits
+    const ack = await apiImpl.push(sid, {
+      pushId: firstId,
+      baseRev: 0,
+      mirrored: true,
+      ops: [{ t: "put", el: { ...el, x: 1 }, idx: "a0", baseVersion: 0 }],
+    });
+    expect(ack.duplicate).toBeUndefined();
+    expect(ack.ignored).toEqual([{ id: el.id, reason: "stale_replay" }]);
+    expect((await A.scene(sid)).elements[0].el.x).toBe(2001);
+  }, 120000);
 
   it("an import is applied once even when it is sent twice", async () => {
     const sid = await newSession();

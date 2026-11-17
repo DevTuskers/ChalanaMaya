@@ -388,6 +388,7 @@ const arrange = (
   fn: Arranger,
   emptyMessage: string,
   extra: Partial<AppState> = {},
+  moves?: ReadonlySet<string>,
 ) => {
   const { elements, selectedIds } = store.get();
   if (blockedByViewMode(store)) return false;
@@ -400,7 +401,7 @@ const arrange = (
     store.toast(emptyMessage);
     return false;
   }
-  store.commit(next, extra);
+  store.commit(next, extra, moves);
   return true;
 };
 
@@ -410,20 +411,25 @@ export const groupSelected = (store: Store) =>
 export const ungroupSelected = (store: Store) =>
   arrange(store, ungroupElements, "The selection is not grouped.");
 
-export const reorderSelected = (store: Store, op: ZOrder) =>
-  arrange(
+export const reorderSelected = (store: Store, op: ZOrder) => {
+  // layer hint (Rule E): the moved items and their labels get new keys, nothing
+  // else; it is kept in history so undo and redo send the same ids
+  const moves = new Set<string>();
+  return arrange(
     store,
     (els, ids) => {
       const next = reorder(els, ids, op);
-      // layer hint: the moved items (and their labels) get new keys, nothing else
       if (next)
         for (const e of els)
           if (ids.has(e.id) || (e.type === "text" && e.containerId && ids.has(e.containerId)))
-            store.layerMoves.add(e.id);
+            moves.add(e.id);
       return next;
     },
     "Nothing to reorder.",
+    {},
+    moves,
   );
+};
 
 export const alignSelected = (store: Store, mode: Align) =>
   arrange(store, (els, ids) => alignElements(els, ids, mode), "Pick two or more items to align.");

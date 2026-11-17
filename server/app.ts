@@ -100,10 +100,8 @@ export const createApp = (cfg: Config, opts: { db?: DB } = {}): AppHandle => {
   app.use(pageHeaders);
   app.get("/", sendIndex);
   app.get("/s/:id", (req, res, next) => {
-    if (!isSessionId(req.params.id)) {
-      res.status(404).type("text/plain").send("This board address is not valid.\n");
-      return;
-    }
+    // a malformed id is a 404, but still gets the app's branded "does not exist" page
+    if (!isSessionId(req.params.id)) res.status(404);
     void sendIndex(req, res, next);
   });
   app.use((req, res, next) => {

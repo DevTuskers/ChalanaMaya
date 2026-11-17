@@ -44,12 +44,20 @@ interface Known {
 }
 
 type QueueItem =
-  | { kind: "ops"; pushId: string; baseRev: number; ops: Op[]; sent: boolean }
+  | {
+      kind: "ops";
+      pushId: string;
+      baseRev: number;
+      ops: Op[];
+      sent: boolean;
+      /** A batch from the mirror of an earlier visit, resent with `mirrored: true`. */
+      mirrored?: boolean;
+    }
   | { kind: "import"; body: ImportBody; sent: boolean };
 
 /** Largest body the import endpoint takes (server `importBodyBytes`). */
 export const MAX_IMPORT_BYTES = 12 * 1024 * 1024;
-const DEBOUNCE_MS = 250;
+export const THROTTLE_MS = 250;
 
 const jsonCache = new WeakMap<SceneElement, string>();
 const toJson = (el: SceneElement) => {
@@ -76,29 +84,60 @@ export const applyOpsToScene = (
   );
 };
 
+export interface ReplayResult {
+  /** Ops that were never sent; applied over the snapshot and saved normally. */
+  unsent: Op[];
+  /**
+   * Batches the server could not take yet (network trouble, 429 or 5xx), from
+   * the first failure on, in order. The sync client resends them with their
+   * pushIds and baseRevs.
+   */
+  pending: MirrorBatch[];
+  /** Changes the server did not keep (stale replays and refused ops). */
+  lost: number;
+}
+
+/** The notice shown when a replay could not keep everything (plan §3.7 step 3). */
+export const LOST_NOTICE =
+  "Some changes from your last visit were not kept, because the board was changed since then.";
+
+const countLost = (ack: Ack) =>
+  ack.rejected.length + ack.ignored.filter((i) => i.reason === "stale_replay").length;
+
 /**
  * Replays the mirrored pushes of a session in their original order, with
- * their original pushIds and baseRevs and `mirrored: true`. Network trouble
- * throws (the mirror is kept); a refused batch is skipped. Returns the ops
- * that were never sent, to be applied over the fresh snapshot.
+ * their original pushIds and baseRevs and `mirrored: true`. A retryable
+ * failure (network, 429, 5xx) stops the replay without throwing: that batch
+ * and the later ones are returned as `pending`, so the board still opens and
+ * the sync client resends them. A batch refused for good is dropped. The
+ * mirror is rewritten to what is still pending, so acknowledged batches are
+ * not replayed again on the next load.
  */
-export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<Op[]> => {
+export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<ReplayResult> => {
   const data = mirror.read();
-  if (!data) return [];
+  if (!data) return { unsent: [], pending: [], lost: 0 };
+  const pending: MirrorBatch[] = [];
+  let lost = 0;
   for (const b of data.batches) {
+    if (pending.length) {
+      pending.push(b);
+      continue;
+    }
     try {
-      await api.push(mirror.sessionId, {
+      const ack = await api.push(mirror.sessionId, {
         pushId: b.pushId,
         baseRev: b.baseRev,
         ops: b.ops,
         mirrored: true,
       });
+      lost += countLost(ack);
     } catch (e) {
-      if (e instanceof ApiError && e.retry) throw e;
-      // refused for good: nothing to replay
+      if (!(e instanceof ApiError) || e.retry) pending.push(b);
+      else lost += b.ops.length; // refused for good: nothing to replay
     }
   }
-  return data.unsent;
+  mirror.write(pending, data.unsent);
+  return { unsent: data.unsent, pending, lost };
 };
 
 export class SyncClient {
@@ -128,9 +167,54 @@ export class SyncClient {
     private readonly host: SyncHost,
     private readonly mirror: PendingMirror,
     snapshot: SceneSnapshot,
+    pending: readonly MirrorBatch[] = [],
   ) {
     this.settings = { viewBackgroundColor: "", gridEnabled: false, title: "" };
     this.load(snapshot);
+    this.adoptPending(pending);
+  }
+
+  /**
+   * Takes batches a replay could not deliver (the board already shows them
+   * over the snapshot): they are queued as sent, with their original pushIds
+   * and baseRevs, and resent with back-off. The known state assumes they are
+   * applied, so the board does not diff into duplicate ops.
+   */
+  private adoptPending(pending: readonly MirrorBatch[]) {
+    if (!pending.length) return;
+    for (const b of pending) {
+      for (const op of b.ops) {
+        if (op.t === "put") {
+          this.known.set(op.el.id, { el: op.el, json: toJson(op.el), version: op.baseVersion + 1 });
+          this.keys.set(op.el.id, op.idx);
+          this.tomb.delete(op.el.id);
+        } else if (op.t === "del") {
+          this.known.delete(op.id);
+          this.keys.delete(op.id);
+          this.tomb.set(op.id, op.baseVersion + 1);
+        } else if (op.t === "settings") {
+          const s = op.settings;
+          if (s.viewBackgroundColor !== undefined)
+            this.settings.viewBackgroundColor = s.viewBackgroundColor;
+          if (s.gridEnabled !== undefined) this.settings.gridEnabled = s.gridEnabled;
+          if (s.title !== undefined) this.settings.title = s.title;
+        }
+      }
+      this.queue.push({
+        kind: "ops",
+        pushId: b.pushId,
+        baseRev: b.baseRev,
+        ops: b.ops,
+        sent: true,
+        mirrored: true,
+      });
+    }
+    const order = [...this.keys].sort((a, b) =>
+      a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[0] < b[0] ? -1 : 1,
+    );
+    this.order = order.map(([id]) => ({ id }));
+    // the server could not be reached while the board was opening
+    this.offline = true;
   }
 
   /** Takes a snapshot as the server's state. */
@@ -157,12 +241,16 @@ export class SyncClient {
     return this.keys.get(id);
   }
 
-  /** Call after every board change: saves after a short pause. */
+  /**
+   * Call after every board change. A throttle, not a debounce: the first
+   * change starts a 250 ms timer and later changes ride along, so a long drag
+   * is pushed and mirrored at most every 250 ms instead of only when the
+   * pointer pauses. A committed step calls `flush()` right away.
+   */
   schedule() {
     if (this.stopped) return;
     for (const id of this.host.takeLayerMoves()) this.moves.add(id);
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), DEBOUNCE_MS);
+    this.timer ??= setTimeout(() => this.flush(), THROTTLE_MS);
     this.updateStatus();
   }
 
@@ -394,7 +482,12 @@ export class SyncClient {
         ? this.api.importScene(this.sessionId, item.body)
         : this.api.push(
             this.sessionId,
-            { pushId: item.pushId, baseRev: item.baseRev, ops: item.ops },
+            {
+              pushId: item.pushId,
+              baseRev: item.baseRev,
+              ops: item.ops,
+              ...(item.mirrored ? { mirrored: true as const } : {}),
+            },
             { keepalive: keepalive && jsonBytes(item.ops) <= KEEPALIVE_BYTES },
           );
     req.then(
@@ -425,6 +518,12 @@ export class SyncClient {
     } else if (item.body.mode === "replace") {
       for (const [id, v] of Object.entries(ack.versions))
         if (!this.known.has(id) && this.tomb.has(id)) this.tomb.set(id, v);
+    }
+    if (item.kind === "ops" && item.mirrored) {
+      const stale = ack.ignored.filter((i) => i.reason === "stale_replay");
+      // the server kept newer versions: take them back
+      for (const i of stale) if (i.id !== "settings") this.resyncIds.add(i.id);
+      if (stale.length) this.host.notice(LOST_NOTICE);
     }
     if (ack.rejected.length) {
       const r = ack.rejected[0];

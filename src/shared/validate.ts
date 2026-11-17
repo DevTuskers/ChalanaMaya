@@ -5,6 +5,7 @@
  * the element every replica stores.
  */
 import type { SceneElement } from "../scene/types";
+import { SESSION_FILE_PATH_RE } from "./ids";
 import { normalizeLink } from "./links";
 import { ID_RE, LIMITS, isColor } from "./limits";
 
@@ -319,15 +320,13 @@ export interface FileMeta {
   url: string;
 }
 
-const FILE_URL_RE = /^\/api\/sessions\/[A-Za-z0-9_-]{24}\/files\/[A-Za-z0-9_-]{1,64}$/;
-
 /** File rows: id rule, allowed type, same-origin file path (remote links arrive in phase 5). */
 export const validateFileMeta = (raw: unknown): ValidationResult<FileMeta> => {
   try {
     if (!isObj(raw)) return fail("", "a file must be an object");
     id(raw.id, "id");
     oneOf(raw, "mime", ALLOWED_MIME);
-    if (typeof raw.url !== "string" || !FILE_URL_RE.test(raw.url))
+    if (typeof raw.url !== "string" || !SESSION_FILE_PATH_RE.test(raw.url))
       fail("url", "must be this server's /api/sessions/<id>/files/<fileId> path");
     return { ok: true, el: raw as unknown as FileMeta };
   } catch (e) {

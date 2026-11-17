@@ -24,6 +24,7 @@ test("a board address serves the same app, and a bad one is a 404", async ({ pag
   await expect(page.getByTestId("board")).toBeVisible();
   const bad = await page.goto("/s/not-a-board");
   expect(bad?.status()).toBe(404);
+  await expect(page.getByTestId("board-missing")).toBeVisible();
 });
 
 test("the app saves to the server under the strict CSP", async ({ page }) => {

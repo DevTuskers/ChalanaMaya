@@ -3,6 +3,11 @@ import type { FileMap, SceneElement } from "./types";
 export interface Snapshot {
   elements: readonly SceneElement[];
   files: FileMap;
+  /**
+   * Ids the step from this snapshot to the next state moved in the layer
+   * order (a reorder hint). Undo and redo of that step send the same ids.
+   */
+  moves?: readonly string[];
 }
 
 /**
@@ -23,15 +28,20 @@ export class History {
   undo(current: Snapshot): Snapshot | null {
     const prev = this.undoStack.pop();
     if (!prev) return null;
-    this.redoStack.push(current);
+    this.redoStack.push(prev.moves ? { ...current, moves: prev.moves } : current);
     return prev;
   }
 
   redo(current: Snapshot): Snapshot | null {
     const next = this.redoStack.pop();
     if (!next) return null;
-    this.undoStack.push(current);
+    this.undoStack.push(next.moves ? { ...current, moves: next.moves } : current);
     return next;
+  }
+
+  /** Forgets `before` when it is the newest undo step (an edit that did not happen). */
+  discard(before: Snapshot) {
+    if (this.undoStack.at(-1) === before) this.undoStack.pop();
   }
 
   get canUndo() {

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
 import { httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
-import { SyncClient, applyOpsToScene } from "./sync/client";
+import { LOST_NOTICE, SyncClient, applyOpsToScene } from "./sync/client";
 import { inlineFiles, usedFileIds } from "./sync/files";
 import { importIntoSession } from "./sync/importBoard";
 import { PendingMirror } from "./sync/mirror";
@@ -128,15 +128,17 @@ const createStore = (boot: SessionBoot) => {
     savedTheme = null;
   }
   const snap = boot.snapshot;
-  // the server snapshot first, then ops that never left before the last reload
-  const keyed = applyOpsToScene(snap.elements, boot.unsent);
+  // the server snapshot first, then batches the server could not take while
+  // the board opened, then ops that never left before the last reload
+  const overlay = [...boot.pending.flatMap((b) => b.ops), ...boot.unsent];
+  const keyed = applyOpsToScene(snap.elements, overlay);
   state.elements = finalizeScene(keyed.map((e) => e.el));
   state.files = sessionFiles(boot);
   const bg = snap.settings.viewBackgroundColor;
   state.viewBackgroundColor = bg && isColor(bg) ? bg : PAPER.light;
   state.gridEnabled = snap.settings.gridEnabled ?? false;
   let title = snap.title;
-  for (const op of boot.unsent)
+  for (const op of overlay)
     if (op.t === "settings") {
       if (op.settings.viewBackgroundColor)
         state.viewBackgroundColor = op.settings.viewBackgroundColor;
@@ -210,9 +212,10 @@ const LegacyBanner = () => {
         type="button"
         className="btn"
         data-testid="legacy-dismiss"
+        title="Hides this notice for good. The old board stays in the menu under “Import the board saved in this browser”."
         onClick={session.dismissLegacy}
       >
-        Not now
+        Hide this
       </button>
       <button
         type="button"
@@ -342,6 +345,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
             gridEnabled: boot.snapshot.settings.gridEnabled ?? false,
           },
         },
+        boot.pending,
       ),
   );
   const controller = useMemo(() => new Controller(store), [store]);
@@ -478,8 +482,11 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
       }
     });
     store.onSceneChange = () => sync.schedule();
-    // ops that never left before the last reload go out now
-    if (boot.unsent.length) sync.schedule();
+    store.onCommit = () => sync.flush();
+    // ops that never left before the last reload (and batches the server could
+    // not take while the board opened) go out now, with back-off
+    if (boot.unsent.length || boot.pending.length) sync.schedule();
+    if (boot.lost) store.toast(LOST_NOTICE, "error", 9000);
     const onHide = () => sync.pageHide();
     win.addEventListener("pagehide", onHide);
     // test hook: lets e2e specs wait until everything is acknowledged
@@ -487,6 +494,7 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     return () => {
       unsubPrefs();
       store.onSceneChange = null;
+      store.onCommit = null;
       win.removeEventListener("pagehide", onHide);
     };
   }, [store, sync, boot]);

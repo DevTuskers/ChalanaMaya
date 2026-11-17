@@ -5,6 +5,7 @@
  * board) is uploaded first and its fileIds remapped.
  */
 import type { FileMap, SceneElement } from "../scene/types";
+import { isSessionFilePath } from "../shared/ids";
 
 export type Uploader = (blob: Blob) => Promise<{ id: string; url: string; mime: string }>;
 
@@ -19,9 +20,14 @@ export const dataUrlToBlob = (dataURL: string): Blob => {
   return new Blob([bytes], { type: mime });
 };
 
+/**
+ * The bytes of a picture source. Only data URLs and same-origin session file
+ * paths are read: a URL found in imported or pasted data is never fetched.
+ */
 const sourceBlob = async (src: string, mime: string): Promise<Blob> => {
   if (src.startsWith("data:")) return dataUrlToBlob(src);
-  const res = await fetch(src);
+  if (!isSessionFilePath(src)) throw new Error("only this server's board files are read");
+  const res = await fetch(src, { credentials: "same-origin" });
   if (!res.ok) throw new Error(`could not read ${src}`);
   const b = await res.blob();
   return b.type ? b : new Blob([b], { type: mime });

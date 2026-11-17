@@ -31,3 +31,9 @@ export const parseSessionRef = (input: string): string | null => {
   const m = /\/s\/([A-Za-z0-9_-]{24})(?:[/?#]|$)/.exec(t);
   return m ? m[1] : null;
 };
+
+/** A same-origin session file path: `/api/sessions/<24-char id>/files/<file id>`. */
+export const SESSION_FILE_PATH_RE =
+  /^\/api\/sessions\/[A-Za-z0-9_-]{24}\/files\/[A-Za-z0-9_-]{1,64}$/;
+export const isSessionFilePath = (v: unknown): v is string =>
+  typeof v === "string" && SESSION_FILE_PATH_RE.test(v);

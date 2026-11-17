@@ -514,6 +514,8 @@ describe("app pages and headers", () => {
     expect(board.text).toContain("ChalanaMaya test app");
     const bad = await raw(srv.port, "GET", "/s/nope");
     expect(bad.status).toBe(404);
+    // the branded page, not a bare text answer
+    expect(bad.text).toContain("ChalanaMaya test app");
     expect((await raw(srv.port, "GET", "/assets/app.js")).status).toBe(200);
   });
 

@@ -47,7 +47,12 @@ export const importIntoSession = async (
     incoming = cloneElements(incoming, dx, dy).clones;
   }
   const ids = new Set(incoming.map((e) => e.id));
-  store.history.record(store.snapshot());
+  const before = store.snapshot();
+  const beforeView = {
+    viewBackgroundColor: state.viewBackgroundColor,
+    gridEnabled: state.gridEnabled,
+  };
+  store.history.record(before);
   const bg = file.settings.viewBackgroundColor.toLowerCase();
   const settings =
     mode === "replace"
@@ -68,6 +73,16 @@ export const importIntoSession = async (
     historyVersion: state.historyVersion + 1,
   });
   const ok = sync.queueImport(mode, ids, settings);
+  if (!ok) {
+    // refused before anything was sent: put the board back and leave no empty undo step
+    store.history.discard(before);
+    store.set({
+      elements: before.elements,
+      selectedIds: new Set(),
+      ...beforeView,
+      historyVersion: store.get().historyVersion + 1,
+    });
+  }
   return {
     ok,
     count: incoming.length,

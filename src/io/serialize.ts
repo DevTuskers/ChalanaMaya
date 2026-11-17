@@ -1,5 +1,6 @@
 import { normalizeLink } from "../scene/arrange";
 import { PAPER } from "../scene/constants";
+import { isSessionFilePath } from "../shared/ids";
 import { isColor } from "../shared/limits";
 import type { FileMap, SceneElement, Theme } from "../scene/types";
 
@@ -207,12 +208,24 @@ export const parseElement = (raw: unknown): SceneElement => {
   }
 };
 
-export const parseFiles = (raw: unknown): FileMap => {
+/**
+ * Parses an embedded file map. Board files carry data URLs only. A clipboard
+ * payload (`sessionPaths`) may also name pictures by their same-origin session
+ * path (`/api/sessions/<id>/files/<fileId>`): a copy from a server-backed board
+ * keeps the server URLs, and the paste re-uploads them when they belong to
+ * another board.
+ */
+export const parseFiles = (raw: unknown, opts: { sessionPaths?: boolean } = {}): FileMap => {
   if (raw === undefined) return {};
   if (!isObj(raw)) throw new FormatError("The image list is invalid.");
   const files: FileMap = {};
   for (const [id, f] of Object.entries(raw)) {
-    if (!isObj(f) || typeof f.dataURL !== "string" || !f.dataURL.startsWith("data:")) {
+    const ok =
+      isObj(f) &&
+      typeof f.dataURL === "string" &&
+      (f.dataURL.startsWith("data:") ||
+        (opts.sessionPaths === true && isSessionFilePath(f.dataURL)));
+    if (!ok || !isObj(f) || typeof f.dataURL !== "string") {
       throw new FormatError("An embedded image is damaged.");
     }
     files[id] = { id, mimeType: str(f.mimeType, "image/png"), dataURL: f.dataURL };
@@ -309,7 +322,7 @@ export const parseClipboard = (text: string): ClipboardPayload | null => {
       type: CLIPBOARD_TYPE,
       version: FORMAT_VERSION,
       elements: parseElements(raw.elements),
-      files: parseFiles(raw.files),
+      files: parseFiles(raw.files, { sessionPaths: true }),
     };
   } catch {
     return null;

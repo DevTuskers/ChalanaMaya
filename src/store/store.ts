@@ -174,6 +174,8 @@ export class Store {
   private toastId = 0;
   /** Called after any change to elements/files (autosave hook). */
   onSceneChange: (() => void) | null = null;
+  /** Called after a history step (commit, undo, redo): the save path writes at once. */
+  onCommit: (() => void) | null = null;
   /** CSS-pixel size of the canvas, kept current by the canvas component. */
   viewSize = { width: 1024, height: 768 };
   /** Window hosting the app (set on mount), used for opening links. */
@@ -223,13 +225,22 @@ export class Store {
   }
 
   /** Records the current scene in history, then applies new elements. */
-  commit(elements: readonly SceneElement[], extra: Partial<AppState> = {}) {
-    this.history.record(this.snapshot());
+  commit(
+    elements: readonly SceneElement[],
+    extra: Partial<AppState> = {},
+    /** Ids moved in the layer order by this step (a reorder hint, Rule E). */
+    moves?: ReadonlySet<string>,
+  ) {
+    if (moves?.size) {
+      for (const id of moves) this.layerMoves.add(id);
+      this.history.record({ ...this.snapshot(), moves: [...moves] });
+    } else this.history.record(this.snapshot());
     this.set({
       ...extra,
       elements: finalizeScene(elements),
       historyVersion: this.state.historyVersion + 1,
     });
+    this.onCommit?.();
   }
 
   /** Records a snapshot taken earlier (e.g. at the start of a drag). */
@@ -240,6 +251,7 @@ export class Store {
     }
     this.history.record(before);
     this.set({ ...extra, historyVersion: this.state.historyVersion + 1 });
+    this.onCommit?.();
   }
 
   /** Live update without a history entry (during drags and typing). */
@@ -250,24 +262,28 @@ export class Store {
   undo() {
     const prev = this.history.undo(this.snapshot());
     if (!prev) return false;
+    for (const id of prev.moves ?? []) this.layerMoves.add(id);
     this.set({
       elements: prev.elements,
       files: this.sessionMode ? this.state.files : prev.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,
     });
+    this.onCommit?.();
     return true;
   }
 
   redo() {
     const next = this.history.redo(this.snapshot());
     if (!next) return false;
+    for (const id of next.moves ?? []) this.layerMoves.add(id);
     this.set({
       elements: next.elements,
       files: this.sessionMode ? this.state.files : next.files,
       editingTextId: null,
       historyVersion: this.state.historyVersion + 1,
     });
+    this.onCommit?.();
     return true;
   }
 

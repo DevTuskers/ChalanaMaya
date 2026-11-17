@@ -221,3 +221,183 @@ test("board colour and grid are saved with the board; the theme is not", async (
   await expect.poll(async () => (await serverBoard(page)).settings.gridEnabled).toBe(true);
   expect((await serverBoard(page)).settings).not.toHaveProperty("theme");
 });
+
+/** A small solid PNG, base64 (made in the page). */
+const makePng = (page: Page, color = "#007f78") =>
+  page.evaluate((c) => {
+    const cv = document.createElement("canvas");
+    cv.width = 120;
+    cv.height = 60;
+    const g = cv.getContext("2d")!;
+    g.fillStyle = c;
+    g.fillRect(0, 0, 120, 60);
+    return cv.toDataURL("image/png").split(",")[1];
+  }, color);
+
+const insertPicture = async (page: Page) => {
+  await page.getByTestId("picture-input").setInputFiles({
+    name: "pic.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(await makePng(page), "base64"),
+  });
+  await expect
+    .poll(async () => (await serverBoard(page)).elements.map((e) => e.type))
+    .toContain("image");
+};
+
+const types = async (page: Page) => (await serverBoard(page)).elements.map((e) => e.type).sort();
+
+/** True when every picture on the page's board is a file the session serves. */
+const picturesLoad = (page: Page) =>
+  page.evaluate(async (sid) => {
+    const s = await (await fetch(`/api/sessions/${sid}/scene`)).json();
+    const files = new Map<string, string>(
+      s.files.map((f: { id: string; url: string }) => [f.id, f.url]),
+    );
+    const imgs = s.elements.filter((e: { el: { type: string } }) => e.el.type === "image");
+    if (!imgs.length) return false;
+    for (const e of imgs) {
+      const url = files.get(e.el.fileId);
+      if (!url || !url.startsWith(`/api/sessions/${sid}/files/`)) return false;
+      const ok = await new Promise<boolean>((resolve) => {
+        const i = new Image();
+        i.onload = () => resolve(i.naturalWidth > 0);
+        i.onerror = () => resolve(false);
+        i.src = url;
+      });
+      if (!ok) return false;
+    }
+    return true;
+  }, sessionId(page));
+
+test("copying a picture and a box pastes both on the same board", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await freshBoard(page);
+  await insertPicture(page);
+  await drawRect(page, { x: 700, y: 400 }, { x: 800, y: 480 });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press(`${mod}+c`);
+  await page.keyboard.press(`${mod}+v`);
+  await expect.poll(() => types(page)).toEqual(["image", "image", "rectangle", "rectangle"]);
+  // the same board keeps using the same picture file
+  const imgs = (await serverBoard(page)).elements.filter((e) => e.type === "image");
+  expect(new Set(imgs.map((e) => e.fileId)).size).toBe(1);
+  expect(await picturesLoad(page)).toBe(true);
+});
+
+test("a box and a picture copied in board A paste into board B and survive a reload", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await freshBoard(page);
+  await insertPicture(page);
+  await drawRect(page, { x: 700, y: 400 }, { x: 800, y: 480 });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press(`${mod}+c`);
+  const a = sessionId(page);
+  await page.goto("/");
+  await expect(page).toHaveURL(SESSION_URL);
+  await expect(page.getByTestId("board")).toBeVisible();
+  expect(sessionId(page)).not.toBe(a);
+  await page.keyboard.press(`${mod}+v`);
+  await expect.poll(() => types(page)).toEqual(["image", "rectangle"]);
+  await page.reload();
+  await expectOnBoard(page, 2);
+  // the picture was copied into board B's own files
+  await expect.poll(() => picturesLoad(page)).toBe(true);
+});
+
+for (const block of ["abort", "429"] as const) {
+  test(`a board opens while the server refuses saves during the reload (${block})`, async ({
+    page,
+  }) => {
+    await freshBoard(page);
+    const refuse = (r: import("@playwright/test").Route) =>
+      block === "abort"
+        ? r.abort()
+        : r.fulfill({
+            status: 429,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "rate_limited", message: "Slow down." } }),
+          });
+    await page.route("**/api/sessions/*/ops", refuse);
+    await drawRect(page);
+    await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "offline", {
+      timeout: 5000,
+    });
+    // reload while the server still refuses: the board opens with the edit on it
+    await page.reload();
+    await expectOnBoard(page, 1);
+    await expect(page.getByTestId("boot-page")).toHaveCount(0);
+    await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "offline", {
+      timeout: 5000,
+    });
+    // the server comes back: the same batch is sent and the board is saved
+    await page.unroute("**/api/sessions/*/ops");
+    await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "saved", {
+      timeout: 20000,
+    });
+    expect((await serverBoard(page)).elements).toHaveLength(1);
+    await page.reload();
+    await expectOnBoard(page, 1);
+    const id = sessionId(page);
+    await expect
+      .poll(() => page.evaluate((sid) => localStorage.getItem(`chalanamaya.pending.${sid}`), id))
+      .toBeNull();
+  });
+}
+
+test("a legacy board with pictures imports, and a 4.5 MB local board can be dragged", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await freshBoard(page);
+  const png = await makePng(page, "#c0392b");
+  const dataURL = `data:image/png;base64,${png}`;
+  const pic = (x: number, fileId: string) => ({
+    ...createShape("rectangle", x, 100),
+    type: "image",
+    width: 120,
+    height: 60,
+    fileId,
+    crop: null,
+    flipX: false,
+    flipY: false,
+    backgroundColor: "transparent",
+  });
+  const strokes = Array.from({ length: 27 }, (_, i) => ({
+    ...createFreedraw(100 + i * 10, 300 + i * 5),
+    points: Array.from({ length: 3800 }, (_, j) => ({
+      x: j * 0.3711 + i / 3,
+      y: Math.sin(j / 7) * 40 + i / 7,
+    })),
+  }));
+  const legacy = JSON.stringify({
+    type: "chalana",
+    version: 1,
+    source: "ChalanaMaya",
+    elements: [pic(100, "legacy-pic-1"), pic(300, "legacy-pic-1"), ...strokes],
+    files: { "legacy-pic-1": { id: "legacy-pic-1", mimeType: "image/png", dataURL } },
+    settings: { viewBackgroundColor: "#fff9ed", theme: "light", gridEnabled: false },
+  });
+  expect(legacy.length).toBeGreaterThan(4.5 * 1000 * 1000);
+  await page.evaluate(({ k, v }) => localStorage.setItem(k, v), { k: STORAGE_KEY, v: legacy });
+  await page.reload();
+  await expect(page.getByTestId("legacy-banner")).toContainText("29 items");
+  await page.getByTestId("legacy-import").click();
+  await expectOnBoard(page, 29);
+  await expect.poll(async () => (await types(page)).filter((t) => t === "image")).toHaveLength(2);
+  expect(await picturesLoad(page)).toBe(true);
+  // with the storage nearly full, a long drag still saves (the mirror never throws)
+  await page.keyboard.press(`${mod}+a`);
+  await drag(page, { x: 160, y: 130 }, { x: 260, y: 230 }, 30);
+  await settled(page);
+  const moved = (await serverBoard(page)).elements.filter((e) => e.type === "image");
+  expect(Math.min(...moved.map((e) => e.y))).toBeGreaterThan(150);
+  expect(errors).toEqual([]);
+});
