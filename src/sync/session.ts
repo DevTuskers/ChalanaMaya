@@ -2,7 +2,7 @@
 import { isSessionId } from "../shared/ids";
 import type { Op, SceneSnapshot } from "../shared/protocol";
 import { getStorage } from "../io/autosave";
-import type { Api } from "./api";
+import { getBoardKey, readOwnerKey, type Api } from "./api";
 import { RemoteGuard, replayMirror } from "./client";
 import { PendingMirror, tabLease, type MirrorBatch, type TabLease } from "./mirror";
 
@@ -20,6 +20,8 @@ export interface SessionBoot {
   lost: number;
   /** Counts invalid remote elements; shared with the sync client. */
   guard?: RemoteGuard;
+  /** A keyed host and no edit key: the board opens look-only. */
+  viewOnly?: boolean;
 }
 
 /**
@@ -54,6 +56,8 @@ export const loadSession = async (api: Api, id: string): Promise<SessionBoot> =>
   const { unsent, pending, lost } = await replayMirror(api, mirror);
   // Rule B: elements from the server are checked before anything is shown
   const guard = new RemoteGuard();
-  const snapshot = guard.snapshot(await api.scene(id));
-  return { id, snapshot, unsent, pending, lost, guard };
+  const raw = (await api.scene(id)) as SceneSnapshot & { keyed?: boolean };
+  const snapshot = guard.snapshot(raw);
+  const viewOnly = raw.keyed === true && !getBoardKey() && !readOwnerKey(id);
+  return { id, snapshot, unsent, pending, lost, guard, viewOnly };
 };

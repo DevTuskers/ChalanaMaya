@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { STORAGE_KEY, getStorage } from "../io/autosave";
-import { boardLabel, readRecent, shortId } from "../sync/recent";
+import { boardLabel, readRecent, recentHref, shortId } from "../sync/recent";
 import { copySelectionAs, lockAll, pasteWithApi, unlockAll } from "../store/actions";
 import { useAppState, useServices } from "./context";
 import { Icon } from "./icons";
@@ -113,7 +113,7 @@ const SessionSection = ({ close }: { close: () => void }) => {
             <ul data-testid="session-recent-list">
               {recent.map((r) => (
                 <li key={r.id}>
-                  <a href={`/s/${r.id}`}>
+                  <a href={recentHref(r)}>
                     {boardLabel(r.title)} <code>{shortId(r.id)}</code>
                   </a>{" "}
                   <time dateTime={new Date(r.openedAt).toISOString()}>

@@ -14,7 +14,7 @@ export const base64url = (bytes: Uint8Array) => {
 
 export const randomId = (bytes: number) => {
   const buf = new Uint8Array(bytes);
-  globalThis.crypto.getRandomValues(buf);
+  crypto.getRandomValues(buf);
   return base64url(buf);
 };
 
@@ -30,6 +30,19 @@ export const parseSessionRef = (input: string): string | null => {
   if (isSessionId(t)) return t;
   const m = /\/s\/([A-Za-z0-9_-]{24})(?:[/?#]|$)/.exec(t);
   return m ? m[1] : null;
+};
+
+/**
+ * The board secrets carried in a `#key=...` / `#owner=...` fragment on the
+ * Cloudflare host (plan: three secrets). Both may appear, `#owner=` last.
+ */
+export const parseBoardHash = (hash: string): { key?: string; owner?: string } => {
+  const out: { key?: string; owner?: string } = {};
+  for (const part of hash.replace(/^#/, "").split("&")) {
+    const m = /^(key|owner)=([A-Za-z0-9_-]{16,64})$/.exec(part);
+    if (m) out[m[1] as "key" | "owner"] = m[2];
+  }
+  return out;
 };
 
 /** A same-origin session file path: `/api/sessions/<24-char id>/files/<file id>`. */

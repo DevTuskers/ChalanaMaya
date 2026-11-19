@@ -3,7 +3,7 @@ import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
-import { ApiError, httpApi } from "./sync/api";
+import { ApiError, getBoardKey, httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
 import { LiveMedia } from "./ui/LiveMedia";
@@ -375,7 +375,12 @@ const agentNotice = (
 };
 
 export const App = ({ boot }: { boot: SessionBoot }) => {
-  const [store] = useState(() => createStore(boot));
+  const [store] = useState(() => {
+    const s = createStore(boot);
+    // A keyed host opened without the edit key opens look-only (§invite links).
+    if (boot.viewOnly) s.set({ viewMode: true });
+    return s;
+  });
   const [sync] = useState(
     () =>
       new SyncClient(
@@ -497,7 +502,8 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
         window.location.assign(`/s/${boot.id}`);
       },
       copyLink: () => {
-        const url = `${window.location.origin}/s/${boot.id}`;
+        // On a keyed host the share link carries the edit key fragment.
+        const url = `${window.location.origin}/s/${boot.id}${getBoardKey() ? `#key=${getBoardKey()}` : ""}`;
         void (
           navigator.clipboard?.writeText(url) ?? Promise.reject(new Error("no clipboard"))
         ).then(
