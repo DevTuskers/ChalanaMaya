@@ -328,11 +328,14 @@ export class SyncClient {
         if (imp.mode === "replace")
           for (const k of this.order)
             if (!ids.has(k.id)) ops.push({ t: "del", id: k.id, version: ver(k.id) });
-        // puts only for elements the snapshot does not know: an import that
-        // already landed leaves newer remote work untouched
-        for (const e of imp.elements)
-          if (!this.known.has(e.el.id))
-            ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
+        // mirror the server's rule: a put applies unless the snapshot holds a
+        // newer version of the element than the import recorded (`v`)
+        for (const e of imp.elements) {
+          const kv = this.known.get(e.el.id)?.version;
+          const tv = this.tomb.get(e.el.id);
+          const stale = e.v === undefined ? kv !== undefined : (kv ?? -1) > e.v || (tv ?? -1) > e.v;
+          if (!stale) ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
+        }
         if (imp.settings) ops.push({ t: "settings", settings: imp.settings });
         if (ops.length) this.applyRemote(ops);
         this.push({ kind: "import", body: imp, sent: false });
@@ -1075,8 +1078,14 @@ export class SyncClient {
       }
       if (q.kind !== "ops") return;
       if (q.sent) batches.push({ pushId: q.pushId, baseRev: q.baseRev, ops: q.ops });
-      // element ops before a replace are dead; a rename or grid change is not
-      else unsent.push(...q.ops.filter((o) => i > lastReplace || o.t === "settings"));
+      else
+        for (const o of q.ops) {
+          // element ops before a replace are dead; a rename is not, but an
+          // older background/grid must not override the file's settings
+          if (i > lastReplace) unsent.push(o);
+          else if (o.t === "settings" && o.settings.title !== undefined)
+            unsent.push({ t: "settings", settings: { title: o.settings.title } });
+        }
     });
     const r = this.mirror.write(batches, unsent);
     const warning = !r.ok

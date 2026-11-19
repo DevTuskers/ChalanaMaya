@@ -52,6 +52,8 @@ export interface ApplyOptions {
   origin: ChangeOrigin;
   atomic: boolean;
   layoutIds?: ReadonlySet<string>;
+  /** mirrored imports keep their settings on replay (the file's scene intent) */
+  keepSettingsOnReplay?: boolean;
 }
 
 export interface PushInput {
@@ -570,8 +572,11 @@ export class BoardStore {
           }
           const row = this.element(el.id);
           const stored = row?.version ?? 0;
-          if (replay && stored !== op.baseVersion) return ignore(el.id, "stale_replay");
+          // stored < baseVersion means the replay carries newer data (an
+          // import recorded the version it saw): it still applies
+          if (replay && stored > op.baseVersion) return ignore(el.id, "stale_replay");
           if (row?.deleted === 1 && op.baseVersion !== row.version) {
+            if (replay) return ignore(el.id, "stale_replay");
             rejected.push({
               id: el.id,
               reason: "deleted",
@@ -643,7 +648,7 @@ export class BoardStore {
           const row = this.element(op.id);
           if (!row) return ignore(op.id, "not_found");
           if (row.deleted === 1) return ignore(op.id, "already_deleted");
-          if (replay && row.version !== op.baseVersion) return ignore(op.id, "stale_replay");
+          if (replay && row.version > op.baseVersion) return ignore(op.id, "stale_replay");
           const version = row.version + 1;
           this.run(
             "UPDATE elements SET deleted = 1, version = ?, rev = ?, needs_layout = 0, data = 'null', updated_at = ? WHERE session_id = ? AND id = ?",
@@ -670,7 +675,7 @@ export class BoardStore {
             });
             return;
           }
-          if (replay) return ignore("settings", "stale_replay");
+          if (replay && !opts.keepSettingsOnReplay) return ignore("settings", "stale_replay");
           const { title: t, ...rest } = v.el;
           if (t !== undefined) title = t;
           Object.assign(settings, rest);
@@ -825,7 +830,7 @@ export class BoardStore {
             ops,
             ...(input.mirrored ? { mirrored: true as const } : {}),
           },
-          { origin, atomic: true },
+          { origin, atomic: true, keepSettingsOnReplay: input.mirrored === true },
         );
       });
       this.lastEvent = r.event;

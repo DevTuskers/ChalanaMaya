@@ -42,6 +42,8 @@ export interface ApplyOptions {
    * needs_layout = 1 so the first browser with fonts corrects them once.
    */
   layoutIds?: ReadonlySet<string>;
+  /** mirrored imports keep their settings on replay (the file's scene intent) */
+  keepSettingsOnReplay?: boolean;
 }
 
 export interface PushInput {
@@ -445,8 +447,9 @@ export class SessionService {
           }
           const row = this.q.element.get(sessionId, el.id);
           const stored = row?.version ?? 0;
-          if (replay && stored !== op.baseVersion) return ignore(el.id, "stale_replay");
+          if (replay && stored > op.baseVersion) return ignore(el.id, "stale_replay");
           if (row?.deleted === 1 && op.baseVersion !== row.version) {
+            if (replay) return ignore(el.id, "stale_replay");
             rejected.push({
               id: el.id,
               reason: "deleted",
@@ -516,7 +519,7 @@ export class SessionService {
           const row = this.q.element.get(sessionId, op.id);
           if (!row) return ignore(op.id, "not_found");
           if (row.deleted === 1) return ignore(op.id, "already_deleted");
-          if (replay && row.version !== op.baseVersion) return ignore(op.id, "stale_replay");
+          if (replay && row.version > op.baseVersion) return ignore(op.id, "stale_replay");
           const version = row.version + 1;
           this.q.tombstone.run(version, newRev, now, sessionId, op.id);
           count -= 1;
@@ -536,7 +539,7 @@ export class SessionService {
             });
             return;
           }
-          if (replay) return ignore("settings", "stale_replay");
+          if (replay && !opts.keepSettingsOnReplay) return ignore("settings", "stale_replay");
           const { title: t, ...rest } = v.el;
           if (t !== undefined) title = t;
           Object.assign(settings, rest);
@@ -663,7 +666,7 @@ export class SessionService {
             ops,
             ...(input.mirrored ? { mirrored: true as const } : {}),
           },
-          { origin, atomic: true },
+          { origin, atomic: true, keepSettingsOnReplay: input.mirrored === true },
         );
         event = r.event;
         return r.ack;
