@@ -192,6 +192,17 @@ describe("board lifecycle", () => {
     expect(scene.status).toBe(404);
   });
 
+  it("internal _create/_evict are unreachable through the public API", async () => {
+    const { id } = await createBoard();
+    for (const internal of ["/_create", "/_evict"]) {
+      const forged = await call(new Request(api(id, internal), { method: "POST" }));
+      expect(forged.status).toBe(404);
+    }
+    // the board survived the forged evict
+    const scene = await call(new Request(api(id, "/scene")));
+    expect(scene.status).toBe(200);
+  });
+
   it("rotation replaces both secrets", async () => {
     const { id, key, owner } = await createBoard();
     const res = await call(

@@ -56,26 +56,30 @@ const createSession = async (req: Request, env: Env, ctx: ExecutionContext): Pro
     // an empty body makes an untitled board
   }
 
-  const viewId = newSessionId();
-  const stub = boardStub(env, viewId);
-  const res = await stub.fetch("https://board/_create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-  if (!res.ok) return res;
-  const { editKey, ownerKey } = (await res.json()) as { editKey: string; ownerKey: string };
-  touchIndex(env, viewId, ctx);
-  return json(
-    {
-      session_id: viewId,
-      url: `/s/${viewId}#key=${editKey}`,
-      view_url: `/s/${viewId}`,
-      invite_url: `/s/${viewId}#key=${editKey}`,
-      owner_url: `/s/${viewId}#owner=${ownerKey}`,
-    },
-    201,
-  );
+  // A 128-bit viewId colliding means a once-in-a-lifetime event; retry once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const viewId = newSessionId();
+    const res = await boardStub(env, viewId).fetch("https://board/_create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (res.status === 409 && attempt === 0) continue;
+    if (!res.ok) return res;
+    const { editKey, ownerKey } = (await res.json()) as { editKey: string; ownerKey: string };
+    touchIndex(env, viewId, ctx);
+    return json(
+      {
+        session_id: viewId,
+        url: `/s/${viewId}#key=${editKey}`,
+        view_url: `/s/${viewId}`,
+        invite_url: `/s/${viewId}#key=${editKey}`,
+        owner_url: `/s/${viewId}#owner=${ownerKey}`,
+      },
+      201,
+    );
+  }
+  return json({ error: { code: "internal", message: "Something went wrong." } }, 500);
 };
 
 export default {
@@ -97,8 +101,8 @@ export default {
         if (!isSessionId(viewId))
           return json({ error: { code: "session_not_found", message: "No such board." } }, 404);
         const stub = boardStub(env, viewId);
-        // Board reads refresh the idle-eviction clock.
-        if (req.method === "GET") touchIndex(env, viewId, ctx);
+        // Any board traffic refreshes the idle-eviction clock (phase 2).
+        touchIndex(env, viewId, ctx);
         const res = await stub.fetch(req);
         // A DO answering 404 session_not_found means the board was evicted or deleted.
         if (res.status === 404) {
