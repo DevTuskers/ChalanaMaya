@@ -44,8 +44,9 @@ export class ApiError extends Error {
 export interface Api {
   createSession(title?: string): Promise<{
     session_id: string;
-    /** invite address, `/s/<id>#key=<editKey>` on the Cloudflare host */
-    url: string;
+    /** invite address, `/s/<id>#key=<editKey>` on the Cloudflare host;
+     *  absent on the Node self-host */
+    url?: string;
     view_url?: string;
     invite_url?: string;
     owner_url?: string;

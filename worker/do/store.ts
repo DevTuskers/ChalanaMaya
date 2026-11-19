@@ -196,6 +196,7 @@ interface MediaBucket {
 export class BoardStore {
   private readonly limits: StoreLimits;
   private readonly now: () => number;
+  private readonly tx: <T>(fn: () => T) => T;
   /** The committed change of the last `apply`/`importScene` (phase 2 broadcast). */
   lastEvent: ChangesEvent | null = null;
 
@@ -203,10 +204,30 @@ export class BoardStore {
     private readonly sql: SqlStorage,
     private readonly sessionId: string,
     private readonly media: MediaBucket,
-    opts: { limits?: Partial<StoreLimits>; now?: () => number } = {},
+    opts: {
+      limits?: Partial<StoreLimits>;
+      now?: () => number;
+      /** storage.transactionSync — sql.exec bans BEGIN/COMMIT in DO SQLite */
+      tx?: <T>(fn: () => T) => T;
+    } = {},
   ) {
     this.limits = { ...STORE_LIMITS, ...opts.limits };
     this.now = opts.now ?? Date.now;
+    this.tx =
+      opts.tx ??
+      // Single-writer DO storage serialises anyway; this fallback is for the
+      // vitest shim, whose better-sqlite3 accepts BEGIN/COMMIT through exec.
+      ((fn) => {
+        this.sql.exec("BEGIN IMMEDIATE");
+        try {
+          const out = fn();
+          this.sql.exec("COMMIT");
+          return out;
+        } catch (e) {
+          this.sql.exec("ROLLBACK");
+          throw e;
+        }
+      });
   }
 
   // ---------------------------------------------------------------- queries
@@ -222,21 +243,6 @@ export class BoardStore {
 
   private run(query: string, ...params: unknown[]) {
     this.sql.exec(query, ...params);
-  }
-
-  private tx<T>(fn: () => T): T {
-    // SqlStorage has no explicit BEGIN API here; DO storage serialises a
-    // synchronous block inside transactionSync's caller. We emulate the
-    // transaction with BEGIN/COMMIT/ROLLBACK since exec is synchronous.
-    this.sql.exec("BEGIN IMMEDIATE");
-    try {
-      const out = fn();
-      this.sql.exec("COMMIT");
-      return out;
-    } catch (e) {
-      this.sql.exec("ROLLBACK");
-      throw e;
-    }
   }
 
   private requireSession(): SessionRow {

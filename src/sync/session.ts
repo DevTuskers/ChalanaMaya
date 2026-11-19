@@ -22,6 +22,8 @@ export interface SessionBoot {
   guard?: RemoteGuard;
   /** A keyed host and no edit key: the board opens look-only. */
   viewOnly?: boolean;
+  /** False when the host has no socket endpoint (phase 1 on Cloudflare). */
+  live?: boolean;
 }
 
 /**
@@ -56,8 +58,9 @@ export const loadSession = async (api: Api, id: string): Promise<SessionBoot> =>
   const { unsent, pending, lost } = await replayMirror(api, mirror);
   // Rule B: elements from the server are checked before anything is shown
   const guard = new RemoteGuard();
-  const raw = (await api.scene(id)) as SceneSnapshot & { keyed?: boolean };
+  const raw = (await api.scene(id)) as SceneSnapshot & { keyed?: boolean; socket?: boolean };
   const snapshot = guard.snapshot(raw);
   const viewOnly = raw.keyed === true && !getBoardKey() && !readOwnerKey(id);
-  return { id, snapshot, unsent, pending, lost, guard, viewOnly };
+  // socket=false marks a host without live sync yet (phase 1 on Cloudflare)
+  return { id, snapshot, unsent, pending, lost, guard, viewOnly, live: raw.socket !== false };
 };

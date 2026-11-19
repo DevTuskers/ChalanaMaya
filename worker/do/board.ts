@@ -61,7 +61,10 @@ export class BoardSession {
       migrate(this.state.storage.sql);
       const id = this.state.id.name;
       if (!id) throw new ServiceError(500, "do_unnamed", "Board objects must be named by viewId.");
-      this.store = new BoardStore(this.state.storage.sql, id, this.env.MEDIA);
+      this.store = new BoardStore(this.state.storage.sql, id, this.env.MEDIA, {
+        // sql.exec bans BEGIN/COMMIT in Durable Object SQLite
+        tx: (fn) => this.state.storage.transactionSync(fn),
+      });
     }
     return this.store;
   }
@@ -108,8 +111,9 @@ export class BoardSession {
         return json(this.board().meta());
 
       case rest === "scene" && req.method === "GET":
-        // `keyed` marks this as a keyed host, so a keyless open goes look-only
-        return json({ ...this.board().snapshot({ markOpened: true }), keyed: true });
+        // `keyed` marks this as a keyed host, so a keyless open goes look-only.
+        // `socket: false` keeps clients on the REST path until phase 2.
+        return json({ ...this.board().snapshot({ markOpened: true }), keyed: true, socket: false });
 
       case rest === "ops" && req.method === "POST": {
         await this.requireKey(req, "edit");
@@ -157,8 +161,11 @@ export class BoardSession {
             file_id: f.id,
             url: f.url,
             mime: f.mime,
+            size: f.size,
             width: f.width,
             height: f.height,
+            duration_ms: f.durationMs,
+            source: "upload",
           },
           201,
         );
@@ -180,7 +187,16 @@ export class BoardSession {
           height: dim(raw.height),
         });
         return json(
-          { file_id: f.id, url: f.url, mime: f.mime, width: f.width, height: f.height },
+          {
+            file_id: f.id,
+            url: f.url,
+            mime: f.mime,
+            size: 0,
+            width: f.width,
+            height: f.height,
+            duration_ms: null,
+            source: "remote",
+          },
           201,
         );
       }

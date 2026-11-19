@@ -1,8 +1,8 @@
 /**
  * Durable Object SQLite schema for one board (plan §3.5 of the Cloudflare
  * plan). Same tables as the Node server, plus `auth` for the board's three
- * secrets (only SHA-256 hashes are stored). Migrations run by
- * `PRAGMA user_version`, like `server/db/schema.ts`.
+ * secrets (only SHA-256 hashes are stored). Migrations run by a `_meta`
+ * table (DO SQLite bans PRAGMA — `server/db/schema.ts` uses user_version).
  */
 import type { SqlStorage } from "@cloudflare/workers-types";
 
@@ -77,13 +77,21 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 
 /** Runs the migrations a fresh (or older) board storage needs. */
 export const migrate = (sql: SqlStorage) => {
-  const current = sql.exec<{ user_version: number }>("PRAGMA user_version").one().user_version ?? 0;
+  sql.exec(`CREATE TABLE IF NOT EXISTS _meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
+  const row = sql
+    .exec<{ v: string }>(`SELECT v FROM _meta WHERE k = 'schema_version'`)
+    .toArray()[0];
+  const current = row ? Number(row.v) : 0;
   if (current > SCHEMA_VERSION)
     throw new Error(
       `this board was made by a newer ChalanaMaya (schema ${current}, this build knows ${SCHEMA_VERSION})`,
     );
   for (let v = current; v < SCHEMA_VERSION; v += 1) {
     sql.exec(MIGRATIONS[v]);
-    sql.exec(`PRAGMA user_version = ${v + 1}`);
+    sql.exec(
+      `INSERT INTO _meta (k, v) VALUES ('schema_version', ?)
+       ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+      String(v + 1),
+    );
   }
 };

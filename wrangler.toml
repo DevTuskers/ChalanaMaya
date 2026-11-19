@@ -1,6 +1,7 @@
 # ChalanaMaya on Cloudflare Workers (docs/plans/cloudflare-hosting-plan.md).
 # Static app + one SQLite Durable Object per board + R2 for media.
 name = "chalanamaya"
+account_id = "a652c1bd42cf239e2f84d7da716bfc1b"
 main = "worker/index.ts"
 compatibility_date = "2025-11-10"
 compatibility_flags = ["nodejs_compat"]

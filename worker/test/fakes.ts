@@ -12,6 +12,9 @@ import { SqliteStorage } from "./sqlite";
 
 class FakeStorage {
   sql = new SqliteStorage();
+  transactionSync<T>(fn: () => T): T {
+    return this.sql.db.transaction(fn)() as T;
+  }
   async deleteAll() {
     this.sql = new SqliteStorage();
   }
