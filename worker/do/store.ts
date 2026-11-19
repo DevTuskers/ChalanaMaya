@@ -505,7 +505,6 @@ export class BoardStore {
 
   apply(push: PushInput, opts: ApplyOptions): ApplyResult {
     this.lastEvent = null;
-    this.bumpDailyOps(push.ops.length || 1);
     try {
       const r = this.tx(() => this.applyInTx(push, opts));
       this.lastEvent = r.event;
@@ -519,6 +518,9 @@ export class BoardStore {
 
   private applyInTx(push: PushInput, opts: ApplyOptions): { ack: Ack; event: ChangesEvent | null } {
     const s = this.requireSession();
+    // charged inside the tx after the board check: a refused or rolled-back
+    // push — deleting window, gone board, stale base — must not spend quota
+    this.bumpDailyOps(push.ops.length || 1);
     const dup = this.one<{ ack: string }>(
       "SELECT ack FROM push_log WHERE session_id = ? AND push_id = ?",
       this.sessionId,
@@ -787,7 +789,6 @@ export class BoardStore {
 
   /** Atomic import (§3.6): one rev, one ack, every element validated. */
   importScene(input: ImportInput, origin: ChangeOrigin): ApplyResult {
-    this.bumpDailyOps(input.elements.length || 1);
     this.lastEvent = null;
     try {
       const r = this.tx(() => {

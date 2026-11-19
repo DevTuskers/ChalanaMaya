@@ -147,6 +147,13 @@ export class BoardSession {
       case rest === "" && req.method === "GET":
         return json(this.board().meta());
 
+      case rest === "key-check" && req.method === "GET": {
+        // credential probe for boot-time disambiguation between a stored
+        // owner key and a possibly-stale recents/invitation key — 200 or 403
+        await this.requireKey(req, "edit");
+        return json({ ok: true });
+      }
+
       case rest === "scene" && req.method === "GET":
         // `keyed` marks this as a keyed host, so a keyless open goes look-only.
         return json({ ...this.board().snapshot({ markOpened: true }), keyed: true });

@@ -25,6 +25,19 @@ const Page = ({ title, children }: { title: string; children: React.ReactNode })
   </main>
 );
 
+/** Credential probe: true when `key` still authorises edits on `id`. Lets boot
+ *  pick a live key instead of a stale one when several candidates exist. */
+const probeKey = async (id: string, key: string): Promise<boolean> => {
+  try {
+    const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/key-check`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+};
+
 export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNode }) => {
   const [state, setState] = useState<BootState>({ kind: "loading" });
 
@@ -60,9 +73,16 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
         id = target;
         const keys = parseBoardHash(window.location.hash);
         owner = keys.owner ?? readOwnerKey(id) ?? undefined;
-        // an owner key (link or stored) satisfies the edit check and wins over
-        // a stale recents key left over from before a rotation
-        setBoardKey(owner ?? keys.key ?? "", keys.key ?? "");
+        // several credentials can exist (URL key + stored owner + recents):
+        // probe them in preference order — owner first, then the link key —
+        // so a key revoked by a rotation cannot shadow a still-valid one
+        const auth = await (async () => {
+          const cands = [owner, keys.key].filter((k): k is string => !!k);
+          if (cands.length < 2) return cands[0] ?? "";
+          for (const c of cands) if (await probeKey(id, c)) return c;
+          return cands[0];
+        })();
+        setBoardKey(auth, auth === keys.key ? keys.key : "");
         if (owner) storeOwnerKey(id, owner);
       }
       const boot = await loadSession(httpApi, id);

@@ -139,17 +139,29 @@ export class SocketCore {
           }
           if (msg.key && (await this.board().checkKey(msg.key, "edit"))) s.key = msg.key;
           else s.key = null;
-          const since = msg.sinceRev !== undefined ? this.board().changesSince(msg.sinceRev) : null;
-          if (since)
-            this.send(ws, {
-              type: "changes",
-              fromRev: since.fromRev,
-              rev: since.rev,
-              ops: since.ops as RemoteOp[],
-              ...(since.files.length ? { files: since.files } : {}),
-              origin: BROWSER,
-            });
-          else this.send(ws, { type: "snapshot", ...this.board().snapshot() });
+          try {
+            const since =
+              msg.sinceRev !== undefined ? this.board().changesSince(msg.sinceRev) : null;
+            if (since)
+              this.send(ws, {
+                type: "changes",
+                fromRev: since.fromRev,
+                rev: since.rev,
+                ops: since.ops as RemoteOp[],
+                ...(since.files.length ? { files: since.files } : {}),
+                origin: BROWSER,
+              });
+            else this.send(ws, { type: "snapshot", ...this.board().snapshot() });
+          } catch (e) {
+            // deleting/gone board: close so the tab relearns state over REST
+            // instead of sitting half-open on a dead board
+            const code = (e as { code?: string })?.code;
+            if (code === "deleting" || code === "session_not_found") {
+              ws.close(4000, "board is gone or being deleted");
+              return;
+            }
+            throw e;
+          }
           s.ready = true;
           this.write(ws, s);
           return;
