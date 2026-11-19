@@ -648,7 +648,9 @@ export class BoardStore {
           const row = this.element(op.id);
           if (!row) return ignore(op.id, "not_found");
           if (row.deleted === 1) return ignore(op.id, "already_deleted");
-          if (replay && row.version > op.baseVersion) return ignore(op.id, "stale_replay");
+          // a lower stored version means the element was deleted and made
+          // again: the replayed delete belongs to the old incarnation
+          if (replay && row.version !== op.baseVersion) return ignore(op.id, "stale_replay");
           const version = row.version + 1;
           this.run(
             "UPDATE elements SET deleted = 1, version = ?, rev = ?, needs_layout = 0, data = 'null', updated_at = ? WHERE session_id = ? AND id = ?",
@@ -675,7 +677,10 @@ export class BoardStore {
             });
             return;
           }
-          if (replay && !opts.keepSettingsOnReplay) return ignore("settings", "stale_replay");
+          // a mirrored import's settings only land when the import itself
+          // contributed — a fully stale replay must not undo newer settings
+          if (replay && (!opts.keepSettingsOnReplay || applied.length === 0))
+            return ignore("settings", "stale_replay");
           const { title: t, ...rest } = v.el;
           if (t !== undefined) title = t;
           Object.assign(settings, rest);

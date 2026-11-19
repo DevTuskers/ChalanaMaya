@@ -1056,12 +1056,18 @@ export class SyncClient {
   }
 
   private writeMirror() {
-    // unsent ops queued before the last `replace` import are dead locally
-    // (the replace already removed their elements): mirroring them would
-    // resurrect the old board when they replay after the import
+    // unsent ops queued before the last mirrored `replace` import are dead
+    // locally (the replace already removed their elements): mirroring them
+    // would resurrect the old board when they replay after the import
     let lastReplace = -1;
     this.queue.forEach((q, i) => {
-      if (q.kind === "import" && q.body.mode === "replace") lastReplace = i;
+      if (
+        q.kind === "import" &&
+        q.body.mode === "replace" &&
+        JSON.stringify({ pushId: q.body.importId, baseRev: 0, ops: [], import: q.body }).length <=
+          MIRROR_CAP
+      )
+        lastReplace = i;
     });
     const batches: MirrorBatch[] = [];
     const unsent: Op[] = [];

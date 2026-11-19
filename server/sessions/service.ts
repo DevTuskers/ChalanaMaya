@@ -519,7 +519,7 @@ export class SessionService {
           const row = this.q.element.get(sessionId, op.id);
           if (!row) return ignore(op.id, "not_found");
           if (row.deleted === 1) return ignore(op.id, "already_deleted");
-          if (replay && row.version > op.baseVersion) return ignore(op.id, "stale_replay");
+          if (replay && row.version !== op.baseVersion) return ignore(op.id, "stale_replay");
           const version = row.version + 1;
           this.q.tombstone.run(version, newRev, now, sessionId, op.id);
           count -= 1;
@@ -539,7 +539,8 @@ export class SessionService {
             });
             return;
           }
-          if (replay && !opts.keepSettingsOnReplay) return ignore("settings", "stale_replay");
+          if (replay && (!opts.keepSettingsOnReplay || applied.length === 0))
+            return ignore("settings", "stale_replay");
           const { title: t, ...rest } = v.el;
           if (t !== undefined) title = t;
           Object.assign(settings, rest);
