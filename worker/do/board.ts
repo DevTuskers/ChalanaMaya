@@ -20,6 +20,7 @@ import { json } from "../http";
 import { migrate } from "./schema";
 import { BoardStore, type ChangeOrigin } from "./store";
 import { SocketCore } from "./socket";
+import { handleBoardMcp } from "../mcp";
 
 const json16k = async (req: Request) => {
   const text = await req.text();
@@ -57,7 +58,13 @@ export class BoardSession {
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {
-    this.sock = new SocketCore(state, () => this.board());
+    // Asserted ctor keeps `new SocketCore` below tsc's instantiation-depth
+    // cap (BoardStore's full type is too deep to unify inside the class).
+    const Sock = SocketCore as unknown as new (
+      s: DurableObjectState,
+      b: () => BoardStore,
+    ) => SocketCore;
+    this.sock = new Sock(state, () => this.board());
   }
 
   private board(): BoardStore {
@@ -105,6 +112,13 @@ export class BoardSession {
         typeof body.title === "string" ? body.title : "",
       );
       return json({ editKey, ownerKey }, 201);
+    }
+
+    // Session-scoped MCP JSON-RPC (phase 3): read tools are free, write
+    // tools need the board key; live changes broadcast to open tabs.
+    if (path === "/mcp" && req.method === "POST") {
+      const base = req.headers.get("x-cm-base") ?? `${url.protocol}//${url.host}`;
+      return await handleBoardMcp(req, this.board(), this.sock, base);
     }
 
     // Board routes arrive as /api/sessions/<viewId>/<rest>.

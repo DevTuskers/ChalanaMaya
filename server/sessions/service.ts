@@ -117,11 +117,8 @@ interface FileRow {
 }
 
 /** An agent change the server refused (validation, quota); nothing was stored. */
-export class AgentRejected extends Error {
-  constructor(readonly rejected: Rejected[]) {
-    super(rejected.map((r) => `${r.id}: ${r.reason}`).join("; ") || "rejected");
-  }
-}
+import { AgentRejected } from "../../src/shared/agentRejected";
+export { AgentRejected };
 
 class Rollback extends Error {
   constructor(readonly ack: Ack) {

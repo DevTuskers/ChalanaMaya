@@ -16,6 +16,7 @@ import { apiError, json, withAppHeaders, withBaseHeaders } from "./http";
 import { BoardSession } from "./do/board";
 import { BoardIndex } from "./do/index";
 import { ServiceError } from "../server/errors";
+import { handleMcp } from "./mcp";
 
 export { BoardSession, BoardIndex };
 
@@ -33,11 +34,39 @@ const touchIndex = (env: Env, viewId: string, ctx: ExecutionContext) => {
   );
 };
 
-const createSession = async (req: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
+const createLimited = async (req: Request, env: Env): Promise<boolean> => {
   // Per-IP board-creation limit (Cloudflare rate-limit rule, free tier).
   const key = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const { success } = await env.SESSION_CREATE.limit({ key });
-  if (!success)
+  return !success;
+};
+
+// Mint a board DO + index row; shared by POST /api/sessions and MCP create_session.
+const mintBoard = async (
+  env: Env,
+  title: string,
+  ctx: ExecutionContext,
+): Promise<{ sessionId: string; editKey: string; ownerKey: string }> => {
+  // A 128-bit viewId colliding means a once-in-a-lifetime event; retry once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const viewId = newSessionId();
+    const res = await boardStub(env, viewId).fetch("https://board/_create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (res.status === 409 && attempt === 0) continue;
+    if (!res.ok)
+      throw new ServiceError(502, "internal", "The board service could not create the board.");
+    const keys = (await res.json()) as { editKey: string; ownerKey: string };
+    touchIndex(env, viewId, ctx);
+    return { sessionId: viewId, ...keys };
+  }
+  throw new ServiceError(500, "internal", "Something went wrong.");
+};
+
+const createSession = async (req: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
+  if (await createLimited(req, env))
     return json(
       {
         error: {
@@ -56,30 +85,17 @@ const createSession = async (req: Request, env: Env, ctx: ExecutionContext): Pro
     // an empty body makes an untitled board
   }
 
-  // A 128-bit viewId colliding means a once-in-a-lifetime event; retry once.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const viewId = newSessionId();
-    const res = await boardStub(env, viewId).fetch("https://board/_create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
-    if (res.status === 409 && attempt === 0) continue;
-    if (!res.ok) return res;
-    const { editKey, ownerKey } = (await res.json()) as { editKey: string; ownerKey: string };
-    touchIndex(env, viewId, ctx);
-    return json(
-      {
-        session_id: viewId,
-        url: `/s/${viewId}#key=${editKey}`,
-        view_url: `/s/${viewId}`,
-        invite_url: `/s/${viewId}#key=${editKey}`,
-        owner_url: `/s/${viewId}#owner=${ownerKey}`,
-      },
-      201,
-    );
-  }
-  return json({ error: { code: "internal", message: "Something went wrong." } }, 500);
+  const { sessionId: viewId, editKey, ownerKey } = await mintBoard(env, title, ctx);
+  return json(
+    {
+      session_id: viewId,
+      url: `/s/${viewId}#key=${editKey}`,
+      view_url: `/s/${viewId}`,
+      invite_url: `/s/${viewId}#key=${editKey}`,
+      owner_url: `/s/${viewId}#owner=${ownerKey}`,
+    },
+    201,
+  );
 };
 
 export default {
@@ -136,16 +152,31 @@ export default {
         return res;
       }
 
-      if (path === "/mcp" || path.startsWith("/mcp/"))
-        return json(
-          {
-            error: {
-              code: "not_implemented",
-              message: "The ChalanaMaya MCP endpoint is not live on this host yet.",
+      if (path === "/mcp") {
+        if (req.method !== "POST")
+          return Response.json(
+            {
+              jsonrpc: "2.0",
+              error: {
+                code: -32000,
+                message: "Method not allowed. This MCP endpoint is stateless: send POST requests.",
+              },
+              id: null,
             },
-          },
-          501,
-        );
+            { status: 405, headers: { Allow: "POST" } },
+          );
+        const mcpCreate = async (title: string, c: ExecutionContext) => {
+          const limited = await createLimited(req, env);
+          if (limited)
+            throw new ServiceError(
+              429,
+              "rate_limited",
+              "Too many new boards from this address. Try again in a minute.",
+            );
+          return mintBoard(env, title, c);
+        };
+        return await handleMcp(req, env, ctx, mcpCreate);
+      }
 
       if (path.startsWith("/api/"))
         return json({ error: { code: "not_found", message: "No route." } }, 404);

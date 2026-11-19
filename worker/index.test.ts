@@ -63,9 +63,70 @@ describe("worker routing", () => {
     expect(page.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
   });
 
-  it("answers /mcp with 501 until phase 3", async () => {
-    const res = await call(new Request("https://h.test/mcp"));
-    expect(res.status).toBe(501);
+  const mcp = (body: unknown, headers: Record<string, string> = {}) =>
+    call(
+      new Request("https://h.test/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+  const rpc = (method: string, params?: Record<string, unknown>) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    params,
+  });
+
+  it("mcp: initialize and tools/list work with no board", async () => {
+    const init = await mcp(rpc("initialize", { protocolVersion: "2025-06-18" }));
+    expect((await init.json()).result.serverInfo.name).toBe("chalanamaya");
+    const list = (await (await mcp(rpc("tools/list"))).json()).result.tools;
+    expect(list.map((t: { name: string }) => t.name)).toContain("add_elements");
+    expect(list.length).toBeGreaterThan(10);
+    expect((await mcp(rpc("prompts/list"))).status).toBe(200);
+  });
+
+  it("mcp: read tools run keyless, write tools need the board key", async () => {
+    const { id, key } = await createBoard();
+    const call_ = (name: string, args: Record<string, unknown>, h?: Record<string, string>) =>
+      mcp(rpc("tools/call", { name, arguments: args }), h);
+    const scene = await call_("get_scene", { session_id: id });
+    expect((await scene.json()).result.isError).toBeUndefined();
+    const noKey = (await (
+      await call_("add_elements", {
+        session_id: id,
+        elements: [{ type: "rectangle", x: 10, y: 10, width: 50, height: 40 }],
+      })
+    ).json()) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(noKey.result.isError).toBe(true);
+    expect(noKey.result.content[0].text).toContain("look-only");
+    const keyed = (await (
+      await call_(
+        "add_elements",
+        {
+          session_id: id,
+          elements: [{ type: "rectangle", x: 10, y: 10, width: 50, height: 40 }],
+        },
+        bearer(key),
+      )
+    ).json()) as { result: { isError?: boolean; structuredContent: { rev: number } } };
+    expect(keyed.result.isError).toBeUndefined();
+    expect(keyed.result.structuredContent.rev).toBe(1);
+    // a key inside the session_id URL fragment also authorises
+    const viaUrl = await call_("get_session_info", {
+      session_id: `https://h.test/s/${id}#key=${key}`,
+    });
+    expect((await viaUrl.json()).result.structuredContent.session_id).toBe(id);
+  });
+
+  it("mcp: create_session returns a keyed board URL", async () => {
+    const res = (await (
+      await mcp(rpc("tools/call", { name: "create_session", arguments: { title: "t" } }))
+    ).json()) as { result: { structuredContent: { session_id: string; url: string } } };
+    const { session_id, url } = res.result.structuredContent;
+    expect(session_id).toHaveLength(24);
+    expect(url).toContain(`/s/${session_id}#key=`);
   });
 
   it("rate-limits board creation per IP", async () => {

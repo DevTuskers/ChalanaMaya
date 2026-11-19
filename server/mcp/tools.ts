@@ -25,7 +25,8 @@ import { parseSessionRef } from "../../src/shared/ids";
 import { LIMITS } from "../../src/shared/limits";
 import type { StoredFile } from "../../src/shared/protocol";
 import { ServiceError } from "../errors";
-import { AgentRejected, type SessionService } from "../sessions/service";
+import { AgentRejected } from "../../src/shared/agentRejected";
+import type { SessionService } from "../sessions/service";
 import {
   buildConnector,
   buildElement,
@@ -41,7 +42,7 @@ import {
 } from "./elements";
 import { boardColor, bool, invalid, num, oneOf, str, ToolError } from "./palette";
 import { boundsOut, labelsByContainer, queryScene } from "./view";
-import { componentPresetsReference } from "./guide";
+import { componentPresetsReference } from "./reference";
 import { PRESET_NAMES } from "../../src/shared/components";
 
 type Obj = Record<string, unknown>;

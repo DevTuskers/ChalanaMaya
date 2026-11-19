@@ -10,7 +10,13 @@
  * owner rotation cuts live writers off mid-session. Sockets without a key
  * stay view-only: they get `snapshot`/`changes` but `push` answers 403.
  */
-import { clientMessageSchema, type RemoteOp, type ServerMessage } from "../../src/shared/protocol";
+import { z } from "zod";
+import {
+  clientMessageSchema,
+  type ClientMessage,
+  type RemoteOp,
+  type ServerMessage,
+} from "../../src/shared/protocol";
 import type { ChangesEvent, BoardStore } from "./store";
 
 const PUSHES_PER_SECOND = 50;
@@ -35,7 +41,8 @@ interface SockState {
 const fresh = (): SockState => ({ ready: false, key: null, window: 0, count: 0, hellos: [] });
 
 export class SocketCore {
-  private readonly schema = clientMessageSchema(500);
+  // Explicit type keeps `new SocketCore` below the tsc instantiation-depth cap.
+  private readonly schema: z.ZodType<ClientMessage> = clientMessageSchema(500);
 
   constructor(
     private readonly state: DurableObjectState,
