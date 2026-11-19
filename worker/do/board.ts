@@ -152,6 +152,7 @@ export class BoardSession {
         return json({ ...this.board().snapshot({ markOpened: true }), keyed: true });
 
       case rest === "ops" && req.method === "POST": {
+        await this.requireKey(req, "edit");
         const raw = await json16k(req);
         const parsed = pushSchema(500).safeParse(raw);
         if (!parsed.success)
@@ -170,6 +171,7 @@ export class BoardSession {
       }
 
       case rest === "import" && req.method === "POST": {
+        await this.requireKey(req, "edit");
         const text = await req.text();
         if (text.length > 12 * 1024 * 1024)
           throw new ServiceError(413, "too_large", "The import body is too large.");
@@ -193,9 +195,14 @@ export class BoardSession {
       }
 
       case rest === "files" && req.method === "POST": {
+        await this.requireKey(req, "edit");
         const bytes = new Uint8Array(await req.arrayBuffer());
         await this.requireKey(req, "edit");
-        const f = await this.board().addFile(bytes, req.headers.get("Content-Type") ?? undefined);
+        const f = await this.board().addFile(
+          bytes,
+          req.headers.get("Content-Type") ?? undefined,
+          () => this.requireKey(req, "edit"),
+        );
         return json(
           {
             file_id: f.id,
@@ -212,6 +219,7 @@ export class BoardSession {
       }
 
       case rest === "links" && req.method === "POST": {
+        await this.requireKey(req, "edit");
         const raw = (await json16k(req)) as {
           url?: unknown;
           mime?: unknown;

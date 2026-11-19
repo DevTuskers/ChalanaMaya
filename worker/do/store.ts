@@ -250,9 +250,12 @@ export class BoardStore {
     this.sql.exec(query, ...params);
   }
 
+  /** Set when deletion starts: in-flight uploads see the board as gone. */
+  private deleted = false;
+
   private requireSession(): SessionRow {
     const s = this.one<SessionRow>("SELECT * FROM sessions WHERE id = ?", this.sessionId);
-    if (!s) throw notFound();
+    if (!s || this.deleted) throw notFound();
     return s;
   }
 
@@ -450,20 +453,29 @@ export class BoardStore {
   /** Deletes the board's rows; media objects go with the DO's R2 prefix. */
   async deleteSession(): Promise<string[]> {
     this.requireSession();
+    // flagged before the first await: an upload that slips into the R2-wait
+    // window fails requireSession in its tx instead of committing a row whose
+    // media object this delete never heard about
+    this.deleted = true;
     const uploads = this.all<{ sha256: string }>(
       "SELECT sha256 FROM files WHERE session_id = ? AND source = 'upload'",
       this.sessionId,
     );
     const gone = [...new Set(uploads.map((f) => f.sha256))];
-    // R2 first: if the delete fails the rows stay and the owner can retry —
-    // erasing the rows first would orphan the objects with no way back.
-    if (gone.length) await this.media.delete(gone.map((sha) => r2Key(this.sessionId, sha)));
-    this.tx(() => {
-      for (const f of uploads)
-        this.run("UPDATE blobs SET refs = refs - 1 WHERE sha256 = ?", f.sha256);
-      this.run("DELETE FROM sessions WHERE id = ?", this.sessionId);
-      this.run("DELETE FROM blobs WHERE refs <= 0");
-    });
+    try {
+      // R2 first: if the delete fails the rows stay and the owner can retry —
+      // erasing the rows first would orphan the objects with no way back.
+      if (gone.length) await this.media.delete(gone.map((sha) => r2Key(this.sessionId, sha)));
+      this.tx(() => {
+        for (const f of uploads)
+          this.run("UPDATE blobs SET refs = refs - 1 WHERE sha256 = ?", f.sha256);
+        this.run("DELETE FROM sessions WHERE id = ?", this.sessionId);
+        this.run("DELETE FROM blobs WHERE refs <= 0");
+      });
+    } catch (e) {
+      this.deleted = false;
+      throw e;
+    }
     return gone;
   }
 
@@ -870,7 +882,11 @@ export class BoardStore {
   // ---------------------------------------------------------------- files
 
   /** Stores an uploaded picture/video in R2 (same dedupe rules as the Node service). */
-  async addFile(bytes: Uint8Array, contentType: string | undefined): Promise<StoredFile> {
+  async addFile(
+    bytes: Uint8Array,
+    contentType: string | undefined,
+    verify?: () => Promise<void>,
+  ): Promise<StoredFile> {
     this.requireSession();
     const claimed = baseType(contentType);
     const isVideo = (VIDEO_TYPES as readonly string[]).includes(claimed);
@@ -908,6 +924,9 @@ export class BoardStore {
     await this.media.put(objectKey, bytes);
     let row: FileRow;
     try {
+      // re-check the caller's credential between the R2 write and the commit:
+      // a key rotated during the put can no longer sneak the row in
+      if (verify) await verify();
       row = this.tx(() => {
         const s = this.requireSession();
         if (s.media_bytes + bytes.length > this.limits.maxSessionMediaBytes)
@@ -939,8 +958,10 @@ export class BoardStore {
         return this.file(id)!;
       });
     } catch (e) {
-      // the tx failed after the put: drop the orphan object best-effort
-      await this.media.delete([objectKey]).catch(() => {});
+      // the tx failed after the put: drop the orphan object — unless a
+      // concurrent identical upload already claimed it (its blob row exists)
+      const claimed = this.one("SELECT 1 AS x FROM blobs WHERE sha256 = ?", sha);
+      if (!claimed) await this.media.delete([objectKey]).catch(() => {});
       throw e;
     }
     this.onWrite();

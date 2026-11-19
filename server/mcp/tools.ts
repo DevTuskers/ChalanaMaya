@@ -487,7 +487,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
       description:
         "Creates a new empty ChalanaMaya board and returns its session_id and URL. Give the URL to the person so they can watch you draw.",
       inputSchema: { title: z.string().optional().describe("Board title (≤ 120 characters).") },
-      outputSchema: { session_id: z.string(), url: z.string() },
+      outputSchema: { session_id: z.string(), url: z.string(), owner_url: z.string().optional() },
       annotations: write,
     },
     (args) =>

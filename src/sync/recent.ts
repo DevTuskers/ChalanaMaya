@@ -39,7 +39,8 @@ export const rememberBoard = (
   board: { id: string; title: string },
   now = Date.now(),
 ): RecentBoard[] => {
-  const key = getEditKey() || undefined;
+  // an owner-only visit has no edit key; keep the one a past visit stored
+  const key = getEditKey() || readRecent(storage).find((r) => r.id === board.id)?.key || undefined;
   const list = [
     { id: board.id, title: board.title.slice(0, 120), openedAt: now, key },
     ...readRecent(storage).filter((r) => r.id !== board.id),
