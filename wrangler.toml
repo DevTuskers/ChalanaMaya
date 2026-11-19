@@ -1,0 +1,44 @@
+# ChalanaMaya on Cloudflare Workers (docs/plans/cloudflare-hosting-plan.md).
+# Static app + one SQLite Durable Object per board + R2 for media.
+name = "chalanamaya"
+account_id = "a652c1bd42cf239e2f84d7da716bfc1b"
+main = "worker/index.ts"
+compatibility_date = "2025-11-10"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# The worker sees every request: /api goes to Durable Objects, /mcp is
+# answered by the worker, everything else is served from the bundle.
+run_worker_first = true
+# /s/<board> and any other client route get index.html.
+not_found_handling = "single-page-application"
+
+# BoardIndex: free tier has no Durable Objects *enumeration*, so board
+# liveness is kept in this tiny index DO: one row per board (id + last-opened
+# time), written on create/open/delete by the worker and swept by its alarm
+# for the 7-day idle eviction and the global LRU cap.
+[durable_objects]
+bindings = [
+  { name = "BOARD", class_name = "BoardSession" },
+  { name = "INDEX", class_name = "BoardIndex" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BoardSession"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["BoardIndex"]
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "chalanamaya-media"
+
+# Per-IP board-creation rate limit (Cloudflare rate-limit rules, free tier).
+[[ratelimits]]
+name = "SESSION_CREATE"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }

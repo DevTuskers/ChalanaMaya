@@ -5,7 +5,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { getStorage } from "../io/autosave";
-import { ApiError, httpApi } from "./api";
+import { ApiError, httpApi, readOwnerKey, setBoardKey, storeOwnerKey, type Api } from "./api";
+import { parseBoardHash } from "../shared/ids";
 import { loadSession, sessionIdFromPath, type SessionBoot } from "./session";
 import { forgetBoard } from "./recent";
 
@@ -15,7 +16,7 @@ type BootState =
   | { kind: "error"; message: string }
   | { kind: "ready"; boot: SessionBoot };
 
-let creating: Promise<{ session_id: string }> | null = null;
+let creating: ReturnType<Api["createSession"]> | null = null;
 
 const Page = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <main className="boot-page" data-testid="boot-page">
@@ -23,6 +24,19 @@ const Page = ({ title, children }: { title: string; children: React.ReactNode })
     {children}
   </main>
 );
+
+/** Credential probe: true when `key` still authorises edits on `id`. Lets boot
+ *  pick a live key instead of a stale one when several candidates exist. */
+const probeKey = async (id: string, key: string): Promise<boolean> => {
+  try {
+    const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/key-check`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+};
 
 export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNode }) => {
   const [state, setState] = useState<BootState>({ kind: "loading" });
@@ -37,13 +51,46 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
     }
     try {
       let id: string;
+      let owner: string | undefined;
       if (target === "root") {
         // one board per visit, even when React runs the effect twice
         creating ??= httpApi.createSession().finally(() => (creating = null));
-        id = (await creating).session_id;
-        window.history.replaceState(null, "", `/s/${id}`);
-      } else id = target;
-      setState({ kind: "ready", boot: await loadSession(httpApi, id) });
+        const created = await creating;
+        id = created.session_id;
+        // On a keyed host the url carries `#key=<edit>`; the Node self-host's
+        // bare `/s/<id>` also works with it (no secrets needed).
+        const address = created.url || `/s/${id}`;
+        const keys = parseBoardHash(new URL(address, window.location.origin).hash);
+        owner = keys.owner;
+        if (created.owner_url) {
+          const o = parseBoardHash(new URL(created.owner_url, window.location.origin).hash).owner;
+          if (o) owner = o;
+        }
+        setBoardKey(owner ?? keys.key ?? "", keys.key ?? "");
+        if (owner) storeOwnerKey(id, owner);
+        window.history.replaceState(null, "", address);
+      } else {
+        id = target;
+        const keys = parseBoardHash(window.location.hash);
+        owner = keys.owner ?? readOwnerKey(id) ?? undefined;
+        // several credentials can exist (URL key + stored owner + recents):
+        // probe both — the owner wins auth when it is live, a revoked key
+        // cannot shadow a valid one, and a live edit key stays shareable
+        const auth = await (async () => {
+          if (owner && keys.key) {
+            const [ownerOk, keyOk] = await Promise.all([
+              probeKey(id, owner),
+              probeKey(id, keys.key),
+            ]);
+            return { key: ownerOk ? owner : keyOk ? keys.key : owner, edit: keyOk ? keys.key : "" };
+          }
+          return { key: owner ?? keys.key ?? "", edit: keys.key ?? "" };
+        })();
+        setBoardKey(auth.key, auth.edit);
+        if (owner) storeOwnerKey(id, owner);
+      }
+      const boot = await loadSession(httpApi, id);
+      setState({ kind: "ready", boot });
     } catch (e) {
       if (e instanceof ApiError && e.code === "session_not_found" && target !== "root") {
         forgetBoard(getStorage(), target);

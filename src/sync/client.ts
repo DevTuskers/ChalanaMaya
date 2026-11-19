@@ -36,7 +36,7 @@ import { validateStoredElement } from "../shared/validate";
 import type { LinearElement, SceneElement } from "../scene/types";
 import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
-import type { MirrorBatch, PendingMirror } from "./mirror";
+import { MIRROR_CAP, type MirrorBatch, type PendingMirror } from "./mirror";
 
 export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full";
 
@@ -222,15 +222,21 @@ export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<Rep
       continue;
     }
     try {
-      const ack = await api.push(mirror.sessionId, {
-        pushId: b.pushId,
-        baseRev: b.baseRev,
-        ops: b.ops,
-        mirrored: true,
-      });
+      const ack = b.import
+        ? await api.importScene(mirror.sessionId, { ...b.import, mirrored: true })
+        : await api.push(mirror.sessionId, {
+            pushId: b.pushId,
+            baseRev: b.baseRev,
+            ops: b.ops,
+            mirrored: true,
+          });
       lost += countLost(ack);
     } catch (e) {
-      if (!(e instanceof ApiError) || e.retry) pending.push(b);
+      // capacity/forbidden are not "refused for good": capacity resets and a
+      // 403 on a view-only visit just means this tab has no key — keep the
+      // batch so the edits are not lost on reload.
+      if (!(e instanceof ApiError) || e.retry || e.code === "capacity" || e.status === 403)
+        pending.push(b);
       else lost += b.ops.length; // refused for good: nothing to replay
     }
   }
@@ -308,6 +314,33 @@ export class SyncClient {
   private adoptPending(pending: readonly MirrorBatch[]) {
     if (!pending.length) return;
     for (const b of pending) {
+      // a pending import re-queues as itself (it is not ops) so the pump
+      // delivers it through /import again
+      if (b.import) {
+        // apply it locally first: the snapshot shows the pre-import board, and
+        // edits to elements a pending `replace` will delete are lost work
+        const imp = b.import;
+        const ids = new Set(imp.elements.map((e) => e.el.id));
+        // remote ops carry the post-apply version: the import bumps each
+        // touched element once, so known+1 matches what the server will send
+        const ver = (id: string) => (this.known.get(id)?.version ?? 0) + 1;
+        const ops: RemoteOp[] = [];
+        if (imp.mode === "replace")
+          for (const k of this.order)
+            if (!ids.has(k.id)) ops.push({ t: "del", id: k.id, version: ver(k.id) });
+        // mirror the server's rule: a put applies unless the snapshot holds a
+        // newer version of the element than the import recorded (`v`)
+        for (const e of imp.elements) {
+          const kv = this.known.get(e.el.id)?.version;
+          const tv = this.tomb.get(e.el.id);
+          const stale = e.v === undefined ? kv !== undefined : (kv ?? -1) > e.v || (tv ?? -1) > e.v;
+          if (!stale) ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
+        }
+        if (imp.settings) ops.push({ t: "settings", settings: imp.settings });
+        if (ops.length) this.applyRemote(ops);
+        this.push({ kind: "import", body: imp, sent: false });
+        continue;
+      }
       for (const op of b.ops) {
         if (op.t === "put") {
           this.known.set(op.el.id, { el: op.el, json: toJson(op.el), version: op.baseVersion + 1 });
@@ -474,7 +507,11 @@ export class SyncClient {
     const body: ImportBody = {
       importId: newPushId(),
       mode,
-      elements: good.map((el) => ({ el, idx: keys.get(el.id)! })),
+      elements: good.map((el) => ({
+        el,
+        idx: keys.get(el.id)!,
+        v: this.known.get(el.id)?.version,
+      })),
       ...(settings ? { settings } : {}),
     };
     if (jsonBytes(body) > MAX_IMPORT_BYTES) {
@@ -575,6 +612,10 @@ export class SyncClient {
           this.stopped = "gone";
           this.host.notice("This board no longer exists on the server, so changes are not saved.");
           this.updateStatus();
+        } else if (msg.code === "capacity") {
+          this.host.notice(
+            "This board hit its daily edit limit — the batch is queued and retries after it resets.",
+          );
         }
         return;
       }
@@ -1015,13 +1056,43 @@ export class SyncClient {
   }
 
   private writeMirror() {
+    // unsent ops queued before the last mirrored `replace` import are dead
+    // locally (the replace already removed their elements): mirroring them
+    // would resurrect the old board when they replay after the import
+    let lastReplace = -1;
+    this.queue.forEach((q, i) => {
+      if (
+        q.kind === "import" &&
+        q.body.mode === "replace" &&
+        JSON.stringify({ pushId: q.body.importId, baseRev: 0, ops: [], import: q.body }).length <=
+          MIRROR_CAP
+      )
+        lastReplace = i;
+    });
     const batches: MirrorBatch[] = [];
     const unsent: Op[] = [];
-    for (const q of this.queue) {
-      if (q.kind !== "ops") continue;
+    this.queue.forEach((q, i) => {
+      // imports mirror their whole body (no ops representation), sent or not:
+      // a queued import lost on reload must be re-sent, and a sent one is
+      // deduped by its importId like any push
+      if (q.kind === "import") {
+        const batch: MirrorBatch = { pushId: q.body.importId, baseRev: 0, ops: [], import: q.body };
+        // an import too big for the mirror must not evict the recoverable
+        // edits that fit without it
+        if (JSON.stringify(batch).length <= MIRROR_CAP) batches.push(batch);
+        return;
+      }
+      if (q.kind !== "ops") return;
       if (q.sent) batches.push({ pushId: q.pushId, baseRev: q.baseRev, ops: q.ops });
-      else unsent.push(...q.ops);
-    }
+      else
+        for (const o of q.ops) {
+          // element ops before a replace are dead; a rename is not, but an
+          // older background/grid must not override the file's settings
+          if (i > lastReplace) unsent.push(o);
+          else if (o.t === "settings" && o.settings.title !== undefined)
+            unsent.push({ t: "settings", settings: { title: o.settings.title } });
+        }
+    });
     const r = this.mirror.write(batches, unsent);
     const warning = !r.ok
       ? `Changes made now are not protected against a reload: ${r.reason}.`
@@ -1172,6 +1243,20 @@ export class SyncClient {
     if (e.status === 404) {
       this.stopped = "gone";
       this.host.notice("This board no longer exists on the server, so changes are not saved.");
+    } else if (e.code === "capacity") {
+      // the batch was refused uncharged and stays queued: retrying with
+      // backoff lets a smaller batch fit and auto-recovers at the daily reset.
+      // The server answered, so this is not "offline": uploads and links do
+      // not spend edit quota and must stay usable.
+      this.offline = false;
+      this.backoff = Math.min(15000, this.backoff ? this.backoff * 2 : 1000);
+      this.retryTimer = this.timers.setTimeout(() => {
+        this.retryTimer = null;
+        this.pump(false);
+      }, this.backoff);
+      this.host.notice(
+        "This board hit its daily edit limit — the batch is queued and retries after it resets.",
+      );
     } else if (e.status === 507) {
       this.stopped = "full";
       this.host.notice(`The server could not save: ${e.message}`);

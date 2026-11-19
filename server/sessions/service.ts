@@ -42,6 +42,8 @@ export interface ApplyOptions {
    * needs_layout = 1 so the first browser with fonts corrects them once.
    */
   layoutIds?: ReadonlySet<string>;
+  /** mirrored imports keep their settings on replay (the file's scene intent) */
+  keepSettingsOnReplay?: boolean;
 }
 
 export interface PushInput {
@@ -54,8 +56,9 @@ export interface PushInput {
 export interface ImportInput {
   importId: string;
   mode: "replace" | "add";
-  elements: { el: unknown; idx: string }[];
+  elements: { el: unknown; idx: string; v?: number }[];
   settings?: unknown;
+  mirrored?: true;
 }
 
 export type AppliedOp =
@@ -117,11 +120,8 @@ interface FileRow {
 }
 
 /** An agent change the server refused (validation, quota); nothing was stored. */
-export class AgentRejected extends Error {
-  constructor(readonly rejected: Rejected[]) {
-    super(rejected.map((r) => `${r.id}: ${r.reason}`).join("; ") || "rejected");
-  }
-}
+import { AgentRejected } from "../../src/shared/agentRejected";
+export { AgentRejected };
 
 class Rollback extends Error {
   constructor(readonly ack: Ack) {
@@ -447,8 +447,9 @@ export class SessionService {
           }
           const row = this.q.element.get(sessionId, el.id);
           const stored = row?.version ?? 0;
-          if (replay && stored !== op.baseVersion) return ignore(el.id, "stale_replay");
+          if (replay && stored > op.baseVersion) return ignore(el.id, "stale_replay");
           if (row?.deleted === 1 && op.baseVersion !== row.version) {
+            if (replay) return ignore(el.id, "stale_replay");
             rejected.push({
               id: el.id,
               reason: "deleted",
@@ -538,7 +539,8 @@ export class SessionService {
             });
             return;
           }
-          if (replay) return ignore("settings", "stale_replay");
+          if (replay && (!opts.keepSettingsOnReplay || applied.length === 0))
+            return ignore("settings", "stale_replay");
           const { title: t, ...rest } = v.el;
           if (t !== undefined) title = t;
           Object.assign(settings, rest);
@@ -646,19 +648,26 @@ export class SessionService {
             .map((e) => (e.el as { id?: unknown } | null)?.id)
             .filter((v): v is string => typeof v === "string"),
         );
-        if (input.mode === "replace")
+        // mirrored replays degrade replace to add (see worker/do/store.ts)
+        if (input.mode === "replace" && input.mirrored !== true)
           for (const r of this.q.liveIds.all(sessionId))
             if (!incoming.has(r.id)) ops.push({ t: "del", id: r.id, baseVersion: r.version });
         for (const e of input.elements) {
           const rawId = (e.el as { id?: unknown } | null)?.id;
           const row = typeof rawId === "string" ? this.q.element.get(sessionId, rawId) : undefined;
-          ops.push({ t: "put", el: e.el, idx: e.idx, baseVersion: row?.version ?? 0 });
+          const baseVersion = input.mirrored === true ? (e.v ?? 0) : (row?.version ?? 0);
+          ops.push({ t: "put", el: e.el, idx: e.idx, baseVersion });
         }
         if (input.settings !== undefined) ops.push({ t: "settings", settings: input.settings });
         const r = this.applyInTx(
           sessionId,
-          { pushId: input.importId, baseRev: 0, ops },
-          { origin, atomic: true },
+          {
+            pushId: input.importId,
+            baseRev: 0,
+            ops,
+            ...(input.mirrored ? { mirrored: true as const } : {}),
+          },
+          { origin, atomic: true, keepSettingsOnReplay: input.mirrored === true },
         );
         event = r.event;
         return r.ack;

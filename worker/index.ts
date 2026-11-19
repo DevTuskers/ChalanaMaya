@@ -1,0 +1,209 @@
+/**
+ * ChalanaMaya Worker entry (docs/plans/cloudflare-hosting-plan.md phase 1).
+ *
+ *  - `POST /api/sessions` creates a board Durable Object named by a random
+ *    24-char viewId and answers the three links (view / edit / owner).
+ *  - `/api/sessions/<viewId>/...` is proxied to that board's DO. Reads need
+ *    only the viewId; every mutating route checks `Authorization: Bearer`
+ *    inside the DO.
+ *  - `/mcp` answers 501 until phase 3 lands the MCP transport.
+ *  - Everything else is served from the bundled Vite build (assets), with
+ *    SPA fallback for `/s/...` and the app's security headers.
+ */
+import { isSessionId, newSessionId } from "../src/shared/ids";
+import type { Env } from "./env";
+import { apiError, json, withAppHeaders, withBaseHeaders } from "./http";
+import { BoardSession } from "./do/board";
+import { BoardIndex } from "./do/index";
+import { ServiceError } from "../server/errors";
+import { handleMcp } from "./mcp";
+
+export { BoardSession, BoardIndex };
+
+const SESSION_PATH = /^\/api\/sessions\/([A-Za-z0-9_-]{24})(\/|$)/;
+
+const boardStub = (env: Env, viewId: string) => env.BOARD.get(env.BOARD.idFromName(viewId));
+
+const touchIndex = (env: Env, viewId: string, ctx: ExecutionContext) => {
+  ctx.waitUntil(
+    env.INDEX.get(env.INDEX.idFromName("fleet")).fetch("https://index/touch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: viewId }),
+    }),
+  );
+};
+
+const createLimited = async (req: Request, env: Env): Promise<boolean> => {
+  // Per-IP board-creation limit (Cloudflare rate-limit rule, free tier).
+  const key = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const { success } = await env.SESSION_CREATE.limit({ key });
+  return !success;
+};
+
+// Mint a board DO + index row; shared by POST /api/sessions and MCP create_session.
+const mintBoard = async (
+  env: Env,
+  title: string,
+  ctx: ExecutionContext,
+): Promise<{ sessionId: string; editKey: string; ownerKey: string }> => {
+  // A 128-bit viewId colliding means a once-in-a-lifetime event; retry once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const viewId = newSessionId();
+    const res = await boardStub(env, viewId).fetch("https://board/_create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (res.status === 409 && attempt === 0) continue;
+    if (!res.ok)
+      throw new ServiceError(502, "internal", "The board service could not create the board.");
+    const keys = (await res.json()) as { editKey: string; ownerKey: string };
+    touchIndex(env, viewId, ctx);
+    return { sessionId: viewId, ...keys };
+  }
+  throw new ServiceError(500, "internal", "Something went wrong.");
+};
+
+const createSession = async (req: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
+  if (await createLimited(req, env))
+    return json(
+      {
+        error: {
+          code: "rate_limited",
+          message: "Too many new boards from this address. Try again in a minute.",
+        },
+      },
+      429,
+    );
+
+  let title = "";
+  try {
+    const body = (await req.json()) as { title?: unknown };
+    if (typeof body?.title === "string") title = body.title.slice(0, 120);
+  } catch {
+    // an empty body makes an untitled board
+  }
+
+  const { sessionId: viewId, editKey, ownerKey } = await mintBoard(env, title, ctx);
+  return json(
+    {
+      session_id: viewId,
+      url: `/s/${viewId}#key=${editKey}`,
+      view_url: `/s/${viewId}`,
+      invite_url: `/s/${viewId}#key=${editKey}`,
+      owner_url: `/s/${viewId}#owner=${ownerKey}`,
+    },
+    201,
+  );
+};
+
+export default {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(req.url);
+    const path = url.pathname;
+    try {
+      // CSRF guard on mutating requests: browsers always send Sec-Fetch-Site
+      // (and Origin on non-GET) for cross-site posts, so a foreign site can
+      // neither spend a visitor's creation quota nor write to their boards.
+      // Agents and curl send neither header and pass through.
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const site = req.headers.get("Sec-Fetch-Site");
+        const origin = req.headers.get("Origin");
+        const foreign = site === "cross-site" || (!!origin && new URL(origin).host !== url.host);
+        if (foreign)
+          return json(
+            { error: { code: "forbidden", message: "Cross-site requests are refused." } },
+            403,
+          );
+      }
+
+      if (path === "/api/health") return json({ ok: true });
+
+      if (path === "/api/sessions" && req.method === "POST")
+        return await createSession(req, env, ctx);
+
+      if (path === "/api/sessions")
+        return json({ error: { code: "not_found", message: "No route." } }, 404);
+
+      const m = SESSION_PATH.exec(path);
+      if (m) {
+        const viewId = m[1];
+        if (!isSessionId(viewId))
+          return json({ error: { code: "session_not_found", message: "No such board." } }, 404);
+        const stub = boardStub(env, viewId);
+        // Any board traffic refreshes the idle-eviction clock (phase 2).
+        touchIndex(env, viewId, ctx);
+        const res = await stub.fetch(req);
+        // A DO answering 404 session_not_found means the board was deleted,
+        // or evicted by the idle sweep — the index keeps evicted tombstones
+        // so the client can show the re-upload affordance (410 vs 404).
+        if (res.status === 404) {
+          const body = (await res
+            .clone()
+            .json()
+            .catch(() => null)) as {
+            error?: { code?: string };
+          } | null;
+          if (body?.error?.code === "session_not_found") {
+            const gone = await env.INDEX.get(env.INDEX.idFromName("fleet"))
+              .fetch(`https://index/gone?id=${viewId}`)
+              .then((r) => r.json())
+              .catch(() => null);
+            if ((gone as { evicted?: boolean } | null)?.evicted)
+              return json(
+                {
+                  error: {
+                    code: "gone",
+                    message:
+                      "This board was removed after 7 days idle. Download boards regularly — you can upload a saved .chalana file to start a new one.",
+                  },
+                },
+                410,
+              );
+            return res;
+          }
+        }
+        return res;
+      }
+
+      if (path === "/mcp") {
+        if (req.method !== "POST")
+          return Response.json(
+            {
+              jsonrpc: "2.0",
+              error: {
+                code: -32000,
+                message: "Method not allowed. This MCP endpoint is stateless: send POST requests.",
+              },
+              id: null,
+            },
+            { status: 405, headers: { Allow: "POST" } },
+          );
+        const mcpCreate = async (title: string, c: ExecutionContext) => {
+          const limited = await createLimited(req, env);
+          if (limited)
+            throw new ServiceError(
+              429,
+              "rate_limited",
+              "Too many new boards from this address. Try again in a minute.",
+            );
+          return mintBoard(env, title, c);
+        };
+        return await handleMcp(req, env, ctx, mcpCreate);
+      }
+
+      if (path.startsWith("/api/"))
+        return json({ error: { code: "not_found", message: "No route." } }, 404);
+
+      // The app itself: static assets with SPA fallback; page answers get the CSP.
+      const res = await env.ASSETS.fetch(req);
+      const type = res.headers.get("Content-Type") ?? "";
+      if (type.includes("text/html")) return withAppHeaders(res, url.host);
+      return withBaseHeaders(res);
+    } catch (e) {
+      if (e instanceof ServiceError) return apiError(e);
+      return apiError(e);
+    }
+  },
+} satisfies ExportedHandler<Env>;

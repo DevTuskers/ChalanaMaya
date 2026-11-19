@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { getEditKey } from "../sync/api";
 import { clearCanvas, followLink, setLink } from "../store/actions";
 import { downloadBlob, exportSize, timestampName } from "../io/export";
 import { exportPngBlob, exportSvgText, selectionTargets } from "../io/flows";
@@ -95,6 +96,8 @@ const ConnectAgentDialog = ({ onClose }: { onClose: () => void }) => {
   const info = useAppState((s) => s.session);
   const origin = window.location.origin;
   const id = info?.id ?? "";
+  const editKey = getEditKey();
+  const boardRef = editKey ? `${origin}/s/${id}#key=${editKey}` : `board ${id}`;
   const mcp = `${origin}/mcp`;
   const snippets = [
     {
@@ -122,7 +125,9 @@ const ConnectAgentDialog = ({ onClose }: { onClose: () => void }) => {
     {
       key: "prompt",
       title: "Then tell the agent",
-      text: `On the ChalanaMaya board ${id}, draw a flowchart of …`,
+      text: editKey
+        ? `On the ChalanaMaya board at ${boardRef}, draw a flowchart of …`
+        : `On the ChalanaMaya board ${id}, draw a flowchart of …`,
     },
   ];
   const copy = (text: string, what: string) => {

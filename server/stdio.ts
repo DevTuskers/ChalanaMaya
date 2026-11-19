@@ -70,6 +70,7 @@ const requestError = (error: unknown): never => {
 
 export interface BridgeOptions {
   url: string;
+  key?: string;
   version?: string;
   log?: (msg: string) => void;
 }
@@ -99,7 +100,13 @@ export const createBridge = (opts: BridgeOptions) => {
         version: opts.version ?? "0.0.0",
       });
       upstream = client
-        .connect(new StreamableHTTPClientTransport(endpoint))
+        .connect(
+          new StreamableHTTPClientTransport(endpoint, {
+            requestInit: opts.key
+              ? { headers: { Authorization: `Bearer ${opts.key}` } }
+              : undefined,
+          }),
+        )
         .then(() => {
           if (wasDown) {
             wasDown = false;
@@ -226,7 +233,11 @@ if (isMain()) {
     process.stderr.write(`chalanamaya: CHALANAMAYA_URL is not a URL: ${url}\n`);
     process.exit(2);
   }
-  const bridge = createBridge({ url, version: process.env.npm_package_version });
+  const bridge = createBridge({
+    url,
+    key: process.env.CHALANAMAYA_KEY?.trim() || undefined,
+    version: process.env.npm_package_version,
+  });
   void bridge.start();
   const stop = () => void bridge.close().finally(() => process.exit(0));
   process.stdin.on("end", stop);

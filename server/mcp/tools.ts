@@ -25,7 +25,8 @@ import { parseSessionRef } from "../../src/shared/ids";
 import { LIMITS } from "../../src/shared/limits";
 import type { StoredFile } from "../../src/shared/protocol";
 import { ServiceError } from "../errors";
-import { AgentRejected, type SessionService } from "../sessions/service";
+import { AgentRejected } from "../../src/shared/agentRejected";
+import type { SessionService } from "../sessions/service";
 import {
   buildConnector,
   buildElement,
@@ -41,7 +42,7 @@ import {
 } from "./elements";
 import { boardColor, bool, invalid, num, oneOf, str, ToolError } from "./palette";
 import { boundsOut, labelsByContainer, queryScene } from "./view";
-import { componentPresetsReference } from "./guide";
+import { componentPresetsReference } from "./reference";
 import { PRESET_NAMES } from "../../src/shared/components";
 
 type Obj = Record<string, unknown>;
@@ -317,7 +318,13 @@ const decodeBase64 = (v: unknown, path: string, max: number): Buffer => {
   return buf;
 };
 
-const upload = (ctx: ToolContext, sid: string, data: unknown, mime: unknown, base: string) => {
+const upload = async (
+  ctx: ToolContext,
+  sid: string,
+  data: unknown,
+  mime: unknown,
+  base: string,
+): Promise<StoredFile> => {
   // "" for upload_media's own arguments, "source" inside place_media
   const path = (k: string) => (base ? `${base}.${k}` : k);
   const mimeType = mime === undefined ? undefined : str(mime, path("mime_type"), 100).toLowerCase();
@@ -328,7 +335,7 @@ const upload = (ctx: ToolContext, sid: string, data: unknown, mime: unknown, bas
     isVideo ? (ctx.maxVideoBytes ?? ctx.maxImageBytes) : ctx.maxImageBytes,
   );
   try {
-    return ctx.service.addFile(sid, buf, mimeType);
+    return await ctx.service.addFile(sid, buf, mimeType);
   } catch (e) {
     if (e instanceof ServiceError && e.code === "unsupported_type")
       throw new ToolError(
@@ -480,7 +487,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
       description:
         "Creates a new empty ChalanaMaya board and returns its session_id and URL. Give the URL to the person so they can watch you draw.",
       inputSchema: { title: z.string().optional().describe("Board title (≤ 120 characters).") },
-      outputSchema: { session_id: z.string(), url: z.string() },
+      outputSchema: { session_id: z.string(), url: z.string(), owner_url: z.string().optional() },
       annotations: write,
     },
     (args) =>
@@ -1140,11 +1147,11 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
       annotations: write,
     },
     (args) =>
-      run(() => {
+      run(async () => {
         const sid = sessionId(args.session_id);
         if (args.filename !== undefined) str(args.filename, "filename", 255);
         service.meta(sid);
-        const f = upload(ctx, sid, args.data_base64, args.mime_type, "");
+        const f = await upload(ctx, sid, args.data_base64, args.mime_type, "");
         return {
           file_id: f.id,
           mime_type: f.mime,
@@ -1193,7 +1200,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
       annotations: write,
     },
     (args) =>
-      run(() => {
+      run(async () => {
         const sid = sessionId(args.session_id);
         const kind =
           args.kind === undefined ? "image" : oneOf(args.kind, "kind", ["image", "gif", "video"]);
@@ -1209,7 +1216,7 @@ export const registerTools = (server: McpServer, ctx: ToolContext) => {
         if (given.length > 1) throw invalid("source", `give only one of ${given.join(", ")}`);
         if (src.file_id !== undefined) fileId = str(src.file_id, "source.file_id", 128);
         else if (src.data_base64 !== undefined)
-          fileId = upload(ctx, sid, src.data_base64, src.mime_type, "source").id;
+          fileId = (await upload(ctx, sid, src.data_base64, src.mime_type, "source")).id;
         else if (src.url !== undefined) {
           warnings.push(
             "source.url: links are shown live in the browser and as a placeholder card in PNG/SVG exports; upload the file (upload_media) for full support",

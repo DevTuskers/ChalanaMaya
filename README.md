@@ -25,6 +25,19 @@ Desktop clients that only speak stdio run the bridge (`npm run mcp:stdio`, or `n
 
 Settings (port, data folder, allowed hosts, proxies, limits) and the server's API are in the [setup guide](docs/agents/setup.md), which also explains how agents connect. Read [security](docs/security.md) before exposing the server beyond your machine.
 
+## Host it on Cloudflare
+
+ChalanaMaya also runs fully serverless on Cloudflare: the static app is served by Workers static assets, every board is a SQLite Durable Object (live sync over hibernating WebSockets included), media goes to R2, and `POST /mcp` answers the same 17 MCP tools with the same key rules — read tools are open to anyone with the board link, write tools need the board's edit or owner key (`Authorization: Bearer` or `#key=` in the board URL). Board links carry the view id plus `#key=`/`#owner=` fragments; see [docs/security.md](docs/security.md#cloudflare-workers).
+
+Deploy needs the account id in `wrangler.toml` and a Workers API token:
+
+```bash
+CLOUDFLARE_API_TOKEN=… npx wrangler deploy    # → https://<name>.workers.dev
+wrangler tail chalanamaya                    # live logs
+```
+
+`.github/workflows/deploy.yml` deploys on every push to `main` (needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repo secrets). The Node server stays the dev/test/self-host path; both hosts share the same `src/` logic.
+
 ## Checks
 
 ```bash

@@ -3,7 +3,7 @@ import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
-import { ApiError, httpApi } from "./sync/api";
+import { ApiError, getEditKey, httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
 import { LiveMedia } from "./ui/LiveMedia";
@@ -375,7 +375,12 @@ const agentNotice = (
 };
 
 export const App = ({ boot }: { boot: SessionBoot }) => {
-  const [store] = useState(() => createStore(boot));
+  const [store] = useState(() => {
+    const s = createStore(boot);
+    // A keyed host opened without the edit key opens look-only (§invite links).
+    if (boot.viewOnly) s.set({ viewMode: true });
+    return s;
+  });
   const [sync] = useState(
     () =>
       new SyncClient(
@@ -497,13 +502,17 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
         window.location.assign(`/s/${boot.id}`);
       },
       copyLink: () => {
-        const url = `${window.location.origin}/s/${boot.id}`;
+        // The share link carries the *edit* key fragment — never the owner
+        // key, so an owner-only visit hands out a view-only link instead.
+        const url = `${window.location.origin}/s/${boot.id}${getEditKey() ? `#key=${getEditKey()}` : ""}`;
         void (
           navigator.clipboard?.writeText(url) ?? Promise.reject(new Error("no clipboard"))
         ).then(
           () =>
             store.toast(
-              "Board link copied. Anyone with it can change this board.",
+              getEditKey()
+                ? "Board link copied. Anyone with it can change this board."
+                : "View-only link copied. Share the edit link from a tab opened with #key=.",
               "success",
               3500,
             ),
@@ -592,8 +601,11 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     win.addEventListener("pagehide", onHide);
     // live sync: other tabs' and agents' changes arrive on the board's socket
     store.keyOf = (id) => sync.keyOf(id);
-    const live = new LiveChannel(sync, socketUrl(win.location, boot.id), win);
-    live.start();
+    // boot.live=false marks a host with no socket endpoint yet (phase 1 on
+    // Cloudflare): connecting would just retry a 501 every ~10s forever.
+    const live =
+      boot.live === false ? null : new LiveChannel(sync, socketUrl(win.location, boot.id), win);
+    live?.start();
     // text an agent laid out while no tab was open is measured here once fonts are in
     let alive = true;
     void whenBoardFontsReady(win.document).then(() => {
@@ -601,10 +613,10 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
     });
     // test hook: lets e2e specs wait until everything is acknowledged
     (win as unknown as { __chalanaSync?: SyncClient }).__chalanaSync = sync;
-    (win as unknown as { __chalanaLive?: LiveChannel }).__chalanaLive = live;
+    (win as unknown as { __chalanaLive?: LiveChannel | null }).__chalanaLive = live;
     return () => {
       alive = false;
-      live.dispose();
+      live?.dispose();
       unsubPrefs();
       store.onSceneChange = null;
       store.onCommit = null;

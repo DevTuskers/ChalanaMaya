@@ -76,8 +76,17 @@ export const pushSchema = (maxOps: number) =>
 export const importSchema = z.strictObject({
   importId: pushId,
   mode: z.enum(["replace", "add"]),
-  elements: z.array(z.strictObject({ el: z.unknown(), idx: z.string().min(1).max(192) })),
+  elements: z.array(
+    z.strictObject({
+      el: z.unknown(),
+      idx: z.string().min(1).max(192),
+      // the element version the importer saw: lets a mirrored replay skip
+      // puts that would clobber edits made after the import
+      v: z.number().int().nonnegative().optional(),
+    }),
+  ),
   settings: z.unknown().optional(),
+  mirrored: z.literal(true).optional(),
 });
 
 export type RejectReason =
@@ -150,6 +159,8 @@ export const clientMessageSchema = (maxOps: number) =>
       type: z.literal("hello"),
       clientId: clientIdSchema,
       sinceRev: z.number().int().nonnegative().optional(),
+      // keyed hosts (Cloudflare): the board's edit/owner key; ignored elsewhere
+      key: z.string().max(128).optional(),
     }),
     z.strictObject({
       type: z.literal("push"),

@@ -13,14 +13,11 @@ import { redactIds } from "../security/rateLimit";
 import { registerGuide } from "./guide";
 import { registerTools } from "./tools";
 
+import { INSTRUCTIONS } from "./reference";
+
 export const MCP_BODY_LIMIT = 16 * 1024 * 1024;
 
-export const INSTRUCTIONS =
-  "ChalanaMaya is a whiteboard. Every board is a session; its URL ends in /s/<session_id>. " +
-  "Pass that id (or the URL) as session_id. Coordinates are board units, x right, y down, boxes by top-left corner. " +
-  "Read with get_scene, add with add_elements (keys + from/to for connectors), pass agent_name. " +
-  "Read the chalanamaya://guide resource for layout rules and recipes. " +
-  "The MCP protocol session is unrelated to the board session_id.";
+export { INSTRUCTIONS };
 
 export const buildMcpServer = (opts: {
   service: SessionService;

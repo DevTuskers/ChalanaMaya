@@ -32,3 +32,20 @@ The app is served with a strict Content Security Policy: scripts only from the a
 ## Exposing ChalanaMaya beyond your machine
 
 Cloud agents cannot reach `localhost`. If you expose the server (tunnel, proxy, `HOST=0.0.0.0`), set `PUBLIC_URL` or `ALLOWED_HOSTS` and, behind a proxy, `TRUST_PROXY`. The session id is then the only protection for each board; prefer a short-lived tunnel and stop it when you are done. Traffic is only encrypted if your tunnel or proxy uses HTTPS.
+
+## Cloudflare Workers
+
+The `wrangler.toml` deployment is a different trust shape from the Node server above: it is meant to face the open internet, so board access is split into **three secrets per board** instead of "the link is the key".
+
+- **View id** (`/s/<id>`, 144 random bits): opens the board read-only — see it, follow it live, download the `.chalana`. It names the Durable Object, so it is also how reads and sockets find the board.
+- **Edit key** (`#key=` in the board URL, or `Authorization: Bearer` on API, socket `hello` and MCP calls): invites a person or agent to change the board. It lives in the URL fragment, which browsers never send to the server or to `Referer` — the worker only ever sees its SHA-256 hash.
+- **Owner key** (`#owner=`): rotates the two other secrets (`POST …/rotate`), deletes the board, and can do everything the edit key can. Keep it to yourself.
+
+The Durable Object stores SHA-256 hashes of both keys only — a storage dump cannot mint an edit link. Key checks happen on every write path: REST pushes, every WebSocket `push` (re-verified, so rotating a key cuts live writers off mid-session), and every MCP write tool (`get_session_info`, `get_scene` and `list_component_presets` are the only tools that run without a key). A wrong or missing key never reveals whether a board exists: writes answer the same `forbidden` the view link gets, and read-only UI mode never sends a key.
+
+- **No board listing.** There is no route, tool or index read that enumerates boards; `create_session` is rate-limited per IP by a Cloudflare rate-limit rule.
+- **Eviction.** A board untouched for 7 days is tombstoned by a daily alarm (its data and media are dropped, links answer `410` with a re-upload hint); the fleet is also capped at 50,000 boards, oldest-first (LRU). Owner deletes answer `404` instead.
+- **Budgets.** Per board: elements, ops-per-push, media bytes and a 20,000 ops/day counter (429 `capacity` — the app shows the board as read-only until reset). These bound Durable Object storage and rows-written, which are the metered resources on the free tier.
+- **Media** goes to R2 under `<board>/<sha256>` with the same magic-byte checks as the Node host; remote `https` links are stored as links and never fetched (no SSRF). The same CSP/`frame-ancestors 'none'` headers as the Node host wrap every response.
+- **Web card / animated component** rules are unchanged: sandboxed iframes, cleaned HTML/CSS, no scripts — same shared `src/` validators run in the DO.
+- **Hibernation** lets sockets sleep: idle boards burn no DO time, and per-socket keys live in serialized attachments.
