@@ -48,8 +48,10 @@ browser ──► Worker (static assets + router)
   PNG-embedded scenes, autosaves and clipboard payloads already carry this URL shape.
 - **Ephemerality**: each DO board carries `lastActivity`; an alarm evicts the board
   (delete storage + R2 objects) after **7 days idle**, and a lightweight global LRU
-  (a small DO index or periodic cron Worker listing keys) caps total boards at
-  ~5 GB DO storage / ~10 GB R2. Clients are told a board is gone (410) and offered
+  caps total boards at ~5 GB DO storage / ~10 GB R2. The LRU is a **small DO index
+  written on board create/delete** — Cloudflare exposes no API to enumerate Durable
+  Objects, so a cron Worker listing keys is not implementable; the index DO is the
+  only option and is the one we build. Clients are told a board is gone (410) and offered
   re-upload of their `.chalana` file — which is exactly requirement 3.
 - **Free-tier fit**: Workers 100k req/day & 10 ms CPU; DO 100k req/day + 13,000 GB-s/day
   + **SQLite rows written 100k/day, rows read 5M/day**; **every inbound/outbound
@@ -88,15 +90,27 @@ user/agent gets the scene and live updates **view-only**; mutating calls return
 This fixes today's gap where look-only is a client-side flag with no server check.
 
 - **v1 approval UX = out-of-band links** (ship first): board creation returns view /
-  invite (keyed) / owner links. Menu gains two items — **"Copy invite link"** (grants
-  edit) and **"Copy view-only link"** (strips the key) — so nobody silently shares edit
-  rights by copying the address bar. Anyone with the invite link can edit, agents
-  included.
+  invite (keyed) / owner links — and `create_session` on MCP returns all three links
+  (`view_url`, `invite_url`, `owner_url`) so an agent-created board is editable by
+  that agent and shareable onward. Menu gains two items — **"Copy invite link"**
+  (grants edit) and **"Copy view-only link"** (strips the key) — so nobody silently
+  shares edit rights by copying the address bar. Anyone with the invite link can
+  edit, agents included.
 - **v2 in-app request/approve** (later phase, not blocking launch): a keyed client may
   mint single-use *request tokens*; owner tabs get a WS notice and approve, which stores
   a new key hash. Only if users ask.
 - **Revocation**: a client presenting `ownerKey` rotates `editKey` in the DO; the old
-  key dies. (Recovery story above: owner key lives in the owner link + sessionStorage.)
+  key dies. Rotation must also **evict live editors**: sockets authenticate at
+  `hello`, so the DO re-verifies the presented key on every `push` (cheap in-memory
+  check against the current hash set) and closes any socket whose key was rotated
+  out — a kicked client falls back to view-only and learns the new key only via a
+  fresh invite link. Phase 2 acceptance tests this eviction.
+- **Recent boards keep edit rights**: `src/sync/recent.ts` stores the full board URL
+  **including the `#key=` fragment**, not a bare `{id,title}` — revisiting your own
+  board from recents re-opens it editable. This is safe because a fragment never
+  leaves the client (no Referer, no server logs, no history send). Losing site data
+  or the invite link reverts the board to view-only; the saved invite link is the
+  recovery path, stated on the invite copy action.
 - **Carried over unchanged**: Host/Origin allowlist (`*.workers.dev` now, custom domain
   added to the same list later), strict element validation (`src/shared/validate.ts`
   is isomorphic — reuse in DO), media magic-byte sniffing, CSP headers, ids/keys never
@@ -106,7 +120,9 @@ This fixes today's gap where look-only is a client-side flag with no server chec
   **per-location and approximate**, a first line of defense only — the real enforcement
   is the existing per-board quotas (element count, file size, and a new per-board
   daily ops/rows budget) enforced inside the DO, which is where the free-tier caps
-  actually bite.
+  actually bite. **`POST /files` and `POST /ops` are deliberately unrate-limited in
+  v1** — they are the cheapest remaining spam paths and are named as such; Phase 5
+  revisits them once per-board budgets and the LRU index exist.
 
 ## 3. Drawing file format — `.chalana` round-trips full scene incl. media
 
@@ -157,13 +173,16 @@ decide to drop self-host — flagged as an open question, not assumed.
   handler dispatching the existing tool table (it's already a pure function map).
 - Auth: an agent is just a client. `parseSessionRef` (`src/shared/ids.ts`) today strips
   everything after the id — it is extended to also extract a `key` from the URL
-  (`#key=` fragment or `?key=` for backward input) and return `{id, key}`; MCP tool
+  fragment (`#key=` only) and return `{id, key}`; MCP tool
   resolution forwards the key to the DO as Bearer. A bare `session_id` plus
-  `Authorization: Bearer <editKey>` header works too. View-link-only access → read
+  `Authorization: Bearer <editKey>` header works too. **`?key=` query support is
+  dropped, not added** — a query-param secret sits in history, logs and Referers,
+  which is exactly the leak the fragment design removes; keys do not exist in any
+  shipped version today so there is no backward input to preserve. View-link-only access → read
   tools only (`get_scene`, `screenshot`-style view tools); write tools return the
   same 403.
 - Stdio bridge: code unchanged shape, docs updated — `CHALANAMAYA_URL` may embed
-  `#key=`/`?key=`, or `CHALANAMAYA_KEY=<editKey>` sets the Bearer header for every
+  `#key=`, or `CHALANAMAYA_KEY=<editKey>` sets the Bearer header for every
   request.
 - **Phase 3 ships before R2** (Phase 4): media tools that need storage
   (`upload_media` with `data_base64`, file-source options) return an explicit
@@ -186,7 +205,8 @@ tests green); `server/text/measure.ts` → approximate-metrics module shared by 
 **Frontend edits**: `src/shared/ids.ts` (parse `key` alongside id);
 `src/sync/session.ts`/`Boot.tsx` (read `#key=`/`#owner=` from the fragment, hold in
 memory, `ownerKey` mirrored to sessionStorage, never localStorage); `src/sync/api.ts`
-(Bearer on mutating calls + file GETs; treat 403 → lock look-only);
+(Bearer on mutating calls only — reads incl. file GETs need only `viewId`; treat 403
+→ lock look-only);
 `src/sync/client.ts` (send key on push, handle 403); `src/sync/live.ts` (send key in
 WS hello; 4403/403 → look-only); `src/ui/MainMenu.tsx`/`src/ui/Dialogs.tsx` ("Copy
 invite link", "Copy view-only link", owner-link copy at creation, look-only notice on
