@@ -53,15 +53,16 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
           const o = parseBoardHash(new URL(created.owner_url, window.location.origin).hash).owner;
           if (o) owner = o;
         }
-        setBoardKey(keys.key ?? owner ?? "", keys.key ?? "");
+        setBoardKey(owner ?? keys.key ?? "", keys.key ?? "");
         if (owner) storeOwnerKey(id, owner);
         window.history.replaceState(null, "", address);
       } else {
         id = target;
         const keys = parseBoardHash(window.location.hash);
         owner = keys.owner ?? readOwnerKey(id) ?? undefined;
-        // an owner-key link also edits (the owner key satisfies the edit check)
-        setBoardKey(keys.key ?? owner ?? "", keys.key ?? "");
+        // an owner key (link or stored) satisfies the edit check and wins over
+        // a stale recents key left over from before a rotation
+        setBoardKey(owner ?? keys.key ?? "", keys.key ?? "");
         if (owner) storeOwnerKey(id, owner);
       }
       const boot = await loadSession(httpApi, id);

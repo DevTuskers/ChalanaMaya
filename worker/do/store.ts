@@ -250,12 +250,16 @@ export class BoardStore {
     this.sql.exec(query, ...params);
   }
 
-  /** Set when deletion starts: in-flight uploads see the board as gone. */
+  /** Set when deletion starts: in-flight writes see a retryable 503, not a
+   *  permanent 404 — if the R2 delete fails the board survives and their
+   *  edits were never refused. */
   private deleted = false;
 
   private requireSession(): SessionRow {
     const s = this.one<SessionRow>("SELECT * FROM sessions WHERE id = ?", this.sessionId);
-    if (!s || this.deleted) throw notFound();
+    if (!s) throw notFound();
+    if (this.deleted)
+      throw new ServiceError(503, "deleting", "This board is being deleted; retry shortly.");
     return s;
   }
 
