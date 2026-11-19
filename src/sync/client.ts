@@ -38,7 +38,7 @@ import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
 import type { MirrorBatch, PendingMirror } from "./mirror";
 
-export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full" | "capacity";
+export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full";
 
 export interface SyncSettings {
   viewBackgroundColor: string;
@@ -580,11 +580,9 @@ export class SyncClient {
           this.host.notice("This board no longer exists on the server, so changes are not saved.");
           this.updateStatus();
         } else if (msg.code === "capacity") {
-          this.stopped = "capacity";
           this.host.notice(
-            "This board hit its daily edit limit — it is read-only until it resets.",
+            "This board hit its daily edit limit — the batch is queued and retries after it resets.",
           );
-          this.updateStatus();
         }
         return;
       }
@@ -1183,8 +1181,16 @@ export class SyncClient {
       this.stopped = "gone";
       this.host.notice("This board no longer exists on the server, so changes are not saved.");
     } else if (e.code === "capacity") {
-      this.stopped = "capacity";
-      this.host.notice("This board hit its daily edit limit — it is read-only until it resets.");
+      // the batch was refused uncharged and stays queued: retrying with
+      // backoff lets a smaller batch fit and auto-recovers at the daily reset
+      this.backoff = Math.min(15000, this.backoff ? this.backoff * 2 : 1000);
+      this.retryTimer = this.timers.setTimeout(() => {
+        this.retryTimer = null;
+        this.pump(false);
+      }, this.backoff);
+      this.host.notice(
+        "This board hit its daily edit limit — the batch is queued and retries after it resets.",
+      );
     } else if (e.status === 507) {
       this.stopped = "full";
       this.host.notice(`The server could not save: ${e.message}`);

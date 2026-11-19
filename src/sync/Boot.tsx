@@ -74,15 +74,19 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
         const keys = parseBoardHash(window.location.hash);
         owner = keys.owner ?? readOwnerKey(id) ?? undefined;
         // several credentials can exist (URL key + stored owner + recents):
-        // probe them in preference order — owner first, then the link key —
-        // so a key revoked by a rotation cannot shadow a still-valid one
+        // probe both — the owner wins auth when it is live, a revoked key
+        // cannot shadow a valid one, and a live edit key stays shareable
         const auth = await (async () => {
-          const cands = [owner, keys.key].filter((k): k is string => !!k);
-          if (cands.length < 2) return cands[0] ?? "";
-          for (const c of cands) if (await probeKey(id, c)) return c;
-          return cands[0];
+          if (owner && keys.key) {
+            const [ownerOk, keyOk] = await Promise.all([
+              probeKey(id, owner),
+              probeKey(id, keys.key),
+            ]);
+            return { key: ownerOk ? owner : keyOk ? keys.key : owner, edit: keyOk ? keys.key : "" };
+          }
+          return { key: owner ?? keys.key ?? "", edit: keys.key ?? "" };
         })();
-        setBoardKey(auth, auth === keys.key ? keys.key : "");
+        setBoardKey(auth.key, auth.edit);
         if (owner) storeOwnerKey(id, owner);
       }
       const boot = await loadSession(httpApi, id);

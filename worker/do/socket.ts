@@ -157,7 +157,8 @@ export class SocketCore {
             // instead of sitting half-open on a dead board
             const code = (e as { code?: string })?.code;
             if (code === "deleting" || code === "session_not_found") {
-              ws.close(4000, "board is gone or being deleted");
+              // 4404 is the client's terminal close code: no reconnect
+              ws.close(4404, "board is gone");
               return;
             }
             throw e;
