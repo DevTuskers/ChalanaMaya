@@ -4,15 +4,19 @@
  * not yet sent. After a reload the batches are replayed in order (the server
  * recognises a pushId it already applied, and a `mirrored` replay older than
  * its push log never overwrites newer edits), then the unsent ops are applied
- * on top and saved normally. Import bodies and file bytes are never mirrored.
+ * on top and saved normally. Import bodies are mirrored whole so a queued
+ * import survives a reload; file bytes are never mirrored.
  */
 import type { Op } from "../shared/protocol";
+import type { ImportBody } from "./api";
 import { getStorage, type StorageLike } from "../io/autosave";
 
 export interface MirrorBatch {
   pushId: string;
   baseRev: number;
   ops: Op[];
+  /** Queued imports mirror their body so a reload can re-send them (§4.1). */
+  import?: ImportBody;
 }
 
 export interface MirrorData {

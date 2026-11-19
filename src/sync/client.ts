@@ -222,12 +222,14 @@ export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<Rep
       continue;
     }
     try {
-      const ack = await api.push(mirror.sessionId, {
-        pushId: b.pushId,
-        baseRev: b.baseRev,
-        ops: b.ops,
-        mirrored: true,
-      });
+      const ack = b.import
+        ? await api.importScene(mirror.sessionId, b.import)
+        : await api.push(mirror.sessionId, {
+            pushId: b.pushId,
+            baseRev: b.baseRev,
+            ops: b.ops,
+            mirrored: true,
+          });
       lost += countLost(ack);
     } catch (e) {
       // capacity/forbidden are not "refused for good": capacity resets and a
@@ -312,6 +314,12 @@ export class SyncClient {
   private adoptPending(pending: readonly MirrorBatch[]) {
     if (!pending.length) return;
     for (const b of pending) {
+      // a pending import re-queues as itself (it is not ops) so the pump
+      // delivers it through /import again
+      if (b.import) {
+        this.push({ kind: "import", body: b.import, sent: false });
+        continue;
+      }
       for (const op of b.ops) {
         if (op.t === "put") {
           this.known.set(op.el.id, { el: op.el, json: toJson(op.el), version: op.baseVersion + 1 });
@@ -1026,6 +1034,13 @@ export class SyncClient {
     const batches: MirrorBatch[] = [];
     const unsent: Op[] = [];
     for (const q of this.queue) {
+      // imports mirror their whole body (no ops representation), sent or not:
+      // a queued import lost on reload must be re-sent, and a sent one is
+      // deduped by its importId like any push
+      if (q.kind === "import") {
+        batches.push({ pushId: q.body.importId, baseRev: 0, ops: [], import: q.body });
+        continue;
+      }
       if (q.kind !== "ops") continue;
       if (q.sent) batches.push({ pushId: q.pushId, baseRev: q.baseRev, ops: q.ops });
       else unsent.push(...q.ops);
@@ -1182,7 +1197,10 @@ export class SyncClient {
       this.host.notice("This board no longer exists on the server, so changes are not saved.");
     } else if (e.code === "capacity") {
       // the batch was refused uncharged and stays queued: retrying with
-      // backoff lets a smaller batch fit and auto-recovers at the daily reset
+      // backoff lets a smaller batch fit and auto-recovers at the daily reset.
+      // The server answered, so this is not "offline": uploads and links do
+      // not spend edit quota and must stay usable.
+      this.offline = false;
       this.backoff = Math.min(15000, this.backoff ? this.backoff * 2 : 1000);
       this.retryTimer = this.timers.setTimeout(() => {
         this.retryTimer = null;
