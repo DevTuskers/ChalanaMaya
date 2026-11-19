@@ -120,6 +120,41 @@ describe("worker routing", () => {
     expect((await viaUrl.json()).result.structuredContent.session_id).toBe(id);
   });
 
+  it("mcp: upload_media stores bytes, place_media links remote urls", async () => {
+    const { id, key } = await createBoard();
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const up = (await (
+      await mcp(
+        rpc("tools/call", {
+          name: "upload_media",
+          arguments: { session_id: id, data_base64: png, mime_type: "image/png" },
+        }),
+        bearer(key),
+      )
+    ).json()) as { result: { isError?: boolean; structuredContent: { file_id: string } } };
+    expect(up.result.isError).toBeUndefined();
+    const fileId = up.result.structuredContent.file_id;
+    const dl = await call(new Request(api(id, `/files/${fileId}`)));
+    expect(dl.status).toBe(200);
+    const place = (await (
+      await mcp(
+        rpc("tools/call", {
+          name: "place_media",
+          arguments: {
+            session_id: id,
+            source: { url: "https://media.example.com/pic.png", mime_type: "image/png" },
+            x: 5,
+            y: 5,
+          },
+        }),
+        bearer(key),
+      )
+    ).json()) as { result: { isError?: boolean; structuredContent: { rev: number; id: string } } };
+    expect(place.result.isError).toBeUndefined();
+    expect(place.result.structuredContent.id).toBeTruthy();
+  });
+
   it("mcp: create_session returns a keyed board URL", async () => {
     const res = (await (
       await mcp(rpc("tools/call", { name: "create_session", arguments: { title: "t" } }))

@@ -16,6 +16,7 @@
  *  - applied changes are kept on `lastEvent` for the socket layer (phase 2).
  */
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { notFound, ServiceError, storageFull } from "../../server/errors";
 import {
   baseType,
@@ -932,12 +933,13 @@ export class BoardStore {
     return this.fileOut(row);
   }
 
-  /** Records a remote media link; the worker never fetches it (no SSRF). */
-  async addRemoteFile(
+  /** Records a remote media link; the worker never fetches it (no SSRF).
+   *  Sync like the Node service's: `addLink` runs inside sync transactions. */
+  addRemoteFile(
     url: string,
     mime: string,
     meta: { width?: number | null; height?: number | null } = {},
-  ): Promise<StoredFile> {
+  ): StoredFile {
     this.requireSession();
     const check = checkRemoteUrl(url);
     if (!check.ok) throw new ServiceError(400, "invalid_url", `The link ${check.reason}.`);
@@ -948,7 +950,7 @@ export class BoardStore {
         "Links can be PNG, JPEG, GIF or WebP pictures or MP4 or WebM videos.",
       );
     const key = `remote:${mime}:${check.url}`;
-    const sha = await sha256Hex(key);
+    const sha = createHash("sha256").update(key).digest("hex");
     const existing = this.one<FileRow>(
       "SELECT * FROM files WHERE session_id = ? AND sha256 = ? AND source = 'remote' LIMIT 1",
       this.sessionId,
