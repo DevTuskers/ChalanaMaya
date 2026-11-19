@@ -103,6 +103,21 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     try {
+      // CSRF guard on mutating requests: browsers always send Sec-Fetch-Site
+      // (and Origin on non-GET) for cross-site posts, so a foreign site can
+      // neither spend a visitor's creation quota nor write to their boards.
+      // Agents and curl send neither header and pass through.
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const site = req.headers.get("Sec-Fetch-Site");
+        const origin = req.headers.get("Origin");
+        const foreign = site === "cross-site" || (!!origin && new URL(origin).host !== url.host);
+        if (foreign)
+          return json(
+            { error: { code: "forbidden", message: "Cross-site requests are refused." } },
+            403,
+          );
+      }
+
       if (path === "/api/health") return json({ ok: true });
 
       if (path === "/api/sessions" && req.method === "POST")

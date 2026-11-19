@@ -77,10 +77,15 @@ const HEADERS = { "X-ChalanaMaya": "1", "Content-Type": "application/json" };
  * The Node self-host ignores the header.
  */
 let boardKey = "";
-export const setBoardKey = (key: string) => {
+let editKey = "";
+export const setBoardKey = (key: string, edit = key) => {
   boardKey = key;
+  editKey = edit;
 };
 export const getBoardKey = () => boardKey;
+/** The edit key only — never the owner key. Empty on an owner-link visit, so
+ *  shareable edit links are never minted from owner secrets. */
+export const getEditKey = () => editKey;
 
 /** The owner key lives in sessionStorage (`chalana.owner.<id>`): only a tab
  * holding it may delete the board or rotate its keys. */

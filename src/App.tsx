@@ -3,7 +3,7 @@ import { finalizeScene } from "./scene/scene";
 import { PAPER } from "./scene/constants";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { STORAGE_KEY, getStorage, loadFromStorage, type StorageLike } from "./io/autosave";
-import { ApiError, getBoardKey, httpApi } from "./sync/api";
+import { ApiError, getEditKey, httpApi } from "./sync/api";
 import type { SessionBoot } from "./sync/session";
 import { LOST_NOTICE, SyncClient, applyOpsToScene, type SyncHost } from "./sync/client";
 import { LiveMedia } from "./ui/LiveMedia";
@@ -504,14 +504,17 @@ export const App = ({ boot }: { boot: SessionBoot }) => {
         window.location.assign(`/s/${boot.id}`);
       },
       copyLink: () => {
-        // On a keyed host the share link carries the edit key fragment.
-        const url = `${window.location.origin}/s/${boot.id}${getBoardKey() ? `#key=${getBoardKey()}` : ""}`;
+        // The share link carries the *edit* key fragment — never the owner
+        // key, so an owner-only visit hands out a view-only link instead.
+        const url = `${window.location.origin}/s/${boot.id}${getEditKey() ? `#key=${getEditKey()}` : ""}`;
         void (
           navigator.clipboard?.writeText(url) ?? Promise.reject(new Error("no clipboard"))
         ).then(
           () =>
             store.toast(
-              "Board link copied. Anyone with it can change this board.",
+              getEditKey()
+                ? "Board link copied. Anyone with it can change this board."
+                : "View-only link copied. Share the edit link from a tab opened with #key=.",
               "success",
               3500,
             ),

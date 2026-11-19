@@ -53,6 +53,24 @@ const forbidden = () =>
 export class BoardSession {
   private store: BoardStore | null = null;
   private readonly sock: SocketCore;
+  private lastIndexTouch = 0;
+
+  /** Socket and MCP writes never pass through the worker's REST route, so the
+   *  board refreshes the fleet index itself — throttled to once an hour; the
+   *  eviction sweep works on days, not minutes. */
+  private touchIndex() {
+    const now = Date.now();
+    if (now - this.lastIndexTouch < 3600_000) return;
+    this.lastIndexTouch = now;
+    const id = this.state.id.name;
+    if (!id) return;
+    this.state.waitUntil(
+      this.env.INDEX.get(this.env.INDEX.idFromName("fleet"))
+        .fetch("https://index/touch", { method: "POST", body: JSON.stringify({ id }) })
+        .then(() => undefined)
+        .catch(() => undefined),
+    );
+  }
 
   constructor(
     private readonly state: DurableObjectState,
@@ -75,6 +93,7 @@ export class BoardSession {
       this.store = new BoardStore(this.state.storage.sql, id, this.env.MEDIA, {
         // sql.exec bans BEGIN/COMMIT in Durable Object SQLite
         tx: (fn) => this.state.storage.transactionSync(fn),
+        onWrite: () => this.touchIndex(),
       });
     }
     return this.store;
@@ -133,7 +152,6 @@ export class BoardSession {
         return json({ ...this.board().snapshot({ markOpened: true }), keyed: true });
 
       case rest === "ops" && req.method === "POST": {
-        await this.requireKey(req, "edit");
         const raw = await json16k(req);
         const parsed = pushSchema(500).safeParse(raw);
         if (!parsed.success)
@@ -143,13 +161,15 @@ export class BoardSession {
             parsed.error.issues[0]?.message ?? "invalid push",
           );
         const atomic = url.searchParams.get("atomic") === "1";
+        // key check right before the mutation: a rotation during the body
+        // read can no longer let a stale write land
+        await this.requireKey(req, "edit");
         const r = this.board().apply(parsed.data, { origin, atomic });
         if (r.event) this.sock.broadcast(r.event);
         return json(r.ack);
       }
 
       case rest === "import" && req.method === "POST": {
-        await this.requireKey(req, "edit");
         const text = await req.text();
         if (text.length > 12 * 1024 * 1024)
           throw new ServiceError(413, "too_large", "The import body is too large.");
@@ -166,14 +186,15 @@ export class BoardSession {
             "bad_import",
             parsed.error.issues[0]?.message ?? "invalid import",
           );
+        await this.requireKey(req, "edit");
         const r = this.board().importScene(parsed.data, origin);
         if (r.event) this.sock.broadcast(r.event);
         return json(r.ack);
       }
 
       case rest === "files" && req.method === "POST": {
-        await this.requireKey(req, "edit");
         const bytes = new Uint8Array(await req.arrayBuffer());
+        await this.requireKey(req, "edit");
         const f = await this.board().addFile(bytes, req.headers.get("Content-Type") ?? undefined);
         return json(
           {
@@ -191,7 +212,6 @@ export class BoardSession {
       }
 
       case rest === "links" && req.method === "POST": {
-        await this.requireKey(req, "edit");
         const raw = (await json16k(req)) as {
           url?: unknown;
           mime?: unknown;
@@ -200,6 +220,7 @@ export class BoardSession {
         };
         if (typeof raw?.url !== "string" || typeof raw?.mime !== "string")
           throw new ServiceError(400, "bad_link", "A link needs url and mime.");
+        await this.requireKey(req, "edit");
         const dim = (v: unknown) => (typeof v === "number" ? v : undefined);
         const f = await this.board().addRemoteFile(raw.url, raw.mime, {
           width: dim(raw.width),

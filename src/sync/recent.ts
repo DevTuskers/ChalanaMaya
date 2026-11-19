@@ -1,7 +1,7 @@
 /** Recently opened boards, kept in this browser only (plan §4.1, session menu). */
 import { isSessionId } from "../shared/ids";
 import type { StorageLike } from "../io/autosave";
-import { getBoardKey } from "./api";
+import { getEditKey } from "./api";
 
 export const RECENT_KEY = "chalanamaya.sessions";
 export const RECENT_MAX = 20;
@@ -39,7 +39,7 @@ export const rememberBoard = (
   board: { id: string; title: string },
   now = Date.now(),
 ): RecentBoard[] => {
-  const key = getBoardKey() || undefined;
+  const key = getEditKey() || undefined;
   const list = [
     { id: board.id, title: board.title.slice(0, 120), openedAt: now, key },
     ...readRecent(storage).filter((r) => r.id !== board.id),

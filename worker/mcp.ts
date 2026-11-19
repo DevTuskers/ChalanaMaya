@@ -387,7 +387,10 @@ export const handleMcp = async (
   req: Request,
   env: { BOARD: DurableObjectNamespace },
   ctx: ExecutionContext,
-  create: (title: string, ctx: ExecutionContext) => Promise<{ sessionId: string; editKey: string }>,
+  create: (
+    title: string,
+    ctx: ExecutionContext,
+  ) => Promise<{ sessionId: string; editKey: string; ownerKey: string }>,
 ): Promise<Response> => {
   if (req.method !== "POST") {
     return Response.json(
@@ -439,9 +442,15 @@ export const handleMcp = async (
     const args = (msg.params?.arguments as Obj) ?? {};
     const title = typeof args.title === "string" ? args.title.slice(0, 120) : "";
     try {
-      const { sessionId, editKey } = await create(title, ctx);
+      const { sessionId, editKey, ownerKey } = await create(title, ctx);
       const url = `${new URL(req.url).origin}/s/${sessionId}#key=${editKey}`;
-      const data = { session_id: sessionId, url };
+      const data = {
+        session_id: sessionId,
+        url,
+        // an agent-created board has no human owner link: without this the
+        // caller could never rotate keys or delete it
+        owner_url: `${new URL(req.url).origin}/s/${sessionId}#owner=${ownerKey}`,
+      };
       return Response.json(
         resultOf(msg.id, {
           structuredContent: data,

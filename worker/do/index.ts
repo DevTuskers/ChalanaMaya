@@ -31,7 +31,10 @@ export class BoardIndex {
           at INTEGER NOT NULL
         )`,
       );
-      this.state.storage.setAlarm(Date.now() + 24 * 3600_000);
+      // only seed the sweep when none is pending: restarts must not keep
+      // pushing the daily cleanup into the future
+      if (!(await this.state.storage.getAlarm()))
+        await this.state.storage.setAlarm(Date.now() + 24 * 3600_000);
     });
   }
 

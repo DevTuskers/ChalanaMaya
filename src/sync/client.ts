@@ -230,7 +230,11 @@ export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<Rep
       });
       lost += countLost(ack);
     } catch (e) {
-      if (!(e instanceof ApiError) || e.retry) pending.push(b);
+      // capacity/forbidden are not "refused for good": capacity resets and a
+      // 403 on a view-only visit just means this tab has no key — keep the
+      // batch so the edits are not lost on reload.
+      if (!(e instanceof ApiError) || e.retry || e.code === "capacity" || e.status === 403)
+        pending.push(b);
       else lost += b.ops.length; // refused for good: nothing to replay
     }
   }

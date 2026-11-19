@@ -15,10 +15,16 @@ class FakeStorage {
   transactionSync<T>(fn: () => T): T {
     return this.sql.db.transaction(fn)() as T;
   }
+  private alarm: number | null = null;
   async deleteAll() {
     this.sql = new SqliteStorage();
   }
-  async setAlarm() {}
+  async getAlarm(): Promise<number | null> {
+    return this.alarm;
+  }
+  async setAlarm(t: number) {
+    this.alarm = t;
+  }
 }
 
 /** A hibernation-era WebSocket stand-in: attachment persists, send is recorded. */
@@ -51,6 +57,7 @@ class FakeState {
   async blockConcurrencyWhile<T>(fn: () => Promise<T> | T): Promise<T> {
     return fn();
   }
+  waitUntil(_p: Promise<unknown>) {}
   acceptWebSocket(ws: FakeSocket) {
     this.sockets.push(ws);
   }

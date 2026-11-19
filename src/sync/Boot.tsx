@@ -53,7 +53,7 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
           const o = parseBoardHash(new URL(created.owner_url, window.location.origin).hash).owner;
           if (o) owner = o;
         }
-        setBoardKey(keys.key ?? owner ?? "");
+        setBoardKey(keys.key ?? owner ?? "", keys.key ?? "");
         if (owner) storeOwnerKey(id, owner);
         window.history.replaceState(null, "", address);
       } else {
@@ -61,7 +61,7 @@ export const Boot = ({ render }: { render: (boot: SessionBoot) => React.ReactNod
         const keys = parseBoardHash(window.location.hash);
         owner = keys.owner ?? readOwnerKey(id) ?? undefined;
         // an owner-key link also edits (the owner key satisfies the edit check)
-        setBoardKey(keys.key ?? owner ?? "");
+        setBoardKey(keys.key ?? owner ?? "", keys.key ?? "");
         if (owner) storeOwnerKey(id, owner);
       }
       const boot = await loadSession(httpApi, id);

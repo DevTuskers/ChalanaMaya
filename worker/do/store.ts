@@ -198,6 +198,7 @@ export class BoardStore {
   private readonly limits: StoreLimits;
   private readonly now: () => number;
   private readonly tx: <T>(fn: () => T) => T;
+  private readonly onWrite: () => void;
   /** The committed change of the last `apply`/`importScene` (phase 2 broadcast). */
   lastEvent: ChangesEvent | null = null;
 
@@ -210,10 +211,13 @@ export class BoardStore {
       now?: () => number;
       /** storage.transactionSync — sql.exec bans BEGIN/COMMIT in DO SQLite */
       tx?: <T>(fn: () => T) => T;
+      /** Fired after a successful write; the DO uses it to refresh fleet idle clocks. */
+      onWrite?: () => void;
     } = {},
   ) {
     this.limits = { ...STORE_LIMITS, ...opts.limits };
     this.now = opts.now ?? Date.now;
+    this.onWrite = opts.onWrite ?? (() => {});
     this.tx =
       opts.tx ??
       // Single-writer DO storage serialises anyway; this fallback is for the
@@ -446,21 +450,20 @@ export class BoardStore {
   /** Deletes the board's rows; media objects go with the DO's R2 prefix. */
   async deleteSession(): Promise<string[]> {
     this.requireSession();
-    const gone: string[] = [];
+    const uploads = this.all<{ sha256: string }>(
+      "SELECT sha256 FROM files WHERE session_id = ? AND source = 'upload'",
+      this.sessionId,
+    );
+    const gone = [...new Set(uploads.map((f) => f.sha256))];
+    // R2 first: if the delete fails the rows stay and the owner can retry —
+    // erasing the rows first would orphan the objects with no way back.
+    if (gone.length) await this.media.delete(gone.map((sha) => r2Key(this.sessionId, sha)));
     this.tx(() => {
-      for (const f of this.all<FileRow>(
-        "SELECT * FROM files WHERE session_id = ?",
-        this.sessionId,
-      )) {
-        if (f.source !== "upload") continue;
+      for (const f of uploads)
         this.run("UPDATE blobs SET refs = refs - 1 WHERE sha256 = ?", f.sha256);
-      }
       this.run("DELETE FROM sessions WHERE id = ?", this.sessionId);
-      for (const b of this.all<{ sha256: string }>("SELECT sha256 FROM blobs WHERE refs <= 0"))
-        gone.push(b.sha256);
       this.run("DELETE FROM blobs WHERE refs <= 0");
     });
-    if (gone.length) await this.media.delete(gone.map((sha) => r2Key(this.sessionId, sha)));
     return gone;
   }
 
@@ -490,6 +493,7 @@ export class BoardStore {
     try {
       const r = this.tx(() => this.applyInTx(push, opts));
       this.lastEvent = r.event;
+      this.onWrite();
       return { ack: r.ack, applied: true, event: r.event };
     } catch (e) {
       if (e instanceof Rollback) return { ack: e.ack, applied: false, event: null };
@@ -898,38 +902,48 @@ export class BoardStore {
       ? videoMeta(real, Buffer.from(bytes))
       : { ...pictureSize(bytes), durationMs: null as number | null };
     const { width, height, durationMs } = meta;
-    const row = this.tx(() => {
-      const s = this.requireSession();
-      if (s.media_bytes + bytes.length > this.limits.maxSessionMediaBytes)
-        throw storageFull("this board's media limit");
-      const blob = this.one<{ refs: number }>("SELECT refs FROM blobs WHERE sha256 = ?", sha);
-      if (blob) this.run("UPDATE blobs SET refs = refs + 1 WHERE sha256 = ?", sha);
-      else this.run("INSERT INTO blobs (sha256, size, refs) VALUES (?, ?, 1)", sha, bytes.length);
-      const id = `f${randomId(12)}`;
-      const now = this.now();
-      this.run(
-        `INSERT INTO files (session_id, id, mime, size, sha256, width, height, duration_ms, source, url, poster_file_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upload', NULL, NULL, ?)`,
-        this.sessionId,
-        id,
-        real,
-        bytes.length,
-        sha,
-        width,
-        height,
-        durationMs,
-        now,
-      );
-      this.run(
-        "UPDATE sessions SET media_bytes = media_bytes + ?, updated_at = ? WHERE id = ?",
-        bytes.length,
-        now,
-        this.sessionId,
-      );
-      return this.file(id)!;
-    });
-    // R2 writes after the transaction: an orphan object is swept with the board.
-    await this.media.put(r2Key(this.sessionId, sha), bytes);
+    // R2 first, then the row: a put failure leaves nothing to dedup, so a
+    // retry writes the media instead of returning a phantom success.
+    const objectKey = r2Key(this.sessionId, sha);
+    await this.media.put(objectKey, bytes);
+    let row: FileRow;
+    try {
+      row = this.tx(() => {
+        const s = this.requireSession();
+        if (s.media_bytes + bytes.length > this.limits.maxSessionMediaBytes)
+          throw storageFull("this board's media limit");
+        const blob = this.one<{ refs: number }>("SELECT refs FROM blobs WHERE sha256 = ?", sha);
+        if (blob) this.run("UPDATE blobs SET refs = refs + 1 WHERE sha256 = ?", sha);
+        else this.run("INSERT INTO blobs (sha256, size, refs) VALUES (?, ?, 1)", sha, bytes.length);
+        const id = `f${randomId(12)}`;
+        const now = this.now();
+        this.run(
+          `INSERT INTO files (session_id, id, mime, size, sha256, width, height, duration_ms, source, url, poster_file_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upload', NULL, NULL, ?)`,
+          this.sessionId,
+          id,
+          real,
+          bytes.length,
+          sha,
+          width,
+          height,
+          durationMs,
+          now,
+        );
+        this.run(
+          "UPDATE sessions SET media_bytes = media_bytes + ?, updated_at = ? WHERE id = ?",
+          bytes.length,
+          now,
+          this.sessionId,
+        );
+        return this.file(id)!;
+      });
+    } catch (e) {
+      // the tx failed after the put: drop the orphan object best-effort
+      await this.media.delete([objectKey]).catch(() => {});
+      throw e;
+    }
+    this.onWrite();
     return this.fileOut(row);
   }
 
