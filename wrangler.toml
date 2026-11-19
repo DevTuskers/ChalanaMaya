@@ -3,6 +3,14 @@
 name = "chalanamaya"
 account_id = "a652c1bd42cf239e2f84d7da716bfc1b"
 main = "worker/index.ts"
+
+# Custom domains (Workers Custom Domains, not zone-worker routes): apex + www.
+# Keep workers.dev live alongside as the temp/preview address.
+workers_dev = true
+routes = [
+  { pattern = "chalanamaya.com", custom_domain = true },
+  { pattern = "www.chalanamaya.com", custom_domain = true },
+]
 compatibility_date = "2025-11-10"
 compatibility_flags = ["nodejs_compat"]
 
