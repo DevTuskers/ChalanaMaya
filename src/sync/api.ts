@@ -15,7 +15,7 @@ export interface PushBody {
 export interface ImportBody {
   importId: string;
   mode: "replace" | "add";
-  elements: { el: SceneElement; idx: string }[];
+  elements: { el: SceneElement; idx: string; v?: number }[];
   settings?: { viewBackgroundColor?: string; gridEnabled?: boolean };
   /** A mirror replay: a `replace` keeps the elements added after the import. */
   mirrored?: true;

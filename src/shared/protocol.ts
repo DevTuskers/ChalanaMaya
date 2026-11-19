@@ -76,7 +76,15 @@ export const pushSchema = (maxOps: number) =>
 export const importSchema = z.strictObject({
   importId: pushId,
   mode: z.enum(["replace", "add"]),
-  elements: z.array(z.strictObject({ el: z.unknown(), idx: z.string().min(1).max(192) })),
+  elements: z.array(
+    z.strictObject({
+      el: z.unknown(),
+      idx: z.string().min(1).max(192),
+      // the element version the importer saw: lets a mirrored replay skip
+      // puts that would clobber edits made after the import
+      v: z.number().int().nonnegative().optional(),
+    }),
+  ),
   settings: z.unknown().optional(),
   mirrored: z.literal(true).optional(),
 });

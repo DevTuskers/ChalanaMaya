@@ -36,7 +36,7 @@ import { validateStoredElement } from "../shared/validate";
 import type { LinearElement, SceneElement } from "../scene/types";
 import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
-import type { MirrorBatch, PendingMirror } from "./mirror";
+import { MIRROR_CAP, type MirrorBatch, type PendingMirror } from "./mirror";
 
 export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full";
 
@@ -328,8 +328,11 @@ export class SyncClient {
         if (imp.mode === "replace")
           for (const k of this.order)
             if (!ids.has(k.id)) ops.push({ t: "del", id: k.id, version: ver(k.id) });
+        // puts only for elements the snapshot does not know: an import that
+        // already landed leaves newer remote work untouched
         for (const e of imp.elements)
-          ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
+          if (!this.known.has(e.el.id))
+            ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
         if (imp.settings) ops.push({ t: "settings", settings: imp.settings });
         if (ops.length) this.applyRemote(ops);
         this.push({ kind: "import", body: imp, sent: false });
@@ -501,7 +504,11 @@ export class SyncClient {
     const body: ImportBody = {
       importId: newPushId(),
       mode,
-      elements: good.map((el) => ({ el, idx: keys.get(el.id)! })),
+      elements: good.map((el) => ({
+        el,
+        idx: keys.get(el.id)!,
+        v: this.known.get(el.id)?.version,
+      })),
       ...(settings ? { settings } : {}),
     };
     if (jsonBytes(body) > MAX_IMPORT_BYTES) {
@@ -1060,12 +1067,16 @@ export class SyncClient {
       // a queued import lost on reload must be re-sent, and a sent one is
       // deduped by its importId like any push
       if (q.kind === "import") {
-        batches.push({ pushId: q.body.importId, baseRev: 0, ops: [], import: q.body });
+        const batch: MirrorBatch = { pushId: q.body.importId, baseRev: 0, ops: [], import: q.body };
+        // an import too big for the mirror must not evict the recoverable
+        // edits that fit without it
+        if (JSON.stringify(batch).length <= MIRROR_CAP) batches.push(batch);
         return;
       }
       if (q.kind !== "ops") return;
       if (q.sent) batches.push({ pushId: q.pushId, baseRev: q.baseRev, ops: q.ops });
-      else if (i > lastReplace) unsent.push(...q.ops);
+      // element ops before a replace are dead; a rename or grid change is not
+      else unsent.push(...q.ops.filter((o) => i > lastReplace || o.t === "settings"));
     });
     const r = this.mirror.write(batches, unsent);
     const warning = !r.ok

@@ -64,7 +64,7 @@ export interface PushInput {
 export interface ImportInput {
   importId: string;
   mode: "replace" | "add";
-  elements: { el: unknown; idx: string }[];
+  elements: { el: unknown; idx: string; v?: number }[];
   settings?: unknown;
   mirrored?: true;
 }
@@ -812,11 +812,19 @@ export class BoardStore {
         for (const e of input.elements) {
           const rawId = (e.el as { id?: unknown } | null)?.id;
           const row = typeof rawId === "string" ? this.element(rawId) : undefined;
-          ops.push({ t: "put", el: e.el, idx: e.idx, baseVersion: row?.version ?? 0 });
+          // a mirrored import reports the version it saw, so the replay guard
+          // ignores puts that would clobber edits made after the import
+          const baseVersion = input.mirrored === true ? (e.v ?? 0) : (row?.version ?? 0);
+          ops.push({ t: "put", el: e.el, idx: e.idx, baseVersion });
         }
         if (input.settings !== undefined) ops.push({ t: "settings", settings: input.settings });
         return this.applyInTx(
-          { pushId: input.importId, baseRev: 0, ops },
+          {
+            pushId: input.importId,
+            baseRev: 0,
+            ops,
+            ...(input.mirrored ? { mirrored: true as const } : {}),
+          },
           { origin, atomic: true },
         );
       });
