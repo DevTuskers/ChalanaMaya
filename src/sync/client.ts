@@ -38,7 +38,7 @@ import { ApiError, type Api, type ImportBody } from "./api";
 import { ENVELOPE_BYTES, KEEPALIVE_BYTES, chunkOps, jsonBytes, refuseReason } from "./chunk";
 import type { MirrorBatch, PendingMirror } from "./mirror";
 
-export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full";
+export type SaveStatus = "saved" | "saving" | "offline" | "gone" | "full" | "capacity";
 
 export interface SyncSettings {
   viewBackgroundColor: string;
@@ -574,6 +574,12 @@ export class SyncClient {
         } else if (msg.status === 404) {
           this.stopped = "gone";
           this.host.notice("This board no longer exists on the server, so changes are not saved.");
+          this.updateStatus();
+        } else if (msg.code === "capacity") {
+          this.stopped = "capacity";
+          this.host.notice(
+            "This board hit its daily edit limit — it is read-only until it resets.",
+          );
           this.updateStatus();
         }
         return;
@@ -1172,6 +1178,9 @@ export class SyncClient {
     if (e.status === 404) {
       this.stopped = "gone";
       this.host.notice("This board no longer exists on the server, so changes are not saved.");
+    } else if (e.code === "capacity") {
+      this.stopped = "capacity";
+      this.host.notice("This board hit its daily edit limit — it is read-only until it resets.");
     } else if (e.status === 507) {
       this.stopped = "full";
       this.host.notice(`The server could not save: ${e.message}`);

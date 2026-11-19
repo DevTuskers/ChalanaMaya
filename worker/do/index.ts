@@ -68,13 +68,29 @@ export class BoardIndex {
     return json({ error: { code: "not_found", message: "No route." } }, 404);
   }
 
-  /** Daily sweep: evict idle boards via their DOs (phase 5 completes this). */
+  /** Daily sweep: evict boards idle 7d, then oldest-first until the fleet
+   *  is under MAX_BOARDS (the free-tier LRU). */
   async alarm() {
     const cutoff = Date.now() - IDLE_EVICT_MS;
     const stale = this.state.storage.sql
-      .exec<{ id: string }>("SELECT id FROM boards WHERE last_active < ?", cutoff)
-      .toArray();
-    for (const { id } of stale) {
+      .exec<{ id: string }>(
+        "SELECT id FROM boards WHERE last_active < ? ORDER BY last_active LIMIT ?",
+        cutoff,
+        MAX_BOARDS,
+      )
+      .toArray()
+      .map((r) => r.id);
+    // beyond the cap the oldest survivors are evicted too (LRU)
+    const excess = this.state.storage.sql
+      .exec<{ id: string }>(
+        `SELECT id FROM boards WHERE last_active >= ?
+         ORDER BY last_active DESC LIMIT -1 OFFSET ?`,
+        cutoff,
+        MAX_BOARDS,
+      )
+      .toArray()
+      .map((r) => r.id);
+    for (const id of [...stale, ...excess]) {
       try {
         const stub = this.env.BOARD.get(this.env.BOARD.idFromName(id));
         const res = await stub.fetch("https://do/_evict", { method: "POST" });

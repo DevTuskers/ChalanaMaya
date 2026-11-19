@@ -126,7 +126,7 @@ export interface AppState {
   /** The server session this board belongs to (null in unit tests). */
   session: { id: string; title: string } | null;
   /** Server save state of the session board. */
-  saveStatus: "saved" | "saving" | "offline" | "gone" | "full";
+  saveStatus: "saved" | "saving" | "offline" | "gone" | "full" | "capacity";
   /** false while the live socket is down: changes save over REST, but others' changes do not show */
   liveSync: boolean;
   /** A board saved by an older version in this browser, offered for import. */

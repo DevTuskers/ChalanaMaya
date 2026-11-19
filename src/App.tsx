@@ -186,7 +186,9 @@ const SaveStatusChip = () => {
           ? "Offline — your changes will be sent when the connection is back"
           : status === "gone"
             ? "Not saved — board deleted"
-            : "Not saved — server storage full";
+            : status === "capacity"
+              ? "Read-only — daily capacity reached"
+              : "Not saved — server storage full";
   return (
     <div
       className={`save-status save-${status}`}

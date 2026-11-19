@@ -37,7 +37,11 @@ export class ApiError extends Error {
     super(message);
   }
   get retry() {
-    return this.status === 0 || this.status === 429 || this.status >= 500;
+    // `capacity` is the board's daily ops budget — retrying is pointless
+    // until it resets, so the board is surfaced as read-only instead.
+    return (
+      this.status === 0 || (this.status === 429 && this.code !== "capacity") || this.status >= 500
+    );
   }
 }
 
