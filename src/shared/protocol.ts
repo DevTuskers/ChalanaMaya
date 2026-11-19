@@ -150,6 +150,8 @@ export const clientMessageSchema = (maxOps: number) =>
       type: z.literal("hello"),
       clientId: clientIdSchema,
       sinceRev: z.number().int().nonnegative().optional(),
+      // keyed hosts (Cloudflare): the board's edit/owner key; ignored elsewhere
+      key: z.string().max(128).optional(),
     }),
     z.strictObject({
       type: z.literal("push"),

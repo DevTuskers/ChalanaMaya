@@ -25,6 +25,12 @@ export class BoardIndex {
           last_active INTEGER NOT NULL
         )`,
       );
+      this.state.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS evicted (
+          id TEXT PRIMARY KEY,
+          at INTEGER NOT NULL
+        )`,
+      );
       this.state.storage.setAlarm(Date.now() + 24 * 3600_000);
     });
   }
@@ -43,7 +49,15 @@ export class BoardIndex {
     if (req.method === "POST" && url.pathname === "/remove") {
       const { id } = (await req.json()) as { id: string };
       this.state.storage.sql.exec("DELETE FROM boards WHERE id = ?", id);
+      this.state.storage.sql.exec("DELETE FROM evicted WHERE id = ?", id);
       return json({ ok: true });
+    }
+    if (req.method === "GET" && url.pathname === "/gone") {
+      const id = url.searchParams.get("id") ?? "";
+      const row = this.state.storage.sql
+        .exec("SELECT id FROM evicted WHERE id = ?", id)
+        .toArray()[0];
+      return json({ evicted: row !== undefined });
     }
     if (req.method === "GET" && url.pathname === "/boards")
       return json({
@@ -63,7 +77,11 @@ export class BoardIndex {
     for (const { id } of stale) {
       try {
         const stub = this.env.BOARD.get(this.env.BOARD.idFromName(id));
-        await stub.fetch("https://do/_evict", { method: "POST" });
+        const res = await stub.fetch("https://do/_evict", { method: "POST" });
+        if (res.ok) {
+          this.state.storage.sql.exec("DELETE FROM boards WHERE id = ?", id);
+          this.state.storage.sql.exec("INSERT INTO evicted (id, at) VALUES (?, ?)", id, Date.now());
+        }
       } catch {
         // the DO is gone or busy: leave the row; the next sweep retries
       }

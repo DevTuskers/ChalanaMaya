@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "./index";
 import type { Env } from "./env";
-import { fakeCtx, fakeEnv } from "./test/fakes";
+import { FakeSocket, fakeCtx, fakeEnv } from "./test/fakes";
 import { parseBoardHash } from "../src/shared/ids";
 import { createImage, createShape } from "../src/scene/elements";
 
@@ -201,6 +201,82 @@ describe("board lifecycle", () => {
     // the board survived the forged evict
     const scene = await call(new Request(api(id, "/scene")));
     expect(scene.status).toBe(200);
+  });
+
+  it("sockets: keyed writes broadcast to peers, view-only sockets cannot push", async () => {
+    const { id, key } = await createBoard();
+    const state = (
+      env as unknown as { _states: Map<string, { acceptWebSocket(w: unknown): void }> }
+    )._states.get(id)!;
+    const board = (
+      env as unknown as {
+        _boards: Map<string, { webSocketMessage(w: unknown, m: string): Promise<void> }>;
+      }
+    )._boards.get(id)!;
+
+    const say = (ws: FakeSocket, msg: object) => board.webSocketMessage(ws, JSON.stringify(msg));
+    const hello = { type: "hello", clientId: "clientid1" };
+    const push = {
+      type: "push",
+      pushId: "abcdefghijklmnop",
+      baseRev: 0,
+      ops: [PUT("e1")],
+    };
+
+    // a view-only socket (no key) gets the snapshot but cannot push
+    const viewer = new FakeSocket();
+    state.acceptWebSocket(viewer);
+    await say(viewer, hello);
+    expect(viewer.messages()[0].type).toBe("snapshot");
+    await say(viewer, push);
+    const denied = viewer.messages().at(-1)!;
+    expect(denied.type).toBe("error");
+    expect((denied as { code: string }).code).toBe("forbidden");
+
+    // a keyed socket pushes; every ready peer hears the change, not the pusher
+    const editor = new FakeSocket();
+    const watcher = new FakeSocket();
+    state.acceptWebSocket(editor);
+    state.acceptWebSocket(watcher);
+    await say(editor, { ...hello, clientId: "clientid2", key });
+    await say(watcher, { ...hello, clientId: "clientid3" });
+    await say(editor, push);
+    expect(editor.messages().at(-1)!.type).toBe("ack");
+    const change = watcher.messages().at(-1)!;
+    expect(change.type).toBe("changes");
+    expect((change as { rev: number }).rev).toBe(1);
+    expect(viewer.messages().at(-1)!.type).toBe("changes");
+  });
+
+  it("sockets: per-push re-verify honors a mid-session rotation", async () => {
+    const { id, key, owner } = await createBoard();
+    const state = (
+      env as unknown as { _states: Map<string, { acceptWebSocket(w: unknown): void }> }
+    )._states.get(id)!;
+    const board = (
+      env as unknown as {
+        _boards: Map<string, { webSocketMessage(w: unknown, m: string): Promise<void> }>;
+      }
+    )._boards.get(id)!;
+
+    const ws = new FakeSocket();
+    state.acceptWebSocket(ws);
+    await board.webSocketMessage(ws, JSON.stringify({ type: "hello", clientId: "clientid1", key }));
+
+    await call(new Request(api(id, "/keys/rotate"), { method: "POST", headers: bearer(owner) }));
+
+    await board.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: "push",
+        pushId: "abcdefghijklmnop",
+        baseRev: 0,
+        ops: [PUT("e1")],
+      }),
+    );
+    const last = ws.messages().at(-1)!;
+    expect(last.type).toBe("error");
+    expect((last as { code: string }).code).toBe("forbidden");
   });
 
   it("rotation replaces both secrets", async () => {

@@ -146,6 +146,8 @@ export interface StoreLimits {
   pushLogMax: number;
   pushLogMaxAgeMs: number;
   tombstoneMaxAgeMs: number;
+  /** ops applied to this board per UTC day (free-tier write budget) */
+  maxDailyOps: number;
 }
 
 export const STORE_LIMITS: StoreLimits = {
@@ -157,6 +159,7 @@ export const STORE_LIMITS: StoreLimits = {
   pushLogMax: 2000,
   pushLogMaxAgeMs: 15 * 60_000,
   tombstoneMaxAgeMs: 30 * 24 * 3600_000,
+  maxDailyOps: 20_000,
 };
 
 export const fileUrl = (sessionId: string, fileId: string) =>
@@ -465,8 +468,27 @@ export class BoardStore {
 
   // ---------------------------------------------------------------- ops
 
+  /** Count `n` ops against today's write budget; 429 when it overflows. */
+  private bumpDailyOps(n: number) {
+    const k = `daily_ops:${new Date(this.now()).toISOString().slice(0, 10)}`;
+    const row = this.one<{ v: string }>("SELECT v FROM _meta WHERE k = ?", k);
+    const cur = row ? Number(row.v) : 0;
+    if (cur + n > this.limits.maxDailyOps)
+      throw new ServiceError(
+        429,
+        "capacity",
+        "This board is read-only until the daily capacity resets.",
+      );
+    this.run(
+      "INSERT INTO _meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+      k,
+      String(cur + n),
+    );
+  }
+
   apply(push: PushInput, opts: ApplyOptions): ApplyResult {
     this.lastEvent = null;
+    this.bumpDailyOps(push.ops.length || 1);
     try {
       const r = this.tx(() => this.applyInTx(push, opts));
       this.lastEvent = r.event;
@@ -747,6 +769,7 @@ export class BoardStore {
 
   /** Atomic import (§3.6): one rev, one ack, every element validated. */
   importScene(input: ImportInput, origin: ChangeOrigin): ApplyResult {
+    this.bumpDailyOps(input.elements.length || 1);
     this.lastEvent = null;
     try {
       const r = this.tx(() => {

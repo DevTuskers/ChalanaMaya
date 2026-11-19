@@ -10,7 +10,7 @@
  *  - ownerKey (`#owner=` fragment or `Authorization: Bearer`) — rotation and
  *    delete; it also edits.
  *
- * `GET /socket` answers 501 until phase 2 lands the SyncCore port.
+ * `GET /socket` upgrades to a live view/edit socket (`SocketCore`, phase 2).
  */
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { Env } from "../env";
@@ -19,6 +19,7 @@ import { pushSchema, importSchema } from "../../src/shared/protocol";
 import { json } from "../http";
 import { migrate } from "./schema";
 import { BoardStore, type ChangeOrigin } from "./store";
+import { SocketCore } from "./socket";
 
 const json16k = async (req: Request) => {
   const text = await req.text();
@@ -50,11 +51,14 @@ const forbidden = () =>
 // tsc; a Durable Object entrypoint only needs a constructor + fetch.
 export class BoardSession {
   private store: BoardStore | null = null;
+  private readonly sock: SocketCore;
 
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env,
-  ) {}
+  ) {
+    this.sock = new SocketCore(state, () => this.board());
+  }
 
   private board(): BoardStore {
     if (!this.store) {
@@ -112,8 +116,7 @@ export class BoardSession {
 
       case rest === "scene" && req.method === "GET":
         // `keyed` marks this as a keyed host, so a keyless open goes look-only.
-        // `socket: false` keeps clients on the REST path until phase 2.
-        return json({ ...this.board().snapshot({ markOpened: true }), keyed: true, socket: false });
+        return json({ ...this.board().snapshot({ markOpened: true }), keyed: true });
 
       case rest === "ops" && req.method === "POST": {
         await this.requireKey(req, "edit");
@@ -127,6 +130,7 @@ export class BoardSession {
           );
         const atomic = url.searchParams.get("atomic") === "1";
         const r = this.board().apply(parsed.data, { origin, atomic });
+        if (r.event) this.sock.broadcast(r.event);
         return json(r.ack);
       }
 
@@ -149,6 +153,7 @@ export class BoardSession {
             parsed.error.issues[0]?.message ?? "invalid import",
           );
         const r = this.board().importScene(parsed.data, origin);
+        if (r.event) this.sock.broadcast(r.event);
         return json(r.ack);
       }
 
@@ -219,7 +224,17 @@ export class BoardSession {
 
       case rest === "" && req.method === "DELETE": {
         await this.requireKey(req, "owner");
+        this.sock.closeAll("session_not_found", "This board was deleted.");
         await this.board().deleteSession();
+        // Owner deletes are 404s, not 410 evictions: drop the index row so the
+        // sweeper never tombstones this board.
+        await this.env.INDEX.get(this.env.INDEX.idFromName("fleet"))
+          .fetch("https://index/remove", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: this.state.id.name }),
+          })
+          .catch(() => new Response()); // best effort; the sweep 404-evicts anyway
         return json({ ok: true });
       }
 
@@ -236,22 +251,58 @@ export class BoardSession {
       // Fleet eviction (BoardIndex alarm): drop the board and its storage.
       case path === "/_evict" && req.method === "POST": {
         if (!this.board().exists) return json({ evicted: true });
+        this.sock.closeAll("session_not_found", "This board was deleted.");
         await this.board().deleteSession();
         await this.state.storage.deleteAll();
         return json({ evicted: true });
       }
 
-      case rest === "socket":
-        // phase 2: WebSocket collab. A 501 keeps the client on its REST path.
-        return json(
-          {
-            error: { code: "not_implemented", message: "Live collaboration is not available yet." },
-          },
-          501,
-        );
+      case rest === "socket": {
+        if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+          return json(
+            { error: { code: "upgrade_required", message: "This route is a WebSocket." } },
+            426,
+          );
+        if (this.sock.peers() >= MAX_PEERS)
+          return json(
+            { error: { code: "capacity", message: "This board is full of live editors." } },
+            503,
+          );
+        const pair = new WebSocketPair();
+        const [client, server] = Object.values(pair);
+        this.state.acceptWebSocket(server);
+        server.serializeAttachment({
+          ready: false,
+          key: null,
+          window: 0,
+          count: 0,
+          hellos: [],
+        });
+        return new Response(null, { status: 101, webSocket: client });
+      }
 
       default:
         throw new ServiceError(404, "not_found", "There is no route at this address.");
+    }
+  }
+
+  /** Socket fan-in (hibernation wakes the DO on each message). */
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    if (typeof message !== "string") return ws.close(1003, "text only");
+    try {
+      await this.sock.onMessage(ws, message);
+    } catch (e) {
+      if (e instanceof ServiceError && e.status === 404) ws.close(4404, "board deleted");
+      else ws.close(1011, "socket error");
+    }
+  }
+
+  webSocketClose() {}
+  webSocketError(ws: WebSocket) {
+    try {
+      ws.close(1011, "socket error");
+    } catch {
+      // already gone
     }
   }
 
@@ -260,3 +311,5 @@ export class BoardSession {
     if (this.store) this.store.maintenance();
   }
 }
+
+const MAX_PEERS = 50;

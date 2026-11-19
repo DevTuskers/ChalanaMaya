@@ -6,6 +6,7 @@
  * `offline` event closes the socket at once and `online` reconnects right away.
  */
 import type { ServerMessage } from "../shared/protocol";
+import { getBoardKey } from "./api";
 import type { SyncClient } from "./client";
 
 export const RECONNECT_MIN_MS = 500;
@@ -93,7 +94,11 @@ export class LiveChannel {
     this.connects += 1;
     ws.onopen = () => {
       this.backoff = 0;
-      ws.send(JSON.stringify(this.client.hello()));
+      // keyed hosts authenticate the socket inside hello (never the URL)
+      const hello = this.client.hello();
+      const key = getBoardKey();
+      if (key && hello.type === "hello") hello.key = key;
+      ws.send(JSON.stringify(hello));
       this.client.attach({ send: (m) => ws.send(JSON.stringify(m)) });
       this.ping = setInterval(() => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "ping" }));

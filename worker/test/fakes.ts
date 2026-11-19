@@ -21,11 +21,41 @@ class FakeStorage {
   async setAlarm() {}
 }
 
+/** A hibernation-era WebSocket stand-in: attachment persists, send is recorded. */
+export class FakeSocket {
+  readonly sent: string[] = [];
+  closed: { code: number; reason: string } | null = null;
+  private attachment: unknown = null;
+  send(text: string) {
+    this.sent.push(text);
+  }
+  close(code = 1000, reason = "") {
+    this.closed = { code, reason };
+  }
+  serializeAttachment(a: unknown) {
+    this.attachment = a;
+  }
+  deserializeAttachment() {
+    return this.attachment;
+  }
+  /** everything the socket said, parsed */
+  messages(): { type?: string }[] {
+    return this.sent.map((s) => JSON.parse(s));
+  }
+}
+
 class FakeState {
   readonly storage = new FakeStorage();
+  readonly sockets: FakeSocket[] = [];
   constructor(readonly id: { name: string }) {}
   async blockConcurrencyWhile<T>(fn: () => Promise<T> | T): Promise<T> {
     return fn();
+  }
+  acceptWebSocket(ws: FakeSocket) {
+    this.sockets.push(ws);
+  }
+  getWebSockets() {
+    return this.sockets;
   }
 }
 
@@ -49,6 +79,7 @@ export const fakeEnv = (opts: { rateLimit?: number } = {}) => {
   const media = new FakeR2();
   const boards = new Map<string, BoardSession>();
   const index = new Map<string, BoardIndex>();
+  const states = new Map<string, FakeState>();
   const env = {
     ASSETS: {
       fetch: async () =>
@@ -59,11 +90,11 @@ export const fakeEnv = (opts: { rateLimit?: number } = {}) => {
     BOARD: {
       idFromName: (name: string) => ({ name }) as unknown as DurableObjectId,
       get: (id: { name: string }) => {
-        if (!boards.has(id.name))
-          boards.set(
-            id.name,
-            new BoardSession(new FakeState(id) as never as DurableObjectState, env),
-          );
+        if (!boards.has(id.name)) {
+          const st = new FakeState(id);
+          states.set(id.name, st);
+          boards.set(id.name, new BoardSession(st as never as DurableObjectState, env));
+        }
         // workerd wraps a string URL into a Request before DO fetch.
         const obj = boards.get(id.name)!;
         return {
@@ -93,8 +124,12 @@ export const fakeEnv = (opts: { rateLimit?: number } = {}) => {
         return { success: n <= (opts.rateLimit ?? 30) };
       },
     },
-  } as unknown as Env & { _boards: Map<string, BoardSession> };
-  (env as { _boards?: unknown })._boards = boards;
+  } as unknown as Env & {
+    _boards: Map<string, BoardSession>;
+    _states: Map<string, FakeState>;
+  };
+  (env as { _boards?: unknown; _states?: unknown })._boards = boards;
+  (env as { _states?: unknown })._states = states;
   return env;
 };
 

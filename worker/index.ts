@@ -104,7 +104,9 @@ export default {
         // Any board traffic refreshes the idle-eviction clock (phase 2).
         touchIndex(env, viewId, ctx);
         const res = await stub.fetch(req);
-        // A DO answering 404 session_not_found means the board was evicted or deleted.
+        // A DO answering 404 session_not_found means the board was deleted,
+        // or evicted by the idle sweep — the index keeps evicted tombstones
+        // so the client can show the re-upload affordance (410 vs 404).
         if (res.status === 404) {
           const body = (await res
             .clone()
@@ -112,7 +114,24 @@ export default {
             .catch(() => null)) as {
             error?: { code?: string };
           } | null;
-          if (body?.error?.code === "session_not_found") return res;
+          if (body?.error?.code === "session_not_found") {
+            const gone = await env.INDEX.get(env.INDEX.idFromName("fleet"))
+              .fetch(`https://index/gone?id=${viewId}`)
+              .then((r) => r.json())
+              .catch(() => null);
+            if ((gone as { evicted?: boolean } | null)?.evicted)
+              return json(
+                {
+                  error: {
+                    code: "gone",
+                    message:
+                      "This board was removed after 7 days idle. Download boards regularly — you can upload a saved .chalana file to start a new one.",
+                  },
+                },
+                410,
+              );
+            return res;
+          }
         }
         return res;
       }
