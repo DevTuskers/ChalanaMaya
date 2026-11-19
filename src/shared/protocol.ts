@@ -78,6 +78,7 @@ export const importSchema = z.strictObject({
   mode: z.enum(["replace", "add"]),
   elements: z.array(z.strictObject({ el: z.unknown(), idx: z.string().min(1).max(192) })),
   settings: z.unknown().optional(),
+  mirrored: z.literal(true).optional(),
 });
 
 export type RejectReason =

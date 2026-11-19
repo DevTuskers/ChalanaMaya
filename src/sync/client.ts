@@ -223,7 +223,7 @@ export const replayMirror = async (api: Api, mirror: PendingMirror): Promise<Rep
     }
     try {
       const ack = b.import
-        ? await api.importScene(mirror.sessionId, b.import)
+        ? await api.importScene(mirror.sessionId, { ...b.import, mirrored: true })
         : await api.push(mirror.sessionId, {
             pushId: b.pushId,
             baseRev: b.baseRev,
@@ -317,7 +317,22 @@ export class SyncClient {
       // a pending import re-queues as itself (it is not ops) so the pump
       // delivers it through /import again
       if (b.import) {
-        this.push({ kind: "import", body: b.import, sent: false });
+        // apply it locally first: the snapshot shows the pre-import board, and
+        // edits to elements a pending `replace` will delete are lost work
+        const imp = b.import;
+        const ids = new Set(imp.elements.map((e) => e.el.id));
+        // remote ops carry the post-apply version: the import bumps each
+        // touched element once, so known+1 matches what the server will send
+        const ver = (id: string) => (this.known.get(id)?.version ?? 0) + 1;
+        const ops: RemoteOp[] = [];
+        if (imp.mode === "replace")
+          for (const k of this.order)
+            if (!ids.has(k.id)) ops.push({ t: "del", id: k.id, version: ver(k.id) });
+        for (const e of imp.elements)
+          ops.push({ t: "put", el: e.el, idx: e.idx, version: ver(e.el.id) });
+        if (imp.settings) ops.push({ t: "settings", settings: imp.settings });
+        if (ops.length) this.applyRemote(ops);
+        this.push({ kind: "import", body: imp, sent: false });
         continue;
       }
       for (const op of b.ops) {
@@ -1031,20 +1046,27 @@ export class SyncClient {
   }
 
   private writeMirror() {
+    // unsent ops queued before the last `replace` import are dead locally
+    // (the replace already removed their elements): mirroring them would
+    // resurrect the old board when they replay after the import
+    let lastReplace = -1;
+    this.queue.forEach((q, i) => {
+      if (q.kind === "import" && q.body.mode === "replace") lastReplace = i;
+    });
     const batches: MirrorBatch[] = [];
     const unsent: Op[] = [];
-    for (const q of this.queue) {
+    this.queue.forEach((q, i) => {
       // imports mirror their whole body (no ops representation), sent or not:
       // a queued import lost on reload must be re-sent, and a sent one is
       // deduped by its importId like any push
       if (q.kind === "import") {
         batches.push({ pushId: q.body.importId, baseRev: 0, ops: [], import: q.body });
-        continue;
+        return;
       }
-      if (q.kind !== "ops") continue;
+      if (q.kind !== "ops") return;
       if (q.sent) batches.push({ pushId: q.pushId, baseRev: q.baseRev, ops: q.ops });
-      else unsent.push(...q.ops);
-    }
+      else if (i > lastReplace) unsent.push(...q.ops);
+    });
     const r = this.mirror.write(batches, unsent);
     const warning = !r.ok
       ? `Changes made now are not protected against a reload: ${r.reason}.`

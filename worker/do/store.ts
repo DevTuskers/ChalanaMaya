@@ -66,6 +66,7 @@ export interface ImportInput {
   mode: "replace" | "add";
   elements: { el: unknown; idx: string }[];
   settings?: unknown;
+  mirrored?: true;
 }
 
 export type AppliedOp =
@@ -799,7 +800,10 @@ export class BoardStore {
             .map((e) => (e.el as { id?: unknown } | null)?.id)
             .filter((v): v is string => typeof v === "string"),
         );
-        if (input.mode === "replace")
+        // a mirrored replay degrades `replace` to `add`: the dedup receipt may
+        // be gone by the time it lands, and rows added since the original
+        // import must not be deleted
+        if (input.mode === "replace" && input.mirrored !== true)
           for (const row of this.all<{ id: string; version: number }>(
             "SELECT id, version FROM elements WHERE session_id = ? AND deleted = 0",
             this.sessionId,

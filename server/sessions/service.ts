@@ -56,6 +56,7 @@ export interface ImportInput {
   mode: "replace" | "add";
   elements: { el: unknown; idx: string }[];
   settings?: unknown;
+  mirrored?: true;
 }
 
 export type AppliedOp =
@@ -643,7 +644,8 @@ export class SessionService {
             .map((e) => (e.el as { id?: unknown } | null)?.id)
             .filter((v): v is string => typeof v === "string"),
         );
-        if (input.mode === "replace")
+        // mirrored replays degrade replace to add (see worker/do/store.ts)
+        if (input.mode === "replace" && input.mirrored !== true)
           for (const r of this.q.liveIds.all(sessionId))
             if (!incoming.has(r.id)) ops.push({ t: "del", id: r.id, baseVersion: r.version });
         for (const e of input.elements) {

@@ -17,6 +17,8 @@ export interface ImportBody {
   mode: "replace" | "add";
   elements: { el: SceneElement; idx: string }[];
   settings?: { viewBackgroundColor?: string; gridEnabled?: boolean };
+  /** A mirror replay: a `replace` keeps the elements added after the import. */
+  mirrored?: true;
 }
 
 export interface UploadedFile {

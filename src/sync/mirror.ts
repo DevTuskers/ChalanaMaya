@@ -288,7 +288,8 @@ export const compactMirror = (data: MirrorData): MirrorData => {
   const batches: MirrorBatch[] = [];
   for (let i = data.batches.length - 1; i >= 0; i -= 1) {
     const ops = keep(data.batches[i].ops);
-    if (ops.length) batches.unshift({ ...data.batches[i], ops });
+    // an import batch carries its body, not ops: dropping it loses the import
+    if (ops.length || data.batches[i].import) batches.unshift({ ...data.batches[i], ops });
   }
   return { v: 1, batches, unsent };
 };
